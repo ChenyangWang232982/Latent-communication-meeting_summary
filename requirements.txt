@@ -1,9 +1,9 @@
---extra-index-url https://download.pytorch.org/whl/cu126
+--extra-index-url https://download.pytorch.org/whl/cu128
 
-# PyTorch CUDA 12.6 wheels. Suitable for RTX 3070 and most recent cloud GPUs.
-torch==2.7.0+cu126
-torchvision==0.22.0+cu126
-torchaudio==2.7.0+cu126
+# PyTorch CUDA 12.8 wheels. Matches cloud environments with PyTorch 2.8 + CUDA 12.8.
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+torchaudio==2.8.0+cu128
 
 # HuggingFace model stack.
 transformers>=4.44.0
