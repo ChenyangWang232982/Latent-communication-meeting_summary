@@ -1,0 +1,42 @@
+name: latent-agents
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - tqdm
+  - jupyterlab
+  - ipykernel
+  - pytest
+  - pip:
+      # PyTorch CUDA wheels
+      - --extra-index-url https://download.pytorch.org/whl/cu126
+      - torch==2.7.0+cu126
+      - torchvision==0.22.0+cu126
+      - torchaudio==2.7.0+cu126
+
+      # HuggingFace stack
+      - transformers>=4.44.0
+      - datasets>=2.20.0
+      - accelerate>=0.33.0
+      - evaluate>=0.4.2
+      - tokenizers
+      - sentencepiece
+      - protobuf
+
+      # Training / experiment utilities
+      - einops
+      - safetensors
+      - tensorboard
+      - wandb
+      - rich
+
+      # Metrics
+      - rouge-score
+      - sacrebleu
+      - bert-score

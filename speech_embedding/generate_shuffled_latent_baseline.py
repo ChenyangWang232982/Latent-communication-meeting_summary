@@ -1,0 +1,131 @@
+import torch
+from torch.utils.data import DataLoader
+
+from speech_embedding.data import MeetingSpeechSummaryDataset
+from speech_embedding.paths import CHECKPOINT_DIR, DATA_DIR
+from speech_embedding.speech_to_summary_model import SpeechToSummaryLatentModel
+
+@torch.no_grad()
+def generate_batch(model, batch, device, shuffle_latent=False, max_new_tokens=256):
+    batch = {
+        key: value.to(device)
+        for key, value in batch.items()
+    }
+
+    speech_hidden_states = model.encode_speech(batch["input_features"])
+    latent_embeds, latent_mask = model.comm(speech_hidden_states)
+
+    if shuffle_latent:
+        batch_size = latent_embeds.size(0)
+        shuffle_index = torch.arange(batch_size - 1, -1, -1, device=device)
+        latent_embeds = latent_embeds[shuffle_index]
+
+    prompt_embeds = model.summary_model.get_input_embeddings()(
+        batch["prompt_input_ids"]
+    )
+
+    combined_embeds = torch.cat(
+        [latent_embeds, prompt_embeds],
+        dim=1,
+    )
+
+    combined_mask = torch.cat(
+        [latent_mask, batch["prompt_attention_mask"]],
+        dim=1,
+    )
+
+    encoder_outputs = model.summary_model.get_encoder()(
+        inputs_embeds=combined_embeds,
+        attention_mask=combined_mask,
+        return_dict=True,
+    )
+
+    generated_ids = model.summary_model.generate(
+        encoder_outputs=encoder_outputs,
+        attention_mask=combined_mask,
+        max_new_tokens=max_new_tokens,
+        num_beams=4,
+        length_penalty=1.0,
+        early_stopping=False,
+    )
+
+    return model.summary_tokenizer.batch_decode(
+        generated_ids,
+        skip_special_tokens=True,
+    )
+
+def main():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("device:", device)
+
+    checkpoint_path = CHECKPOINT_DIR / "checkpoint_embedding_overfit.pt"
+
+    model = SpeechToSummaryLatentModel(
+        speech_model_name="openai/whisper-base",
+        summary_model_name="google/flan-t5-small",
+        latent_len=32,
+        freeze_speech=True,
+        freeze_summary=False,
+    ).to(device)
+
+    state_dict = torch.load(
+        checkpoint_path,
+        map_location=device,
+    )
+    model.load_state_dict(state_dict)
+    model.eval()
+
+    dataset = MeetingSpeechSummaryDataset(
+        metadata_path=DATA_DIR / "metadata.jsonl",
+        speech_model_name="openai/whisper-base",
+        summary_tokenizer=model.summary_tokenizer,
+        max_summary_length=256,
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=2,
+        shuffle=False,
+    )
+
+    batch = next(iter(loader))
+
+    normal_summaries = generate_batch(
+        model=model,
+        batch=batch,
+        device=device,
+        shuffle_latent=False,
+    )
+
+    shuffled_summaries = generate_batch(
+        model=model,
+        batch=batch,
+        device=device,
+        shuffle_latent=True,
+    )
+
+    labels = batch["labels"].clone()
+    labels[labels == -100] = model.summary_tokenizer.pad_token_id
+
+    gold_summaries = model.summary_tokenizer.batch_decode(
+        labels,
+        skip_special_tokens=True,
+    )
+
+    for idx, (normal, shuffled, gold) in enumerate(
+        zip(normal_summaries, shuffled_summaries, gold_summaries)
+    ):
+        print("\n" + "=" * 80)
+        print(f"Sample {idx}")
+
+        print("\nNormal latent summary:")
+        print(normal)
+
+        print("\nShuffled latent summary:")
+        print(shuffled)
+
+        print("\nGold summary:")
+        print(gold)
+
+if __name__ == "__main__":
+    main()

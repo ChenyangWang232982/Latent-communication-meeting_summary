@@ -1,0 +1,43 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# PyTorch CUDA 12.6 wheels. Suitable for RTX 3070 and most recent cloud GPUs.
+torch==2.7.0+cu126
+torchvision==0.22.0+cu126
+torchaudio==2.7.0+cu126
+
+# HuggingFace model stack.
+transformers>=4.44.0
+datasets>=2.20.0
+accelerate>=0.33.0
+evaluate>=0.4.2
+tokenizers
+sentencepiece
+protobuf
+safetensors
+
+# Audio preprocessing.
+librosa
+soundfile
+scipy
+
+# Training and experiment utilities.
+numpy
+pandas
+scikit-learn
+tqdm
+einops
+tensorboard
+wandb
+rich
+
+# Metrics.
+rouge-score
+sacrebleu
+bert-score
+
+# Notebook / development.
+matplotlib
+seaborn
+jupyterlab
+ipykernel
+pytest

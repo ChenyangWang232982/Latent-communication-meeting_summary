@@ -1,0 +1,78 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.conda/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+runs/
+wandb/
+lightning_logs/
+
+# Model checkpoints and training outputs
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+checkpoints/
+outputs/
+
+# HuggingFace / model caches
+.cache/
+cache/
+huggingface/
+models/
+
+# Large local datasets
+data/toy_meetings/audio/
+data/**/*.wav
+data/**/*.mp3
+data/**/*.flac
+data/**/*.m4a
+data/**/*.ogg
+data/**/*.part
+
+# AMI raw/local corpus files
+ami/**/*.wav
+ami/**/*.mp3
+ami/**/*.flac
+ami/**/*.m4a
+ami/**/*.ogg
+ami/**/*.part
+
+# Keep metadata, splits, annotations, and docs trackable.
+!data/toy_meetings/metadata.jsonl
+!data/toy_meetings/splits/
+!data/toy_meetings/splits/*.jsonl
+!ami/abstractive/
+!ami/abstractive/*.xml
+!ami/words/
+!ami/words/*.xml
+
+# Local temporary files
+tmp/
+temp/
+.codex_tmp/
