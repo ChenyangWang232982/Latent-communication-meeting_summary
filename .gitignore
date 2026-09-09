@@ -46,31 +46,10 @@ cache/
 huggingface/
 models/
 
-# Large local datasets
-data/toy_meetings/audio/
-data/**/*.wav
-data/**/*.mp3
-data/**/*.flac
-data/**/*.m4a
-data/**/*.ogg
-data/**/*.part
-
-# AMI raw/local corpus files
-ami/**/*.wav
-ami/**/*.mp3
-ami/**/*.flac
-ami/**/*.m4a
-ami/**/*.ogg
-ami/**/*.part
-
-# Keep metadata, splits, annotations, and docs trackable.
-!data/toy_meetings/metadata.jsonl
-!data/toy_meetings/splits/
-!data/toy_meetings/splits/*.jsonl
-!ami/abstractive/
-!ami/abstractive/*.xml
-!ami/words/
-!ami/words/*.xml
+# Local datasets.
+# AMI corpus files are not redistributed in this repository.
+ami/
+data/
 
 # Local temporary files
 tmp/
