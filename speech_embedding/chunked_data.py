@@ -9,6 +9,18 @@ from transformers import WhisperProcessor
 from speech_embedding.paths import project_path
 
 
+def select_chunk_indices_for_count(num_audio_chunks, max_chunks):
+    if num_audio_chunks <= max_chunks:
+        return list(range(num_audio_chunks))
+
+    indices = torch.linspace(
+        0,
+        num_audio_chunks - 1,
+        steps=max_chunks,
+    )
+    return indices.round().long().tolist()
+
+
 class ChunkedMeetingSpeechSummaryDataset(Dataset):
     def __init__(
         self,
@@ -52,15 +64,7 @@ class ChunkedMeetingSpeechSummaryDataset(Dataset):
         return audio
 
     def select_chunk_indices(self, num_audio_chunks):
-        if num_audio_chunks <= self.max_chunks:
-            return list(range(num_audio_chunks))
-
-        indices = torch.linspace(
-            0,
-            num_audio_chunks - 1,
-            steps=self.max_chunks,
-        )
-        return indices.round().long().tolist()
+        return select_chunk_indices_for_count(num_audio_chunks, self.max_chunks)
 
     def split_audio(self, audio):
         num_audio_chunks = math.ceil(len(audio) / self.chunk_samples)

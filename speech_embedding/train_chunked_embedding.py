@@ -13,15 +13,16 @@ from speech_embedding.paths import CHECKPOINT_DIR, SPLIT_DIR
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
 
-TRANSCRIPT_TARGET_FIELD = "transcript"
-TRANSCRIPT_PROMPT_TEXT = "transcribe the meeting speech:"
-TRANSCRIPT_CHECKPOINT_PATH = (
-    CHECKPOINT_DIR / "checkpoint_chunked_embedding_transcript_aligned.pt"
+TEACHER_TARGET_FIELD = "teacher_summary"
+TEACHER_PROMPT_TEXT = "summarize the meeting:"
+TEACHER_CHECKPOINT_PATH = (
+    CHECKPOINT_DIR / "checkpoint_chunked_embedding_teacher_distilled.pt"
 )
 
-MAX_CHUNKS = 32
+# Keep this consistent with build_teacher_summary_metadata.py and test_chunked_embedding.py.
+MAX_CHUNKS = 100
 CHUNK_LATENT_LEN = 4
-MAX_TRANSCRIPT_LENGTH = 512
+MAX_TEACHER_SUMMARY_LENGTH = 256
 
 BATCH_SIZE = 1
 MAX_EPOCHS = 60
@@ -35,6 +36,20 @@ PRINT_EVERY = 5
 
 FREEZE_SPEECH = True
 FREEZE_SUMMARY = True
+
+TRAIN_TARGET_FIELD = TEACHER_TARGET_FIELD
+
+
+def get_prompt_text():
+    return TEACHER_PROMPT_TEXT
+
+
+def get_checkpoint_path():
+    return TEACHER_CHECKPOINT_PATH
+
+
+def get_max_target_length():
+    return MAX_TEACHER_SUMMARY_LENGTH
 
 
 def move_batch_to_device(batch, device):
@@ -93,8 +108,8 @@ def train():
     print("device:", device)
     print(
         "config: "
-        f"mode_name=transcript_alignment, "
-        f"target_field={TRANSCRIPT_TARGET_FIELD}, "
+        f"mode_name=text_communication_distillation, "
+        f"target_field={TRAIN_TARGET_FIELD}, "
         f"max_chunks={MAX_CHUNKS}, "
         f"chunk_latent_len={CHUNK_LATENT_LEN}, "
         f"batch_size={BATCH_SIZE}, "
@@ -120,19 +135,19 @@ def train():
         metadata_path=SPLIT_DIR / "train.jsonl",
         speech_model_name=SPEECH_MODEL_NAME,
         summary_tokenizer=model.summary_tokenizer,
-        prompt_text=TRANSCRIPT_PROMPT_TEXT,
+        prompt_text=get_prompt_text(),
         max_chunks=MAX_CHUNKS,
-        max_summary_length=MAX_TRANSCRIPT_LENGTH,
-        target_field=TRANSCRIPT_TARGET_FIELD,
+        max_summary_length=get_max_target_length(),
+        target_field=TRAIN_TARGET_FIELD,
     )
     val_dataset = ChunkedMeetingSpeechSummaryDataset(
         metadata_path=SPLIT_DIR / "val.jsonl",
         speech_model_name=SPEECH_MODEL_NAME,
         summary_tokenizer=model.summary_tokenizer,
-        prompt_text=TRANSCRIPT_PROMPT_TEXT,
+        prompt_text=get_prompt_text(),
         max_chunks=MAX_CHUNKS,
-        max_summary_length=MAX_TRANSCRIPT_LENGTH,
-        target_field=TRANSCRIPT_TARGET_FIELD,
+        max_summary_length=get_max_target_length(),
+        target_field=TRAIN_TARGET_FIELD,
     )
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -165,8 +180,8 @@ def train():
         if val_loss < best_val_loss - MIN_DELTA:
             best_val_loss = val_loss
             bad_epochs = 0
-            torch.save(model.state_dict(), TRANSCRIPT_CHECKPOINT_PATH)
-            print(f"saved best checkpoint: {TRANSCRIPT_CHECKPOINT_PATH}")
+            torch.save(model.state_dict(), get_checkpoint_path())
+            print(f"saved best checkpoint: {get_checkpoint_path()}")
         else:
             bad_epochs += 1
             print(f"no improvement: {bad_epochs}/{PATIENCE}")

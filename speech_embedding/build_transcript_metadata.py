@@ -9,6 +9,7 @@ from speech_embedding.paths import DATA_DIR, PROJECT_ROOT, SPLIT_DIR, project_pa
 
 METADATA_PATH = DATA_DIR / "metadata.jsonl"
 WORDS_DIR = PROJECT_ROOT / "ami" / "words"
+TRANSCRIPT_DIR = DATA_DIR / "transcripts"
 UPDATE_SPLITS = True
 MAKE_BACKUP = True
 
@@ -31,6 +32,13 @@ def write_jsonl(path, rows):
     with path.open("w", encoding="utf-8") as out_file:
         for row in rows:
             out_file.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def write_json(path, data):
+    path = project_path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as out_file:
+        json.dump(data, out_file, ensure_ascii=False)
 
 
 def backup_file(path):
@@ -116,7 +124,12 @@ def build_transcripts(words_dir):
         tokens = []
         for word in words:
             append_token(tokens, word["token"], word["is_punctuation"])
-        merged[meeting_id] = " ".join(tokens)
+        transcript_path = TRANSCRIPT_DIR / f"{meeting_id}.words.json"
+        write_json(transcript_path, words)
+        merged[meeting_id] = {
+            "transcript": " ".join(tokens),
+            "transcript_path": transcript_path.relative_to(PROJECT_ROOT).as_posix(),
+        }
 
     return merged
 
@@ -127,11 +140,17 @@ def update_rows_with_transcripts(rows, transcripts):
 
     for row in rows:
         meeting_id = row["meeting_id"]
-        transcript = transcripts.get(meeting_id, "")
-        if not transcript:
+        transcript_info = transcripts.get(meeting_id)
+        if not transcript_info:
             missing.append(meeting_id)
+            transcript = ""
+            transcript_path = ""
+        else:
+            transcript = transcript_info["transcript"]
+            transcript_path = transcript_info["transcript_path"]
         row = dict(row)
         row["transcript"] = transcript
+        row["transcript_path"] = transcript_path
         updated.append(row)
 
     return updated, missing
