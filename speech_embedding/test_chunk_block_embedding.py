@@ -13,16 +13,16 @@ from speech_embedding.paths import CHECKPOINT_DIR, DATA_DIR, PROJECT_ROOT
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
-COMM_METHOD = "receiver_weighted_embedding"
-COMM_TEMPERATURE = 0.35
-COMM_TOP_K = 128
+COMM_METHOD = "direct_projection"
+COMM_TEMPERATURE = 1.0
+COMM_TOP_K = None
 
 PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_weighted_embedding.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding.pt"
 TEST_METADATA_PATH = DATA_DIR / "chunk_blocks" / "test.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
-CHUNK_LATENT_LEN = 12
+CHUNK_LATENT_LEN = 64
 MAX_TARGET_LENGTH = 128
 MAX_NEW_TOKENS = 128
 BATCH_SIZE = 1
