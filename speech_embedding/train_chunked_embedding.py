@@ -15,8 +15,9 @@ SUMMARY_MODEL_NAME = "google/flan-t5-small"
 
 TEACHER_TARGET_FIELD = "teacher_summary"
 TEACHER_PROMPT_TEXT = "summarize the meeting:"
+TRANSCRIPT_TARGET_FIELD = "transcript"
 ALIGNMENT_CHECKPOINT_PATH = (
-    CHECKPOINT_DIR / "checkpoint_chunked_embedding_alignment.pt"
+    CHECKPOINT_DIR / "checkpoint_chunked_embedding_transcript_contrastive.pt"
 )
 
 # Keep this consistent with build_teacher_summary_metadata.py and test_chunked_embedding.py.
@@ -24,7 +25,7 @@ MAX_CHUNKS = 100
 CHUNK_LATENT_LEN = 4
 MAX_TEXT_LENGTH = 1024
 
-BATCH_SIZE = 1
+BATCH_SIZE = 4
 MAX_EPOCHS = 60
 PATIENCE = 8
 LEARNING_RATE = 1e-4
@@ -32,13 +33,15 @@ WEIGHT_DECAY = 0.01
 MIN_DELTA = 1e-4
 MSE_WEIGHT = 0.1
 COSINE_WEIGHT = 1.0
+CONTRASTIVE_WEIGHT = 1.0
+CONTRASTIVE_TEMPERATURE = 0.07
 GRAD_CLIP_NORM = 1.0
 PRINT_EVERY = 5
 
 FREEZE_SPEECH = True
 FREEZE_SUMMARY = True
 
-TRAIN_TARGET_FIELD = TEACHER_TARGET_FIELD
+TRAIN_TARGET_FIELD = TRANSCRIPT_TARGET_FIELD
 
 
 def get_prompt_text():
@@ -98,7 +101,44 @@ def alignment_loss(speech_latents, text_latents, latent_mask):
     cosine = F.cosine_similarity(speech_latents, text_latents, dim=-1)
     cosine = 1.0 - (cosine * mask).sum() / token_count
 
-    return MSE_WEIGHT * mse + COSINE_WEIGHT * cosine, mse, cosine
+    contrastive = contrastive_alignment_loss(
+        speech_latents,
+        text_latents,
+        latent_mask,
+    )
+
+    loss = (
+        MSE_WEIGHT * mse
+        + COSINE_WEIGHT * cosine
+        + CONTRASTIVE_WEIGHT * contrastive
+    )
+    return loss, mse, cosine, contrastive
+
+
+def masked_mean(latents, mask):
+    mask = mask.to(latents.dtype).unsqueeze(-1)
+    summed = (latents * mask).sum(dim=1)
+    count = mask.sum(dim=1).clamp_min(1.0)
+    return summed / count
+
+
+def contrastive_alignment_loss(speech_latents, text_latents, latent_mask):
+    batch_size = speech_latents.size(0)
+    if batch_size < 2:
+        return speech_latents.new_zeros(())
+
+    speech_repr = masked_mean(speech_latents, latent_mask)
+    text_repr = masked_mean(text_latents, latent_mask)
+    speech_repr = F.normalize(speech_repr, p=2, dim=-1)
+    text_repr = F.normalize(text_repr, p=2, dim=-1)
+
+    logits = speech_repr @ text_repr.transpose(0, 1)
+    logits = logits / CONTRASTIVE_TEMPERATURE
+    labels = torch.arange(batch_size, device=speech_latents.device)
+
+    speech_to_text = F.cross_entropy(logits, labels)
+    text_to_speech = F.cross_entropy(logits.transpose(0, 1), labels)
+    return 0.5 * (speech_to_text + text_to_speech)
 
 
 def run_epoch(model, loader, device, optimizer=None):
@@ -125,7 +165,7 @@ def run_epoch(model, loader, device, optimizer=None):
                     target_len=speech_latents.size(1),
                 )
 
-            loss, mse, cosine = alignment_loss(
+            loss, mse, cosine, contrastive = alignment_loss(
                 speech_latents,
                 text_latents,
                 latent_mask,
@@ -149,6 +189,7 @@ def run_epoch(model, loader, device, optimizer=None):
                 f"loss={loss.item():.4f}, "
                 f"mse={mse.item():.4f}, "
                 f"cosine={cosine.item():.4f}, "
+                f"contrastive={contrastive.item():.4f}, "
                 f"avg_loss={avg_loss:.4f}",
                 flush=True,
             )
@@ -173,6 +214,8 @@ def train():
         f"weight_decay={WEIGHT_DECAY}, "
         f"mse_weight={MSE_WEIGHT}, "
         f"cosine_weight={COSINE_WEIGHT}, "
+        f"contrastive_weight={CONTRASTIVE_WEIGHT}, "
+        f"contrastive_temperature={CONTRASTIVE_TEMPERATURE}, "
         f"grad_clip_norm={GRAD_CLIP_NORM}, "
         f"freeze_speech={FREEZE_SPEECH}, "
         f"freeze_summary={FREEZE_SUMMARY}"

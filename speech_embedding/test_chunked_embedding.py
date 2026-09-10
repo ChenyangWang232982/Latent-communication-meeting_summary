@@ -19,7 +19,7 @@ MODE = 0
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_embedding_alignment.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_embedding_transcript_contrastive.pt"
 
 TEST_METADATA_PATH = SPLIT_DIR / "test.jsonl"
 INPUT_AUDIO_DIR = PROJECT_ROOT / "input"
@@ -272,7 +272,7 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = OUTPUT_DIR / f"{timestamp}_mode{MODE}_embedding_alignment.txt"
+    output_path = OUTPUT_DIR / f"{timestamp}_mode{MODE}_transcript_contrastive.txt"
     prompt_text = get_prompt_text()
     print("prompt:", prompt_text)
 
