@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
@@ -12,133 +11,33 @@ from speech_embedding.paths import CHECKPOINT_DIR, SPLIT_DIR
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
+COMM_METHOD = "receiver_weighted_embedding"
+COMM_TEMPERATURE = 1.0
 
-TEACHER_TARGET_FIELD = "teacher_summary"
-TEACHER_PROMPT_TEXT = "summarize the meeting:"
-TRANSCRIPT_TARGET_FIELD = "transcript"
-ALIGNMENT_CHECKPOINT_PATH = (
-    CHECKPOINT_DIR / "checkpoint_chunked_embedding_transcript_contrastive.pt"
-)
+TARGET_FIELD = "transcript"
+PROMPT_TEXT = "transcribe the meeting speech:"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_weighted_embedding_transcript.pt"
 
-# Keep this consistent with build_teacher_summary_metadata.py and test_chunked_embedding.py.
+# Keep this consistent with test_chunked_embedding.py.
 MAX_CHUNKS = 100
 CHUNK_LATENT_LEN = 4
-MAX_TEXT_LENGTH = 1024
+MAX_TARGET_LENGTH = 512
 
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 MAX_EPOCHS = 60
 PATIENCE = 8
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 0.01
 MIN_DELTA = 1e-4
-MSE_WEIGHT = 0.1
-COSINE_WEIGHT = 1.0
-CONTRASTIVE_WEIGHT = 1.0
-CONTRASTIVE_TEMPERATURE = 0.07
 GRAD_CLIP_NORM = 1.0
 PRINT_EVERY = 5
 
 FREEZE_SPEECH = True
 FREEZE_SUMMARY = True
 
-TRAIN_TARGET_FIELD = TRANSCRIPT_TARGET_FIELD
-
-
-def get_prompt_text():
-    return TEACHER_PROMPT_TEXT
-
-
-def get_checkpoint_path():
-    return ALIGNMENT_CHECKPOINT_PATH
-
-
-def get_max_target_length():
-    return MAX_TEXT_LENGTH
-
 
 def move_batch_to_device(batch, device):
-    return {
-        key: value.to(device)
-        for key, value in batch.items()
-    }
-
-
-def compress_text_embeddings(text_embeds, text_attention_mask, target_len):
-    text_latents = []
-
-    for sample_embeds, sample_mask in zip(text_embeds, text_attention_mask):
-        valid_embeds = sample_embeds[sample_mask.bool()]
-
-        if valid_embeds.numel() == 0:
-            pooled = sample_embeds.new_zeros(target_len, sample_embeds.size(-1))
-        elif valid_embeds.size(0) < target_len:
-            pad_len = target_len - valid_embeds.size(0)
-            padding = valid_embeds[-1:].expand(pad_len, -1)
-            pooled = torch.cat([valid_embeds, padding], dim=0)
-        else:
-            pooled = F.adaptive_avg_pool1d(
-                valid_embeds.transpose(0, 1).unsqueeze(0),
-                target_len,
-            ).squeeze(0).transpose(0, 1)
-
-        text_latents.append(pooled)
-
-    return torch.stack(text_latents, dim=0)
-
-
-def alignment_loss(speech_latents, text_latents, latent_mask):
-    speech_latents = F.layer_norm(speech_latents, speech_latents.shape[-1:])
-    text_latents = F.layer_norm(text_latents, text_latents.shape[-1:])
-    speech_latents = F.normalize(speech_latents, p=2, dim=-1)
-    text_latents = F.normalize(text_latents, p=2, dim=-1)
-
-    mask = latent_mask.to(speech_latents.dtype)
-    token_count = mask.sum().clamp_min(1.0)
-
-    mse = ((speech_latents - text_latents) ** 2).sum(dim=-1)
-    mse = (mse * mask).sum() / (token_count * speech_latents.size(-1))
-
-    cosine = F.cosine_similarity(speech_latents, text_latents, dim=-1)
-    cosine = 1.0 - (cosine * mask).sum() / token_count
-
-    contrastive = contrastive_alignment_loss(
-        speech_latents,
-        text_latents,
-        latent_mask,
-    )
-
-    loss = (
-        MSE_WEIGHT * mse
-        + COSINE_WEIGHT * cosine
-        + CONTRASTIVE_WEIGHT * contrastive
-    )
-    return loss, mse, cosine, contrastive
-
-
-def masked_mean(latents, mask):
-    mask = mask.to(latents.dtype).unsqueeze(-1)
-    summed = (latents * mask).sum(dim=1)
-    count = mask.sum(dim=1).clamp_min(1.0)
-    return summed / count
-
-
-def contrastive_alignment_loss(speech_latents, text_latents, latent_mask):
-    batch_size = speech_latents.size(0)
-    if batch_size < 2:
-        return speech_latents.new_zeros(())
-
-    speech_repr = masked_mean(speech_latents, latent_mask)
-    text_repr = masked_mean(text_latents, latent_mask)
-    speech_repr = F.normalize(speech_repr, p=2, dim=-1)
-    text_repr = F.normalize(text_repr, p=2, dim=-1)
-
-    logits = speech_repr @ text_repr.transpose(0, 1)
-    logits = logits / CONTRASTIVE_TEMPERATURE
-    labels = torch.arange(batch_size, device=speech_latents.device)
-
-    speech_to_text = F.cross_entropy(logits, labels)
-    text_to_speech = F.cross_entropy(logits.transpose(0, 1), labels)
-    return 0.5 * (speech_to_text + text_to_speech)
+    return {key: value.to(device) for key, value in batch.items()}
 
 
 def run_epoch(model, loader, device, optimizer=None):
@@ -151,46 +50,27 @@ def run_epoch(model, loader, device, optimizer=None):
         batch = move_batch_to_device(batch, device)
 
         with torch.set_grad_enabled(is_train):
-            speech_latents, latent_mask = model.encode_all_chunks(
-                batch["input_features"],
-                batch["chunk_attention_mask"],
+            outputs = model(
+                input_features=batch["input_features"],
+                chunk_attention_mask=batch["chunk_attention_mask"],
+                prompt_input_ids=batch["prompt_input_ids"],
+                prompt_attention_mask=batch["prompt_attention_mask"],
+                labels=batch["labels"],
             )
-            with torch.no_grad():
-                text_embeds = model.summary_model.get_input_embeddings()(
-                    batch["target_input_ids"]
-                )
-                text_latents = compress_text_embeddings(
-                    text_embeds,
-                    batch["target_attention_mask"],
-                    target_len=speech_latents.size(1),
-                )
-
-            loss, mse, cosine, contrastive = alignment_loss(
-                speech_latents,
-                text_latents,
-                latent_mask,
-            )
+            loss = outputs.loss
 
             if is_train:
                 optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    GRAD_CLIP_NORM,
-                )
+                torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
                 optimizer.step()
 
         total_loss += loss.item()
 
         if step % PRINT_EVERY == 0 or step == len(loader):
-            avg_loss = total_loss / step
             print(
                 f"{phase} step {step}/{len(loader)}, "
-                f"loss={loss.item():.4f}, "
-                f"mse={mse.item():.4f}, "
-                f"cosine={cosine.item():.4f}, "
-                f"contrastive={contrastive.item():.4f}, "
-                f"avg_loss={avg_loss:.4f}",
+                f"loss={loss.item():.4f}, avg_loss={total_loss / step:.4f}",
                 flush=True,
             )
 
@@ -199,24 +79,21 @@ def run_epoch(model, loader, device, optimizer=None):
 
 def train():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
     print("device:", device)
     print(
         "config: "
-        f"mode_name=embedding_alignment, "
-        f"target_field={TRAIN_TARGET_FIELD}, "
+        f"mode_name=receiver_weighted_embedding_transcript, "
+        f"comm_method={COMM_METHOD}, "
+        f"target_field={TARGET_FIELD}, "
         f"max_chunks={MAX_CHUNKS}, "
         f"chunk_latent_len={CHUNK_LATENT_LEN}, "
+        f"max_target_length={MAX_TARGET_LENGTH}, "
         f"batch_size={BATCH_SIZE}, "
         f"max_epochs={MAX_EPOCHS}, "
         f"patience={PATIENCE}, "
         f"lr={LEARNING_RATE}, "
         f"weight_decay={WEIGHT_DECAY}, "
-        f"mse_weight={MSE_WEIGHT}, "
-        f"cosine_weight={COSINE_WEIGHT}, "
-        f"contrastive_weight={CONTRASTIVE_WEIGHT}, "
-        f"contrastive_temperature={CONTRASTIVE_TEMPERATURE}, "
-        f"grad_clip_norm={GRAD_CLIP_NORM}, "
+        f"comm_temperature={COMM_TEMPERATURE}, "
         f"freeze_speech={FREEZE_SPEECH}, "
         f"freeze_summary={FREEZE_SUMMARY}"
     )
@@ -227,34 +104,33 @@ def train():
         chunk_latent_len=CHUNK_LATENT_LEN,
         freeze_speech=FREEZE_SPEECH,
         freeze_summary=FREEZE_SUMMARY,
+        comm_method=COMM_METHOD,
+        comm_temperature=COMM_TEMPERATURE,
     ).to(device)
 
     train_dataset = ChunkedMeetingSpeechSummaryDataset(
         metadata_path=SPLIT_DIR / "train.jsonl",
         speech_model_name=SPEECH_MODEL_NAME,
         summary_tokenizer=model.summary_tokenizer,
-        prompt_text=get_prompt_text(),
+        prompt_text=PROMPT_TEXT,
         max_chunks=MAX_CHUNKS,
-        max_summary_length=get_max_target_length(),
-        target_field=TRAIN_TARGET_FIELD,
+        max_summary_length=MAX_TARGET_LENGTH,
+        target_field=TARGET_FIELD,
     )
     val_dataset = ChunkedMeetingSpeechSummaryDataset(
         metadata_path=SPLIT_DIR / "val.jsonl",
         speech_model_name=SPEECH_MODEL_NAME,
         summary_tokenizer=model.summary_tokenizer,
-        prompt_text=get_prompt_text(),
+        prompt_text=PROMPT_TEXT,
         max_chunks=MAX_CHUNKS,
-        max_summary_length=get_max_target_length(),
-        target_field=TRAIN_TARGET_FIELD,
+        max_summary_length=MAX_TARGET_LENGTH,
+        target_field=TARGET_FIELD,
     )
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    trainable_params = [
-        param for param in model.parameters()
-        if param.requires_grad
-    ]
+    trainable_params = [param for param in model.parameters() if param.requires_grad]
     optimizer = AdamW(
         trainable_params,
         lr=LEARNING_RATE,
@@ -278,8 +154,8 @@ def train():
         if val_loss < best_val_loss - MIN_DELTA:
             best_val_loss = val_loss
             bad_epochs = 0
-            torch.save(model.state_dict(), get_checkpoint_path())
-            print(f"saved best checkpoint: {get_checkpoint_path()}")
+            torch.save(model.state_dict(), CHECKPOINT_PATH)
+            print(f"saved best checkpoint: {CHECKPOINT_PATH}")
         else:
             bad_epochs += 1
             print(f"no improvement: {bad_epochs}/{PATIENCE}")

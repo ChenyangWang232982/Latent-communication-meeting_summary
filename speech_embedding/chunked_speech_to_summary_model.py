@@ -2,7 +2,10 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, WhisperModel
 
-from speech_embedding.speech_comm import SpeechEmbeddingComm
+from speech_embedding.speech_comm import (
+    ReceiverWeightedEmbeddingComm,
+    SpeechEmbeddingComm,
+)
 
 
 class ChunkedSpeechToSummaryLatentModel(nn.Module):
@@ -14,6 +17,8 @@ class ChunkedSpeechToSummaryLatentModel(nn.Module):
         num_heads=8,
         freeze_speech=True,
         freeze_summary=False,
+        comm_method="receiver_weighted_embedding",
+        comm_temperature=1.0,
     ):
         super().__init__()
 
@@ -25,12 +30,26 @@ class ChunkedSpeechToSummaryLatentModel(nn.Module):
         speech_dim = self.speech_model.config.d_model
         llm_dim = self.summary_model.config.d_model
 
-        self.comm = SpeechEmbeddingComm(
-            speech_dim=speech_dim,
-            llm_dim=llm_dim,
-            latent_len=chunk_latent_len,
-            num_heads=num_heads,
-        )
+        if comm_method == "direct_projection":
+            self.comm = SpeechEmbeddingComm(
+                speech_dim=speech_dim,
+                llm_dim=llm_dim,
+                latent_len=chunk_latent_len,
+                num_heads=num_heads,
+            )
+        elif comm_method == "receiver_weighted_embedding":
+            self.comm = ReceiverWeightedEmbeddingComm(
+                speech_dim=speech_dim,
+                llm_dim=llm_dim,
+                vocab_size=self.summary_model.config.vocab_size,
+                latent_len=chunk_latent_len,
+                num_heads=num_heads,
+                temperature=comm_temperature,
+            )
+        else:
+            raise ValueError(f"Unsupported comm_method: {comm_method}")
+
+        self.comm_method = comm_method
         self.chunk_latent_len = chunk_latent_len
 
         if freeze_speech:
@@ -63,7 +82,16 @@ class ChunkedSpeechToSummaryLatentModel(nn.Module):
         for chunk_idx in range(num_chunks):
             chunk_features = input_features[:, chunk_idx, :, :]
             speech_hidden_states = self.encode_speech_chunk(chunk_features)
-            latent_embeds, latent_mask = self.comm(speech_hidden_states)
+            if getattr(self.comm, "requires_receiver_embedding", False):
+                receiver_embedding_weight = (
+                    self.summary_model.get_input_embeddings().weight
+                )
+                latent_embeds, latent_mask = self.comm(
+                    speech_hidden_states,
+                    receiver_embedding_weight=receiver_embedding_weight,
+                )
+            else:
+                latent_embeds, latent_mask = self.comm(speech_hidden_states)
 
             active = chunk_attention_mask[:, chunk_idx].view(batch_size, 1, 1)
             latent_embeds = latent_embeds * active.to(latent_embeds.dtype)
@@ -109,4 +137,3 @@ class ChunkedSpeechToSummaryLatentModel(nn.Module):
             return_dict=True,
         )
         return outputs
-

@@ -19,7 +19,9 @@ MODE = 0
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_embedding_transcript_contrastive.pt"
+COMM_METHOD = "receiver_weighted_embedding"
+COMM_TEMPERATURE = 1.0
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_weighted_embedding_transcript.pt"
 
 TEST_METADATA_PATH = SPLIT_DIR / "test.jsonl"
 INPUT_AUDIO_DIR = PROJECT_ROOT / "input"
@@ -193,6 +195,8 @@ def load_model(device):
         chunk_latent_len=CHUNK_LATENT_LEN,
         freeze_speech=True,
         freeze_summary=True,
+        comm_method=COMM_METHOD,
+        comm_temperature=COMM_TEMPERATURE,
     ).to(device)
 
     state_dict = torch.load(CHECKPOINT_PATH, map_location=device)
@@ -272,7 +276,7 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = OUTPUT_DIR / f"{timestamp}_mode{MODE}_transcript_contrastive.txt"
+    output_path = OUTPUT_DIR / f"{timestamp}_mode{MODE}_weighted_embedding.txt"
     prompt_text = get_prompt_text()
     print("prompt:", prompt_text)
 

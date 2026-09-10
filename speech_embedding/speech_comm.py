@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class SpeechEmbeddingComm(nn.Module):
     def __init__(self, speech_dim, llm_dim, latent_len=32, num_heads=8, dropout=0.1):
@@ -53,4 +54,76 @@ class SpeechEmbeddingComm(nn.Module):
         latent_mask = torch.ones(batch_size, self.latent_len, dtype=torch.long, device=speech_hidden_states.device)
 
         #RETURN
+        return latent_embeds, latent_mask
+
+
+class ReceiverWeightedEmbeddingComm(nn.Module):
+    def __init__(
+        self,
+        speech_dim,
+        llm_dim,
+        vocab_size,
+        latent_len=32,
+        num_heads=8,
+        dropout=0.1,
+        temperature=1.0,
+    ):
+        super().__init__()
+        if speech_dim % num_heads != 0:
+            raise ValueError(
+                f"speech_dim = {speech_dim} must be divisible by num_heads = {num_heads}"
+            )
+
+        self.latent_len = latent_len
+        self.temperature = temperature
+        self.requires_receiver_embedding = True
+
+        self.query_tokens = nn.Parameter(
+            torch.randn(latent_len, speech_dim) * 0.02
+        )
+        self.attn = nn.MultiheadAttention(
+            embed_dim=speech_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.vocab_projector = nn.Sequential(
+            nn.LayerNorm(speech_dim),
+            nn.Linear(speech_dim, llm_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(llm_dim, vocab_size),
+        )
+
+    def forward(
+        self,
+        speech_hidden_states,
+        receiver_embedding_weight,
+        speech_attention_mask=None,
+    ):
+        batch_size = speech_hidden_states.size(0)
+        queries = self.query_tokens.unsqueeze(0).expand(batch_size, -1, -1)
+
+        key_padding_mask = None
+        if speech_attention_mask is not None:
+            key_padding_mask = speech_attention_mask == 0
+
+        latent_speech, _ = self.attn(
+            query=queries,
+            key=speech_hidden_states,
+            value=speech_hidden_states,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+        )
+
+        vocab_logits = self.vocab_projector(latent_speech)
+        probs = F.softmax(vocab_logits / self.temperature, dim=-1)
+        latent_embeds = probs @ receiver_embedding_weight
+
+        latent_mask = torch.ones(
+            batch_size,
+            self.latent_len,
+            dtype=torch.long,
+            device=speech_hidden_states.device,
+        )
         return latent_embeds, latent_mask
