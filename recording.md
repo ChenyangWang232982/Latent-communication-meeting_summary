@@ -1,11 +1,21 @@
-Heads: 
-“头”其实就是把一个大矩阵，切分成几块小矩阵，分别去做注意力计算。
+Question
 
-输入：speech_dim = 512（一条包含512个数字的长向量）。
+- 从Encoder里提前最后一层hidden state作为embedding输入到adapter并与prompts embedding 拼接，这属于embedding方法还是hidden state方法 (未解决)
+- 需要一个云平台来高效训练模型 (半解决)
+- 在训练过程中出现了过拟合的问题 (测试集损失持续下降，但验证集损失保持在2.7)
+- 如何评估损失分数, 在summary上以算法来进行评估有概率出现误判的情况，可能需要引入AI参与loss打分
+- 分块压缩中参数的权衡 (需要做更多的实验来判断)
 
-切成8个头：把这512个数字按顺序分成8组，每组64个数字。
+Progress
 
-计算：每组（64个数字）独立地去计算注意力分数（Q、K、V的点积）。
-
-输出：8组计算结果拼回去，变回512个数字。
-
+- [x] Embedding adapter framework
+- [ ] Optimization
+- [ ] Evaluation Framework
+- [ ] Hidden state adapter framework
+- [ ] Optimization
+- [ ] Comparision
+- [ ] KV adapter framework
+- [ ] Optimization
+- [ ] Comparision
+- [ ] Normal prompts framework
+- [ ] Comparision
