@@ -15,6 +15,7 @@ from speech_embedding.paths import CHECKPOINT_DIR, PROJECT_ROOT, SPLIT_DIR, proj
 
 # MODE = 0: use test.jsonl to generate summaries and print gold summaries.
 # MODE = 1: read all audio files under input/ and generate summaries only.
+# MODE = 2: use test.jsonl to generate transcripts and print gold transcripts.
 MODE = 0
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
@@ -33,9 +34,11 @@ MAX_CHUNKS = 100
 CHUNK_LATENT_LEN = 4
 MAX_PROMPT_LENGTH = 32
 MAX_SUMMARY_NEW_TOKENS = 256
+MAX_TRANSCRIPT_NEW_TOKENS = 512
 SAMPLING_RATE = 16000
 BATCH_SIZE = 1
 SUMMARY_PROMPT_TEXT = "summarize the meeting:"
+TRANSCRIPT_PROMPT_TEXT = "transcribe the meeting speech:"
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".ogg"}
 
 
@@ -120,10 +123,14 @@ def encode_audio(audio_path, speech_processor):
 
 
 def get_prompt_text():
+    if MODE == 2:
+        return TRANSCRIPT_PROMPT_TEXT
     return SUMMARY_PROMPT_TEXT
 
 
 def get_max_new_tokens():
+    if MODE == 2:
+        return MAX_TRANSCRIPT_NEW_TOKENS
     return MAX_SUMMARY_NEW_TOKENS
 
 
@@ -230,7 +237,22 @@ def build_mode_1_items():
     ]
 
 
+def build_mode_2_items():
+    rows = read_jsonl(TEST_METADATA_PATH)
+    return [
+        {
+            "name": row.get("meeting_id", Path(row["audio_path"]).stem),
+            "audio_path": row["audio_path"],
+            "gold_text": row.get("transcript", ""),
+            "gold_label": "Gold transcript",
+        }
+        for row in rows
+    ]
+
+
 def get_generated_label():
+    if MODE == 2:
+        return "Generated transcript"
     return "Generated summary"
 
 
@@ -258,8 +280,8 @@ def format_result(index, item, generated_text):
 
 
 def main():
-    if MODE not in {0, 1}:
-        raise ValueError("MODE must be 0 or 1.")
+    if MODE not in {0, 1, 2}:
+        raise ValueError("MODE must be 0, 1, or 2.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("device:", device)
@@ -271,8 +293,10 @@ def main():
 
     if MODE == 0:
         items = build_mode_0_items()
-    else:
+    elif MODE == 1:
         items = build_mode_1_items()
+    else:
+        items = build_mode_2_items()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
