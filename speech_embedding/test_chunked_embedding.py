@@ -13,27 +13,29 @@ from speech_embedding.chunked_speech_to_summary_model import (
 from speech_embedding.paths import CHECKPOINT_DIR, PROJECT_ROOT, SPLIT_DIR, project_path
 
 
-# MODE = 0: use data/toy_meetings/splits/test.jsonl and print gold summaries.
-# MODE = 1: read all audio files under input/ and only generate summaries.
+# MODE = 0: use test.jsonl to generate summaries and print gold summaries.
+# MODE = 1: read all audio files under input/ and generate summaries only.
+# MODE = 2: use test.jsonl to generate transcripts and print gold transcripts.
 MODE = 0
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_embedding_best.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_embedding_transcript_aligned.pt"
 
 TEST_METADATA_PATH = SPLIT_DIR / "test.jsonl"
 INPUT_AUDIO_DIR = PROJECT_ROOT / "input"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 CHUNK_SECONDS = 30
-MAX_CHUNKS = 16
+MAX_CHUNKS = 32
 CHUNK_LATENT_LEN = 4
 MAX_PROMPT_LENGTH = 32
-MAX_SUMMARY_LENGTH = 256
-MAX_NEW_TOKENS = 256
+MAX_SUMMARY_NEW_TOKENS = 256
+MAX_TRANSCRIPT_NEW_TOKENS = 512
 SAMPLING_RATE = 16000
 BATCH_SIZE = 1
-PROMPT_TEXT = "summarize the meeting:"
+SUMMARY_PROMPT_TEXT = "summarize the meeting:"
+TRANSCRIPT_PROMPT_TEXT = "transcribe the meeting speech:"
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".ogg"}
 
 
@@ -117,9 +119,21 @@ def encode_audio(audio_path, speech_processor):
     return input_features, chunk_attention_mask
 
 
-def encode_prompt(tokenizer):
+def get_prompt_text():
+    if MODE == 2:
+        return TRANSCRIPT_PROMPT_TEXT
+    return SUMMARY_PROMPT_TEXT
+
+
+def get_max_new_tokens():
+    if MODE == 2:
+        return MAX_TRANSCRIPT_NEW_TOKENS
+    return MAX_SUMMARY_NEW_TOKENS
+
+
+def encode_prompt(tokenizer, prompt_text):
     prompt = tokenizer(
-        PROMPT_TEXT,
+        prompt_text,
         max_length=MAX_PROMPT_LENGTH,
         padding="max_length",
         truncation=True,
@@ -128,9 +142,9 @@ def encode_prompt(tokenizer):
     return prompt["input_ids"].squeeze(0), prompt["attention_mask"].squeeze(0)
 
 
-def make_batch(audio_path, speech_processor, tokenizer, device):
+def make_batch(audio_path, speech_processor, tokenizer, device, prompt_text):
     input_features, chunk_attention_mask = encode_audio(audio_path, speech_processor)
-    prompt_input_ids, prompt_attention_mask = encode_prompt(tokenizer)
+    prompt_input_ids, prompt_attention_mask = encode_prompt(tokenizer, prompt_text)
 
     batch = {
         "input_features": input_features.unsqueeze(0),
@@ -142,7 +156,7 @@ def make_batch(audio_path, speech_processor, tokenizer, device):
 
 
 @torch.no_grad()
-def generate_summary(model, batch):
+def generate_text(model, batch):
     latent_embeds, latent_mask = model.encode_all_chunks(
         batch["input_features"],
         batch["chunk_attention_mask"],
@@ -163,17 +177,19 @@ def generate_summary(model, batch):
     generated_ids = model.summary_model.generate(
         encoder_outputs=encoder_outputs,
         attention_mask=combined_mask,
-        max_new_tokens=MAX_NEW_TOKENS,
+        max_new_tokens=get_max_new_tokens(),
         num_beams=4,
-        length_penalty=1.0,
+        length_penalty=1.2,
+        repetition_penalty=1.3,
+        no_repeat_ngram_size=4,
         early_stopping=True,
     )
 
-    summaries = model.summary_tokenizer.batch_decode(
+    generated_text = model.summary_tokenizer.batch_decode(
         generated_ids,
         skip_special_tokens=True,
     )
-    return summaries[0]
+    return generated_text[0]
 
 
 def load_model(device):
@@ -182,7 +198,7 @@ def load_model(device):
         summary_model_name=SUMMARY_MODEL_NAME,
         chunk_latent_len=CHUNK_LATENT_LEN,
         freeze_speech=True,
-        freeze_summary=False,
+        freeze_summary=True,
     ).to(device)
 
     state_dict = torch.load(CHECKPOINT_PATH, map_location=device)
@@ -197,7 +213,8 @@ def build_mode_0_items():
         {
             "name": row.get("meeting_id", Path(row["audio_path"]).stem),
             "audio_path": row["audio_path"],
-            "gold_summary": row.get("summary", ""),
+            "gold_text": row.get("summary", ""),
+            "gold_label": "Gold summary",
         }
         for row in rows
     ]
@@ -208,29 +225,49 @@ def build_mode_1_items():
         {
             "name": path.stem,
             "audio_path": path,
-            "gold_summary": "",
+            "gold_text": "",
+            "gold_label": "",
         }
         for path in find_input_audio_files(INPUT_AUDIO_DIR)
     ]
 
 
-def format_result(index, item, generated_summary):
+def build_mode_2_items():
+    rows = read_jsonl(TEST_METADATA_PATH)
+    return [
+        {
+            "name": row.get("meeting_id", Path(row["audio_path"]).stem),
+            "audio_path": row["audio_path"],
+            "gold_text": row.get("transcript", ""),
+            "gold_label": "Gold transcript",
+        }
+        for row in rows
+    ]
+
+
+def get_generated_label():
+    if MODE == 2:
+        return "Generated transcript"
+    return "Generated summary"
+
+
+def format_result(index, item, generated_text):
     lines = [
         "=" * 80,
         f"Sample {index}",
         f"Name: {item['name']}",
         f"Audio: {item['audio_path']}",
         "",
-        "Generated summary:",
-        generated_summary,
+        f"{get_generated_label()}:",
+        generated_text,
     ]
 
-    if MODE == 0:
+    if item["gold_text"]:
         lines.extend(
             [
                 "",
-                "Gold summary:",
-                item["gold_summary"],
+                f"{item['gold_label']}:",
+                item["gold_text"],
             ]
         )
 
@@ -238,8 +275,8 @@ def format_result(index, item, generated_summary):
 
 
 def main():
-    if MODE not in {0, 1}:
-        raise ValueError("MODE must be 0 or 1.")
+    if MODE not in {0, 1, 2}:
+        raise ValueError("MODE must be 0, 1, or 2.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("device:", device)
@@ -251,12 +288,16 @@ def main():
 
     if MODE == 0:
         items = build_mode_0_items()
-    else:
+    elif MODE == 1:
         items = build_mode_1_items()
+    else:
+        items = build_mode_2_items()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = OUTPUT_DIR / f"{timestamp}_mode{MODE}_chunked_embedding.txt"
+    output_path = OUTPUT_DIR / f"{timestamp}_mode{MODE}_transcript_aligned_embedding.txt"
+    prompt_text = get_prompt_text()
+    print("prompt:", prompt_text)
 
     result_blocks = []
     for index, item in enumerate(items, start=1):
@@ -266,9 +307,10 @@ def main():
             speech_processor=speech_processor,
             tokenizer=model.summary_tokenizer,
             device=device,
+            prompt_text=prompt_text,
         )
-        generated_summary = generate_summary(model, batch)
-        result_blocks.append(format_result(index, item, generated_summary))
+        generated_text = generate_text(model, batch)
+        result_blocks.append(format_result(index, item, generated_text))
 
     output_text = "\n\n".join(result_blocks) + "\n"
     output_path.write_text(output_text, encoding="utf-8")

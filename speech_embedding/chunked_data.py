@@ -21,6 +21,7 @@ class ChunkedMeetingSpeechSummaryDataset(Dataset):
         max_chunks=16,
         max_summary_length=256,
         max_prompt_length=32,
+        target_field="summary",
     ):
         self.metadata_path = project_path(metadata_path)
         self.summary_tokenizer = summary_tokenizer
@@ -30,6 +31,7 @@ class ChunkedMeetingSpeechSummaryDataset(Dataset):
         self.max_chunks = max_chunks
         self.max_summary_length = max_summary_length
         self.max_prompt_length = max_prompt_length
+        self.target_field = target_field
         self.chunk_samples = sampling_rate * chunk_seconds
 
         self.speech_processor = WhisperProcessor.from_pretrained(speech_model_name)
@@ -106,9 +108,9 @@ class ChunkedMeetingSpeechSummaryDataset(Dataset):
         )
         return prompt["input_ids"].squeeze(0), prompt["attention_mask"].squeeze(0)
 
-    def encode_summary(self, summary):
+    def encode_target(self, target_text):
         target = self.summary_tokenizer(
-            summary,
+            target_text,
             max_length=self.max_summary_length,
             padding="max_length",
             truncation=True,
@@ -125,7 +127,13 @@ class ChunkedMeetingSpeechSummaryDataset(Dataset):
 
         input_features = self.encode_chunks(chunks)
         prompt_input_ids, prompt_attention_mask = self.encode_prompt()
-        labels = self.encode_summary(item["summary"])
+        target_text = item.get(self.target_field, "")
+        if not target_text:
+            raise ValueError(
+                f"Missing target field '{self.target_field}' "
+                f"for meeting_id={item.get('meeting_id', idx)}"
+            )
+        labels = self.encode_target(target_text)
 
         return {
             "input_features": input_features,
