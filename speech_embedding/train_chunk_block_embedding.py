@@ -16,7 +16,7 @@ COMM_TEMPERATURE = 1.0
 COMM_TOP_K = None
 
 PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding_t5_encoder.pt"
 
 TRAIN_METADATA_PATH = DATA_DIR / "chunk_blocks" / "train.jsonl"
 VAL_METADATA_PATH = DATA_DIR / "chunk_blocks" / "val.jsonl"
@@ -35,6 +35,39 @@ PRINT_EVERY = 20
 
 FREEZE_SPEECH = True
 FREEZE_SUMMARY = True
+TRAIN_T5_ENCODER = True
+TRAIN_T5_DECODER = False
+
+
+def configure_trainable_parameters(model):
+    for param in model.speech_model.parameters():
+        param.requires_grad = False
+
+    for param in model.summary_model.parameters():
+        param.requires_grad = False
+
+    for param in model.comm.parameters():
+        param.requires_grad = True
+
+    if TRAIN_T5_ENCODER:
+        for name, param in model.summary_model.named_parameters():
+            if name.startswith("encoder.block") or name.startswith(
+                "encoder.final_layer_norm"
+            ):
+                param.requires_grad = True
+
+    if TRAIN_T5_DECODER:
+        for name, param in model.summary_model.named_parameters():
+            if name.startswith("decoder.block") or name.startswith(
+                "decoder.final_layer_norm"
+            ):
+                param.requires_grad = True
+
+
+def count_parameters(model):
+    total = sum(param.numel() for param in model.parameters())
+    trainable = sum(param.numel() for param in model.parameters() if param.requires_grad)
+    return total, trainable
 
 
 def move_batch_to_device(batch, device):
@@ -83,7 +116,7 @@ def train():
     print("device:", device)
     print(
         "config: "
-        f"mode_name=chunk_block_weighted_embedding, "
+        f"mode_name=chunk_block_direct_embedding_t5_encoder, "
         f"comm_method={COMM_METHOD}, "
         f"chunk_latent_len={CHUNK_LATENT_LEN}, "
         f"max_target_length={MAX_TARGET_LENGTH}, "
@@ -95,7 +128,9 @@ def train():
         f"comm_temperature={COMM_TEMPERATURE}, "
         f"comm_top_k={COMM_TOP_K}, "
         f"freeze_speech={FREEZE_SPEECH}, "
-        f"freeze_summary={FREEZE_SUMMARY}"
+        f"freeze_summary={FREEZE_SUMMARY}, "
+        f"train_t5_encoder={TRAIN_T5_ENCODER}, "
+        f"train_t5_decoder={TRAIN_T5_DECODER}"
     )
 
     model = ChunkedSpeechToSummaryLatentModel(
@@ -108,6 +143,10 @@ def train():
         comm_temperature=COMM_TEMPERATURE,
         comm_top_k=COMM_TOP_K,
     ).to(device)
+    configure_trainable_parameters(model)
+    total_params, trainable_params_count = count_parameters(model)
+    print(f"total parameters: {total_params:,}")
+    print(f"trainable parameters: {trainable_params_count:,}")
 
     train_dataset = ChunkBlockSpeechTranscriptDataset(
         metadata_path=TRAIN_METADATA_PATH,

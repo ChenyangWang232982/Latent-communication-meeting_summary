@@ -18,7 +18,7 @@ COMM_TEMPERATURE = 1.0
 COMM_TOP_K = None
 
 PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding_t5_encoder.pt"
 TEST_METADATA_PATH = DATA_DIR / "chunk_blocks" / "test.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
