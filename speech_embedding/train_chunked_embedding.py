@@ -12,7 +12,8 @@ from speech_embedding.paths import CHECKPOINT_DIR, SPLIT_DIR
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
 COMM_METHOD = "receiver_weighted_embedding"
-COMM_TEMPERATURE = 1.0
+COMM_TEMPERATURE = 0.35
+COMM_TOP_K = 128
 
 TARGET_FIELD = "transcript"
 PROMPT_TEXT = "transcribe the meeting speech:"
@@ -20,7 +21,7 @@ CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_weighted_embedding_transc
 
 # Keep this consistent with test_chunked_embedding.py.
 MAX_CHUNKS = 100
-CHUNK_LATENT_LEN = 4
+CHUNK_LATENT_LEN = 12
 MAX_TARGET_LENGTH = 512
 
 BATCH_SIZE = 2
@@ -94,6 +95,7 @@ def train():
         f"lr={LEARNING_RATE}, "
         f"weight_decay={WEIGHT_DECAY}, "
         f"comm_temperature={COMM_TEMPERATURE}, "
+        f"comm_top_k={COMM_TOP_K}, "
         f"freeze_speech={FREEZE_SPEECH}, "
         f"freeze_summary={FREEZE_SUMMARY}"
     )
@@ -106,6 +108,7 @@ def train():
         freeze_summary=FREEZE_SUMMARY,
         comm_method=COMM_METHOD,
         comm_temperature=COMM_TEMPERATURE,
+        comm_top_k=COMM_TOP_K,
     ).to(device)
 
     train_dataset = ChunkedMeetingSpeechSummaryDataset(

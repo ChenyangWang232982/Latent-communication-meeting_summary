@@ -19,6 +19,7 @@ class ChunkedSpeechToSummaryLatentModel(nn.Module):
         freeze_summary=False,
         comm_method="receiver_weighted_embedding",
         comm_temperature=1.0,
+        comm_top_k=None,
     ):
         super().__init__()
 
@@ -45,12 +46,15 @@ class ChunkedSpeechToSummaryLatentModel(nn.Module):
                 latent_len=chunk_latent_len,
                 num_heads=num_heads,
                 temperature=comm_temperature,
+                top_k=comm_top_k,
             )
         else:
             raise ValueError(f"Unsupported comm_method: {comm_method}")
 
         self.comm_method = comm_method
         self.chunk_latent_len = chunk_latent_len
+        self.comm_temperature = comm_temperature
+        self.comm_top_k = comm_top_k
 
         if freeze_speech:
             for param in self.speech_model.parameters():

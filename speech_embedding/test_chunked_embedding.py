@@ -21,7 +21,8 @@ MODE = 0
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
 COMM_METHOD = "receiver_weighted_embedding"
-COMM_TEMPERATURE = 1.0
+COMM_TEMPERATURE = 0.35
+COMM_TOP_K = 128
 CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunked_weighted_embedding_transcript.pt"
 
 TEST_METADATA_PATH = SPLIT_DIR / "test.jsonl"
@@ -31,7 +32,8 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 CHUNK_SECONDS = 30
 # Keep this consistent with train_chunked_embedding.py.
 MAX_CHUNKS = 100
-CHUNK_LATENT_LEN = 4
+CHUNK_LATENT_LEN = 12
+AUTO_INFER_CHECKPOINT_SHAPE = True
 MAX_PROMPT_LENGTH = 32
 MAX_SUMMARY_NEW_TOKENS = 256
 MAX_TRANSCRIPT_NEW_TOKENS = 512
@@ -195,18 +197,31 @@ def generate_text(model, batch):
     return generated_text[0]
 
 
+def infer_chunk_latent_len(state_dict):
+    query_tokens = state_dict.get("comm.query_tokens")
+    if query_tokens is None:
+        return CHUNK_LATENT_LEN
+    return query_tokens.shape[0]
+
+
 def load_model(device):
+    state_dict = torch.load(CHECKPOINT_PATH, map_location=device)
+    chunk_latent_len = CHUNK_LATENT_LEN
+    if AUTO_INFER_CHECKPOINT_SHAPE:
+        chunk_latent_len = infer_chunk_latent_len(state_dict)
+        print("checkpoint chunk_latent_len:", chunk_latent_len)
+
     model = ChunkedSpeechToSummaryLatentModel(
         speech_model_name=SPEECH_MODEL_NAME,
         summary_model_name=SUMMARY_MODEL_NAME,
-        chunk_latent_len=CHUNK_LATENT_LEN,
+        chunk_latent_len=chunk_latent_len,
         freeze_speech=True,
         freeze_summary=True,
         comm_method=COMM_METHOD,
         comm_temperature=COMM_TEMPERATURE,
+        comm_top_k=COMM_TOP_K,
     ).to(device)
 
-    state_dict = torch.load(CHECKPOINT_PATH, map_location=device)
     model.load_state_dict(state_dict)
     model.eval()
     return model

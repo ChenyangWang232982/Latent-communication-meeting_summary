@@ -67,6 +67,7 @@ class ReceiverWeightedEmbeddingComm(nn.Module):
         num_heads=8,
         dropout=0.1,
         temperature=1.0,
+        top_k=None,
     ):
         super().__init__()
         if speech_dim % num_heads != 0:
@@ -76,6 +77,7 @@ class ReceiverWeightedEmbeddingComm(nn.Module):
 
         self.latent_len = latent_len
         self.temperature = temperature
+        self.top_k = top_k
         self.requires_receiver_embedding = True
 
         self.query_tokens = nn.Parameter(
@@ -117,8 +119,14 @@ class ReceiverWeightedEmbeddingComm(nn.Module):
         )
 
         vocab_logits = self.vocab_projector(latent_speech)
+        if self.top_k is not None and self.top_k > 0 and self.top_k < vocab_logits.size(-1):
+            top_values, top_indices = torch.topk(vocab_logits, k=self.top_k, dim=-1)
+            sparse_logits = torch.full_like(vocab_logits, float("-inf"))
+            vocab_logits = sparse_logits.scatter(-1, top_indices, top_values)
+
         probs = F.softmax(vocab_logits / self.temperature, dim=-1)
         latent_embeds = probs @ receiver_embedding_weight
+        latent_embeds = F.layer_norm(latent_embeds, latent_embeds.shape[-1:])
 
         latent_mask = torch.ones(
             batch_size,
