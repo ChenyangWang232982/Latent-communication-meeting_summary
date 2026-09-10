@@ -15,14 +15,14 @@ SUMMARY_MODEL_NAME = "google/flan-t5-small"
 
 TEACHER_TARGET_FIELD = "teacher_summary"
 TEACHER_PROMPT_TEXT = "summarize the meeting:"
-TEACHER_CHECKPOINT_PATH = (
-    CHECKPOINT_DIR / "checkpoint_chunked_embedding_teacher_distilled.pt"
+ALIGNMENT_CHECKPOINT_PATH = (
+    CHECKPOINT_DIR / "checkpoint_chunked_embedding_alignment.pt"
 )
 
 # Keep this consistent with build_teacher_summary_metadata.py and test_chunked_embedding.py.
 MAX_CHUNKS = 100
 CHUNK_LATENT_LEN = 4
-MAX_TEACHER_SUMMARY_LENGTH = 256
+MAX_TEXT_LENGTH = 1024
 
 BATCH_SIZE = 1
 MAX_EPOCHS = 60
@@ -30,7 +30,8 @@ PATIENCE = 8
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 0.01
 MIN_DELTA = 1e-4
-LABEL_SMOOTHING = 0.05
+MSE_WEIGHT = 1.0
+COSINE_WEIGHT = 1.0
 GRAD_CLIP_NORM = 1.0
 PRINT_EVERY = 5
 
@@ -45,11 +46,11 @@ def get_prompt_text():
 
 
 def get_checkpoint_path():
-    return TEACHER_CHECKPOINT_PATH
+    return ALIGNMENT_CHECKPOINT_PATH
 
 
 def get_max_target_length():
-    return MAX_TEACHER_SUMMARY_LENGTH
+    return MAX_TEXT_LENGTH
 
 
 def move_batch_to_device(batch, device):
@@ -57,6 +58,42 @@ def move_batch_to_device(batch, device):
         key: value.to(device)
         for key, value in batch.items()
     }
+
+
+def compress_text_embeddings(text_embeds, text_attention_mask, target_len):
+    text_latents = []
+
+    for sample_embeds, sample_mask in zip(text_embeds, text_attention_mask):
+        valid_embeds = sample_embeds[sample_mask.bool()]
+
+        if valid_embeds.numel() == 0:
+            pooled = sample_embeds.new_zeros(target_len, sample_embeds.size(-1))
+        elif valid_embeds.size(0) < target_len:
+            pad_len = target_len - valid_embeds.size(0)
+            padding = valid_embeds[-1:].expand(pad_len, -1)
+            pooled = torch.cat([valid_embeds, padding], dim=0)
+        else:
+            pooled = F.adaptive_avg_pool1d(
+                valid_embeds.transpose(0, 1).unsqueeze(0),
+                target_len,
+            ).squeeze(0).transpose(0, 1)
+
+        text_latents.append(pooled)
+
+    return torch.stack(text_latents, dim=0)
+
+
+def alignment_loss(speech_latents, text_latents, latent_mask):
+    mask = latent_mask.to(speech_latents.dtype)
+    token_count = mask.sum().clamp_min(1.0)
+
+    mse = ((speech_latents - text_latents) ** 2).sum(dim=-1)
+    mse = (mse * mask).sum() / (token_count * speech_latents.size(-1))
+
+    cosine = F.cosine_similarity(speech_latents, text_latents, dim=-1)
+    cosine = 1.0 - (cosine * mask).sum() / token_count
+
+    return MSE_WEIGHT * mse + COSINE_WEIGHT * cosine, mse, cosine
 
 
 def run_epoch(model, loader, device, optimizer=None):
@@ -69,14 +106,24 @@ def run_epoch(model, loader, device, optimizer=None):
         batch = move_batch_to_device(batch, device)
 
         with torch.set_grad_enabled(is_train):
-            outputs = model(**batch)
-            logits = outputs.logits
-            labels = batch["labels"]
-            loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                labels.reshape(-1),
-                ignore_index=-100,
-                label_smoothing=LABEL_SMOOTHING,
+            speech_latents, latent_mask = model.encode_all_chunks(
+                batch["input_features"],
+                batch["chunk_attention_mask"],
+            )
+            with torch.no_grad():
+                text_embeds = model.summary_model.get_input_embeddings()(
+                    batch["target_input_ids"]
+                )
+                text_latents = compress_text_embeddings(
+                    text_embeds,
+                    batch["target_attention_mask"],
+                    target_len=speech_latents.size(1),
+                )
+
+            loss, mse, cosine = alignment_loss(
+                speech_latents,
+                text_latents,
+                latent_mask,
             )
 
             if is_train:
@@ -95,6 +142,8 @@ def run_epoch(model, loader, device, optimizer=None):
             print(
                 f"{phase} step {step}/{len(loader)}, "
                 f"loss={loss.item():.4f}, "
+                f"mse={mse.item():.4f}, "
+                f"cosine={cosine.item():.4f}, "
                 f"avg_loss={avg_loss:.4f}",
                 flush=True,
             )
@@ -108,7 +157,7 @@ def train():
     print("device:", device)
     print(
         "config: "
-        f"mode_name=text_communication_distillation, "
+        f"mode_name=embedding_alignment, "
         f"target_field={TRAIN_TARGET_FIELD}, "
         f"max_chunks={MAX_CHUNKS}, "
         f"chunk_latent_len={CHUNK_LATENT_LEN}, "
@@ -117,7 +166,8 @@ def train():
         f"patience={PATIENCE}, "
         f"lr={LEARNING_RATE}, "
         f"weight_decay={WEIGHT_DECAY}, "
-        f"label_smoothing={LABEL_SMOOTHING}, "
+        f"mse_weight={MSE_WEIGHT}, "
+        f"cosine_weight={COSINE_WEIGHT}, "
         f"grad_clip_norm={GRAD_CLIP_NORM}, "
         f"freeze_speech={FREEZE_SPEECH}, "
         f"freeze_summary={FREEZE_SUMMARY}"

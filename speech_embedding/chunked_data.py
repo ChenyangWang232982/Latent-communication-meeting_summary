@@ -120,9 +120,11 @@ class ChunkedMeetingSpeechSummaryDataset(Dataset):
             truncation=True,
             return_tensors="pt",
         )
-        labels = target["input_ids"].squeeze(0)
+        input_ids = target["input_ids"].squeeze(0)
+        attention_mask = target["attention_mask"].squeeze(0)
+        labels = input_ids.clone()
         labels[labels == self.summary_tokenizer.pad_token_id] = -100
-        return labels
+        return input_ids, attention_mask, labels
 
     def __getitem__(self, idx):
         item = self.samples[idx]
@@ -137,12 +139,14 @@ class ChunkedMeetingSpeechSummaryDataset(Dataset):
                 f"Missing target field '{self.target_field}' "
                 f"for meeting_id={item.get('meeting_id', idx)}"
             )
-        labels = self.encode_target(target_text)
+        target_input_ids, target_attention_mask, labels = self.encode_target(target_text)
 
         return {
             "input_features": input_features,
             "chunk_attention_mask": chunk_attention_mask,
             "prompt_input_ids": prompt_input_ids,
             "prompt_attention_mask": prompt_attention_mask,
+            "target_input_ids": target_input_ids,
+            "target_attention_mask": target_attention_mask,
             "labels": labels,
         }
