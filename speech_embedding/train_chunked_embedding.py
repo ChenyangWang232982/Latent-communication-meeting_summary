@@ -30,7 +30,7 @@ PATIENCE = 8
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 0.01
 MIN_DELTA = 1e-4
-MSE_WEIGHT = 1.0
+MSE_WEIGHT = 0.1
 COSINE_WEIGHT = 1.0
 GRAD_CLIP_NORM = 1.0
 PRINT_EVERY = 5
@@ -84,6 +84,11 @@ def compress_text_embeddings(text_embeds, text_attention_mask, target_len):
 
 
 def alignment_loss(speech_latents, text_latents, latent_mask):
+    speech_latents = F.layer_norm(speech_latents, speech_latents.shape[-1:])
+    text_latents = F.layer_norm(text_latents, text_latents.shape[-1:])
+    speech_latents = F.normalize(speech_latents, p=2, dim=-1)
+    text_latents = F.normalize(text_latents, p=2, dim=-1)
+
     mask = latent_mask.to(speech_latents.dtype)
     token_count = mask.sum().clamp_min(1.0)
 
