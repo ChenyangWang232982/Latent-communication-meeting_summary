@@ -18,8 +18,9 @@ COMM_TOP_K = None
 PROMPT_TEXT = "repeat the speech transcript:"
 CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding_t5_encoder.pt"
 
-TRAIN_METADATA_PATH = DATA_DIR / "chunk_blocks" / "train.jsonl"
-VAL_METADATA_PATH = DATA_DIR / "chunk_blocks" / "val.jsonl"
+TRAIN_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "train.jsonl"
+VAL_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "val.jsonl"
+TARGET_FIELD = "teacher_transcript"
 
 CHUNK_LATENT_LEN = 64
 MAX_TARGET_LENGTH = 128
@@ -118,6 +119,7 @@ def train():
         "config: "
         f"mode_name=chunk_block_direct_embedding_t5_encoder, "
         f"comm_method={COMM_METHOD}, "
+        f"target_field={TARGET_FIELD}, "
         f"chunk_latent_len={CHUNK_LATENT_LEN}, "
         f"max_target_length={MAX_TARGET_LENGTH}, "
         f"batch_size={BATCH_SIZE}, "
@@ -154,6 +156,7 @@ def train():
         summary_tokenizer=model.summary_tokenizer,
         prompt_text=PROMPT_TEXT,
         max_target_length=MAX_TARGET_LENGTH,
+        target_field=TARGET_FIELD,
     )
     val_dataset = ChunkBlockSpeechTranscriptDataset(
         metadata_path=VAL_METADATA_PATH,
@@ -161,6 +164,7 @@ def train():
         summary_tokenizer=model.summary_tokenizer,
         prompt_text=PROMPT_TEXT,
         max_target_length=MAX_TARGET_LENGTH,
+        target_field=TARGET_FIELD,
     )
 
     print(f"train samples: {len(train_dataset)}")

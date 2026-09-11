@@ -19,7 +19,7 @@ COMM_TOP_K = None
 
 PROMPT_TEXT = "repeat the speech transcript:"
 CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding_t5_encoder.pt"
-TEST_METADATA_PATH = DATA_DIR / "chunk_blocks" / "test.jsonl"
+TEST_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "test.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 CHUNK_LATENT_LEN = 64
@@ -103,22 +103,29 @@ def move_batch_to_device(batch, device):
 
 
 def format_result(index, row, generated_text):
-    return "\n".join(
-        [
-            "=" * 80,
-            f"Sample {index}",
-            f"Sample id: {row['sample_id']}",
-            f"Meeting id: {row['meeting_id']}",
-            f"Chunk index: {row['chunk_index']}",
-            f"Start time: {row['start_time']}s",
-            "",
-            "Generated transcript:",
-            generated_text,
-            "",
-            "Gold transcript:",
-            row["transcript"],
-        ]
-    )
+    lines = [
+        "=" * 80,
+        f"Sample {index}",
+        f"Sample id: {row['sample_id']}",
+        f"Meeting id: {row['meeting_id']}",
+        f"Chunk index: {row['chunk_index']}",
+        f"Start time: {row['start_time']}s",
+        "",
+        "Generated transcript:",
+        generated_text,
+        "",
+        "Teacher transcript:",
+        row.get("teacher_transcript", ""),
+    ]
+    if row.get("transcript"):
+        lines.extend(
+            [
+                "",
+                "AMI transcript:",
+                row["transcript"],
+            ]
+        )
+    return "\n".join(lines)
 
 
 def main():

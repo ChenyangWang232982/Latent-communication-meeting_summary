@@ -19,6 +19,7 @@ class ChunkBlockSpeechTranscriptDataset(Dataset):
         chunk_seconds=30,
         max_target_length=128,
         max_prompt_length=32,
+        target_field="transcript",
     ):
         self.metadata_path = project_path(metadata_path)
         self.summary_tokenizer = summary_tokenizer
@@ -27,6 +28,7 @@ class ChunkBlockSpeechTranscriptDataset(Dataset):
         self.chunk_seconds = chunk_seconds
         self.max_target_length = max_target_length
         self.max_prompt_length = max_prompt_length
+        self.target_field = target_field
         self.chunk_samples = sampling_rate * chunk_seconds
 
         self.speech_processor = WhisperProcessor.from_pretrained(speech_model_name)
@@ -100,9 +102,13 @@ class ChunkBlockSpeechTranscriptDataset(Dataset):
         audio = self.load_audio_chunk(item)
         input_features = self.encode_audio(audio)
         prompt_input_ids, prompt_attention_mask = self.encode_prompt()
-        target_input_ids, target_attention_mask, labels = self.encode_target(
-            item["transcript"]
-        )
+        target_text = item.get(self.target_field, "")
+        if not target_text:
+            raise ValueError(
+                f"Missing target field '{self.target_field}' "
+                f"for sample_id={item.get('sample_id', idx)}"
+            )
+        target_input_ids, target_attention_mask, labels = self.encode_target(target_text)
 
         return {
             "input_features": input_features,
