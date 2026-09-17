@@ -14,7 +14,9 @@ from speech_embedding.paths import CHECKPOINT_DIR, DATA_DIR, PROJECT_ROOT
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
 PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_decoder_latent_adapter.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_decoder_latent_adapter_overfit8.pt"
+OVERFIT_MODE = True
+OVERFIT_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "train.jsonl"
 TEST_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "test.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
@@ -23,7 +25,7 @@ MAX_TARGET_LENGTH = 128
 MAX_NEW_TOKENS = 128
 MAX_WHISPER_NEW_TOKENS = 128
 BATCH_SIZE = 1
-MAX_TEST_SAMPLES = 30
+MAX_TEST_SAMPLES = 8
 
 
 def read_jsonl(path):
@@ -126,12 +128,13 @@ def main():
     print("checkpoint:", CHECKPOINT_PATH)
 
     model = load_model(device)
-    rows = read_jsonl(TEST_METADATA_PATH)
+    metadata_path = OVERFIT_METADATA_PATH if OVERFIT_MODE else TEST_METADATA_PATH
+    rows = read_jsonl(metadata_path)
     if MAX_TEST_SAMPLES is not None:
         rows = rows[:MAX_TEST_SAMPLES]
 
     dataset = ChunkBlockSpeechTranscriptDataset(
-        metadata_path=TEST_METADATA_PATH,
+        metadata_path=metadata_path,
         speech_model_name=SPEECH_MODEL_NAME,
         summary_tokenizer=model.summary_tokenizer,
         prompt_text=PROMPT_TEXT,
@@ -144,7 +147,8 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = OUTPUT_DIR / f"{timestamp}_decoder_latent_chunk_block_test.txt"
+    mode_name = "overfit8" if OVERFIT_MODE else "test"
+    output_path = OUTPUT_DIR / f"{timestamp}_decoder_latent_chunk_block_{mode_name}.txt"
 
     blocks = []
     for index, batch in enumerate(loader, start=1):

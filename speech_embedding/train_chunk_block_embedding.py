@@ -12,7 +12,7 @@ from speech_embedding.paths import CHECKPOINT_DIR, DATA_DIR
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
 PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_decoder_latent_adapter.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_decoder_latent_adapter_overfit8.pt"
 
 TRAIN_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "train.jsonl"
 VAL_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "val.jsonl"
@@ -22,11 +22,16 @@ CHUNK_LATENT_LEN = 64
 MAX_TARGET_LENGTH = 128
 MAX_WHISPER_NEW_TOKENS = 128
 
+# This is a capacity diagnostic, not a generalization experiment.  It asks one
+# narrow question: can the frozen-T5 adapter memorize eight audio/text pairs?
+OVERFIT_MODE = True
+OVERFIT_SAMPLE_COUNT = 8
+
 BATCH_SIZE = 8
-MAX_EPOCHS = 40
-PATIENCE = 6
-LEARNING_RATE = 3e-4
-WEIGHT_DECAY = 0.01
+MAX_EPOCHS = 300
+PATIENCE = None
+LEARNING_RATE = 1e-3
+WEIGHT_DECAY = 0.0
 MIN_DELTA = 1e-4
 GRAD_CLIP_NORM = 1.0
 PRINT_EVERY = 20
@@ -108,6 +113,8 @@ def train():
         f"chunk_latent_len={CHUNK_LATENT_LEN}, "
         f"max_whisper_new_tokens={MAX_WHISPER_NEW_TOKENS}, "
         f"max_target_length={MAX_TARGET_LENGTH}, "
+        f"overfit_mode={OVERFIT_MODE}, "
+        f"overfit_sample_count={OVERFIT_SAMPLE_COUNT}, "
         f"batch_size={BATCH_SIZE}, "
         f"max_epochs={MAX_EPOCHS}, "
         f"patience={PATIENCE}, "
@@ -148,6 +155,17 @@ def train():
         target_field=TARGET_FIELD,
     )
 
+    if OVERFIT_MODE:
+        if len(train_dataset) < OVERFIT_SAMPLE_COUNT:
+            raise ValueError(
+                f"Need at least {OVERFIT_SAMPLE_COUNT} training samples, "
+                f"but found {len(train_dataset)}."
+            )
+        train_dataset.samples = train_dataset.samples[:OVERFIT_SAMPLE_COUNT]
+        # Validation deliberately uses the same examples.  A low loss here is
+        # evidence of model capacity, not a claim about generalization.
+        val_dataset = train_dataset
+
     print(f"train samples: {len(train_dataset)}")
     print(f"val samples: {len(val_dataset)}")
 
@@ -182,9 +200,10 @@ def train():
             print(f"saved best checkpoint: {CHECKPOINT_PATH}")
         else:
             bad_epochs += 1
-            print(f"no improvement: {bad_epochs}/{PATIENCE}")
+            if PATIENCE is not None:
+                print(f"no improvement: {bad_epochs}/{PATIENCE}")
 
-        if bad_epochs >= PATIENCE:
+        if PATIENCE is not None and bad_epochs >= PATIENCE:
             print(
                 f"early stopping at epoch {epoch + 1}; "
                 f"best_val_loss={best_val_loss:.4f}"
