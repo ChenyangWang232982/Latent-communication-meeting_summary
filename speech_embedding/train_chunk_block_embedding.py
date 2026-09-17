@@ -11,12 +11,8 @@ from speech_embedding.paths import CHECKPOINT_DIR, DATA_DIR
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
-COMM_METHOD = "direct_projection"
-COMM_TEMPERATURE = 1.0
-COMM_TOP_K = None
-
 PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding_t5_encoder.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_decoder_latent_adapter.pt"
 
 TRAIN_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "train.jsonl"
 VAL_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "val.jsonl"
@@ -24,6 +20,7 @@ TARGET_FIELD = "teacher_transcript"
 
 CHUNK_LATENT_LEN = 64
 MAX_TARGET_LENGTH = 128
+MAX_WHISPER_NEW_TOKENS = 128
 
 BATCH_SIZE = 8
 MAX_EPOCHS = 40
@@ -36,8 +33,6 @@ PRINT_EVERY = 20
 
 FREEZE_SPEECH = True
 FREEZE_SUMMARY = True
-TRAIN_T5_ENCODER = True
-TRAIN_T5_DECODER = False
 
 
 def configure_trainable_parameters(model):
@@ -50,19 +45,6 @@ def configure_trainable_parameters(model):
     for param in model.comm.parameters():
         param.requires_grad = True
 
-    if TRAIN_T5_ENCODER:
-        for name, param in model.summary_model.named_parameters():
-            if name.startswith("encoder.block") or name.startswith(
-                "encoder.final_layer_norm"
-            ):
-                param.requires_grad = True
-
-    if TRAIN_T5_DECODER:
-        for name, param in model.summary_model.named_parameters():
-            if name.startswith("decoder.block") or name.startswith(
-                "decoder.final_layer_norm"
-            ):
-                param.requires_grad = True
 
 
 def count_parameters(model):
@@ -78,6 +60,10 @@ def move_batch_to_device(batch, device):
 def run_epoch(model, loader, device, optimizer=None):
     is_train = optimizer is not None
     model.train(is_train)
+    # Frozen sender/receiver must also stay deterministic: ``model.train()``
+    # would otherwise activate their dropout layers without updating weights.
+    model.speech_model.eval()
+    model.summary_model.eval()
     total_loss = 0.0
     phase = "train" if is_train else "val"
 
@@ -117,22 +103,19 @@ def train():
     print("device:", device)
     print(
         "config: "
-        f"mode_name=chunk_block_direct_embedding_t5_encoder, "
-        f"comm_method={COMM_METHOD}, "
+        f"mode_name=chunk_block_whisper_decoder_latent_adapter, "
         f"target_field={TARGET_FIELD}, "
         f"chunk_latent_len={CHUNK_LATENT_LEN}, "
+        f"max_whisper_new_tokens={MAX_WHISPER_NEW_TOKENS}, "
         f"max_target_length={MAX_TARGET_LENGTH}, "
         f"batch_size={BATCH_SIZE}, "
         f"max_epochs={MAX_EPOCHS}, "
         f"patience={PATIENCE}, "
         f"lr={LEARNING_RATE}, "
         f"weight_decay={WEIGHT_DECAY}, "
-        f"comm_temperature={COMM_TEMPERATURE}, "
-        f"comm_top_k={COMM_TOP_K}, "
         f"freeze_speech={FREEZE_SPEECH}, "
         f"freeze_summary={FREEZE_SUMMARY}, "
-        f"train_t5_encoder={TRAIN_T5_ENCODER}, "
-        f"train_t5_decoder={TRAIN_T5_DECODER}"
+        "trainable=adapter_only"
     )
 
     model = ChunkedSpeechToSummaryLatentModel(
@@ -141,9 +124,7 @@ def train():
         chunk_latent_len=CHUNK_LATENT_LEN,
         freeze_speech=FREEZE_SPEECH,
         freeze_summary=FREEZE_SUMMARY,
-        comm_method=COMM_METHOD,
-        comm_temperature=COMM_TEMPERATURE,
-        comm_top_k=COMM_TOP_K,
+        max_whisper_new_tokens=MAX_WHISPER_NEW_TOKENS,
     ).to(device)
     configure_trainable_parameters(model)
     total_params, trainable_params_count = count_parameters(model)

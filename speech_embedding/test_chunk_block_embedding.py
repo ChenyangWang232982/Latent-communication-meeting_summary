@@ -13,18 +13,15 @@ from speech_embedding.paths import CHECKPOINT_DIR, DATA_DIR, PROJECT_ROOT
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
-COMM_METHOD = "direct_projection"
-COMM_TEMPERATURE = 1.0
-COMM_TOP_K = None
-
 PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_direct_embedding_t5_encoder.pt"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_chunk_block_decoder_latent_adapter.pt"
 TEST_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "test.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 CHUNK_LATENT_LEN = 64
 MAX_TARGET_LENGTH = 128
 MAX_NEW_TOKENS = 128
+MAX_WHISPER_NEW_TOKENS = 128
 BATCH_SIZE = 1
 MAX_TEST_SAMPLES = 30
 
@@ -57,9 +54,7 @@ def load_model(device):
         chunk_latent_len=chunk_latent_len,
         freeze_speech=True,
         freeze_summary=True,
-        comm_method=COMM_METHOD,
-        comm_temperature=COMM_TEMPERATURE,
-        comm_top_k=COMM_TOP_K,
+        max_whisper_new_tokens=MAX_WHISPER_NEW_TOKENS,
     ).to(device)
     model.load_state_dict(state_dict)
     model.eval()
@@ -68,15 +63,12 @@ def load_model(device):
 
 @torch.no_grad()
 def generate_text(model, batch):
-    latent_embeds, latent_mask = model.encode_all_chunks(
+    combined_embeds, combined_mask = model.build_receiver_inputs(
         batch["input_features"],
         batch["chunk_attention_mask"],
+        batch["prompt_input_ids"],
+        batch["prompt_attention_mask"],
     )
-    prompt_embeds = model.summary_model.get_input_embeddings()(
-        batch["prompt_input_ids"]
-    )
-    combined_embeds = torch.cat([latent_embeds, prompt_embeds], dim=1)
-    combined_mask = torch.cat([latent_mask, batch["prompt_attention_mask"]], dim=1)
 
     encoder_outputs = model.summary_model.get_encoder()(
         inputs_embeds=combined_embeds,
@@ -152,7 +144,7 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = OUTPUT_DIR / f"{timestamp}_chunk_block_test.txt"
+    output_path = OUTPUT_DIR / f"{timestamp}_decoder_latent_chunk_block_test.txt"
 
     blocks = []
     for index, batch in enumerate(loader, start=1):
