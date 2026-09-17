@@ -13,7 +13,7 @@ SUMMARY_MODEL_NAME = "google/flan-t5-small"
 METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "train.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
-PROMPT_TEXT = "repeat the speech transcript:"
+PROMPT_TEXT = "summarize the key factual information from the speech in one sentence:"
 MAX_INPUT_LENGTH = 256
 MAX_NEW_TOKENS = 128
 MAX_SAMPLES = 8

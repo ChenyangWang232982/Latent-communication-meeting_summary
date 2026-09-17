@@ -13,11 +13,11 @@ from speech_embedding.paths import CHECKPOINT_DIR, DATA_DIR, PROJECT_ROOT
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
-PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_decoder_latent_adapter_overfit8.pt"
+PROMPT_TEXT = "summarize the key factual information from the speech in one sentence:"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_decoder_latent_adapter_fact_overfit8.pt"
 OVERFIT_MODE = True
-OVERFIT_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "train.jsonl"
-TEST_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "test.jsonl"
+OVERFIT_METADATA_PATH = DATA_DIR / "chunk_blocks_receiver_targets" / "train.jsonl"
+TEST_METADATA_PATH = DATA_DIR / "chunk_blocks_receiver_targets" / "test.jsonl"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 CHUNK_LATENT_LEN = 64
@@ -26,6 +26,7 @@ MAX_NEW_TOKENS = 128
 MAX_WHISPER_NEW_TOKENS = 128
 BATCH_SIZE = 1
 MAX_TEST_SAMPLES = 8
+TARGET_FIELD = "receiver_text_target"
 
 
 def read_jsonl(path):
@@ -110,6 +111,9 @@ def format_result(index, row, generated_text):
         "",
         "Teacher transcript:",
         row.get("teacher_transcript", ""),
+        "",
+        "Text-prompt target:",
+        row.get(TARGET_FIELD, ""),
     ]
     if row.get("transcript"):
         lines.extend(
@@ -139,6 +143,7 @@ def main():
         summary_tokenizer=model.summary_tokenizer,
         prompt_text=PROMPT_TEXT,
         max_target_length=MAX_TARGET_LENGTH,
+        target_field=TARGET_FIELD,
     )
     if MAX_TEST_SAMPLES is not None:
         dataset.samples = dataset.samples[:MAX_TEST_SAMPLES]

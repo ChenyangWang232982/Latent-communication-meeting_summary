@@ -11,12 +11,12 @@ from speech_embedding.paths import CHECKPOINT_DIR, DATA_DIR
 
 SPEECH_MODEL_NAME = "openai/whisper-base"
 SUMMARY_MODEL_NAME = "google/flan-t5-small"
-PROMPT_TEXT = "repeat the speech transcript:"
-CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_decoder_latent_adapter_overfit8.pt"
+PROMPT_TEXT = "summarize the key factual information from the speech in one sentence:"
+CHECKPOINT_PATH = CHECKPOINT_DIR / "checkpoint_decoder_latent_adapter_fact_overfit8.pt"
 
-TRAIN_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "train.jsonl"
-VAL_METADATA_PATH = DATA_DIR / "chunk_blocks_teacher" / "val.jsonl"
-TARGET_FIELD = "teacher_transcript"
+TRAIN_METADATA_PATH = DATA_DIR / "chunk_blocks_receiver_targets" / "train.jsonl"
+VAL_METADATA_PATH = DATA_DIR / "chunk_blocks_receiver_targets" / "val.jsonl"
+TARGET_FIELD = "receiver_text_target"
 
 CHUNK_LATENT_LEN = 64
 MAX_TARGET_LENGTH = 128
@@ -138,15 +138,6 @@ def train():
         max_target_length=MAX_TARGET_LENGTH,
         target_field=TARGET_FIELD,
     )
-    val_dataset = ChunkBlockSpeechTranscriptDataset(
-        metadata_path=VAL_METADATA_PATH,
-        speech_model_name=SPEECH_MODEL_NAME,
-        summary_tokenizer=model.summary_tokenizer,
-        prompt_text=PROMPT_TEXT,
-        max_target_length=MAX_TARGET_LENGTH,
-        target_field=TARGET_FIELD,
-    )
-
     if OVERFIT_MODE:
         if len(train_dataset) < OVERFIT_SAMPLE_COUNT:
             raise ValueError(
@@ -157,6 +148,15 @@ def train():
         # Validation deliberately uses the same examples.  A low loss here is
         # evidence of model capacity, not a claim about generalization.
         val_dataset = train_dataset
+    else:
+        val_dataset = ChunkBlockSpeechTranscriptDataset(
+            metadata_path=VAL_METADATA_PATH,
+            speech_model_name=SPEECH_MODEL_NAME,
+            summary_tokenizer=model.summary_tokenizer,
+            prompt_text=PROMPT_TEXT,
+            max_target_length=MAX_TARGET_LENGTH,
+            target_field=TARGET_FIELD,
+        )
 
     print(f"train samples: {len(train_dataset)}")
     print(f"val samples: {len(val_dataset)}")
