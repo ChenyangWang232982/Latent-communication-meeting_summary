@@ -152,7 +152,6 @@ def main():
 
     blocks = []
     for index, batch in enumerate(loader, start=1):
-        print(f"generate {index}/{len(loader)}", flush=True)
         batch = move_batch_to_device(batch, device)
         generated_text = generate_text(model, batch)
         blocks.append(format_result(index, rows[index - 1], generated_text))

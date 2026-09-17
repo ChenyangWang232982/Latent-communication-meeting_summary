@@ -50,6 +50,10 @@ class ChunkedSpeechToSummaryLatentModel(nn.Module):
         )
         self.summary_tokenizer = AutoTokenizer.from_pretrained(summary_model_name)
         self.summary_model = AutoModelForSeq2SeqLM.from_pretrained(summary_model_name)
+        # Generation is controlled exclusively by max_new_tokens at each call.
+        # Clearing the model defaults avoids a repeated max_length warning.
+        self.speech_model.generation_config.max_length = None
+        self.summary_model.generation_config.max_length = None
         self.freeze_speech = freeze_speech
         self.max_whisper_new_tokens = max_whisper_new_tokens
         self.forced_decoder_ids = self._get_forced_decoder_ids(language, task)

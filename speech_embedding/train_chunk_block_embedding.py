@@ -34,7 +34,6 @@ LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 0.0
 MIN_DELTA = 1e-4
 GRAD_CLIP_NORM = 1.0
-PRINT_EVERY = 20
 
 FREEZE_SPEECH = True
 FREEZE_SUMMARY = True
@@ -92,13 +91,6 @@ def run_epoch(model, loader, device, optimizer=None):
                 optimizer.step()
 
         total_loss += loss.item()
-
-        if step % PRINT_EVERY == 0 or step == len(loader):
-            print(
-                f"{phase} step {step}/{len(loader)}, "
-                f"loss={loss.item():.4f}, avg_loss={total_loss / step:.4f}",
-                flush=True,
-            )
 
     return total_loss / max(len(loader), 1)
 
@@ -197,7 +189,6 @@ def train():
             best_val_loss = val_loss
             bad_epochs = 0
             torch.save(model.state_dict(), CHECKPOINT_PATH)
-            print(f"saved best checkpoint: {CHECKPOINT_PATH}")
         else:
             bad_epochs += 1
             if PATIENCE is not None:
