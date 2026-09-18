@@ -1,4 +1,4 @@
-"""Train same-model CIPHER embedding communication on meeting summaries."""
+"""Train same-model CIPHER embedding communication on SQuAD QA."""
 
 from pathlib import Path
 
@@ -6,16 +6,16 @@ import torch
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 
-from llm_latent.data import MeetingLatentDataset
+from llm_latent.data import QALatentDataset
 from llm_latent.model import SameModelCipherSystem
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data" / "toy_meetings" / "splits"
+DATA_DIR = PROJECT_ROOT / "data" / "squad_v1_latent"
 
 MODEL_NAME = "google/flan-t5-small"
 TRAIN_PATH = DATA_DIR / "train.jsonl"
-VAL_PATH = DATA_DIR / "val.jsonl"
+VAL_PATH = DATA_DIR / "validation.jsonl"
 # Communication controls.  No compression keeps one latent message for every
 # non-padding sender token; compression reduces it to COMPRESSED_LATENT_LEN.
 USE_COMPRESSION = False
@@ -29,13 +29,13 @@ COMMUNICATION_NAME = "compressed" if USE_COMPRESSION else "uncompressed"
 CHECKPOINT_PATH = (
     PROJECT_ROOT
     / "llm_latent"
-    / f"cipher_same_model_{COMMUNICATION_NAME}_samples{SAMPLE_COUNT or 'all'}.pt"
+    / f"cipher_squad_{COMMUNICATION_NAME}_samples{SAMPLE_COUNT or 'all'}.pt"
 )
 
 TEMPERATURE = 1.0
 SENDER_MAX_LENGTH = 256
-RECEIVER_MAX_LENGTH = 32
-TARGET_MAX_LENGTH = 128
+RECEIVER_MAX_LENGTH = 64
+TARGET_MAX_LENGTH = 32
 
 BATCH_SIZE = 2
 MAX_EPOCHS = 200
@@ -106,7 +106,7 @@ def run_epoch(model, loader, optimizer, device):
 
 
 def build_dataset(path, tokenizer):
-    return MeetingLatentDataset(
+    return QALatentDataset(
         metadata_path=path,
         tokenizer=tokenizer,
         sender_max_length=SENDER_MAX_LENGTH,

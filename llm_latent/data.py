@@ -1,16 +1,19 @@
 import json
 from pathlib import Path
 
-from torch.utils.data import Dataset 
+from torch.utils.data import Dataset
 
-class MeetingLatentDataset(Dataset):
+
+class QALatentDataset(Dataset):
+    """Sender sees context plus question; receiver sees only the question."""
+
     def __init__(
-            self,
-            metadata_path,
-            tokenizer,
-            sender_max_length=256,
-            receiver_max_length=32,
-            target_max_length=64
+        self,
+        metadata_path,
+        tokenizer,
+        sender_max_length=256,
+        receiver_max_length=64,
+        target_max_length=32,
     ):
         self.tokenizer = tokenizer
         self.sender_max_length = sender_max_length
@@ -29,23 +32,14 @@ class MeetingLatentDataset(Dataset):
 
     def __getitem__(self, index):
         item = self.samples[index]
+        context = item["context"]
+        question = item["question"]
+        answer = item["answer"]
 
-        # Chunk-level files have teacher_transcript; meeting-level AMI splits
-        # normally store the source text under transcript.
-        transcript = item.get("teacher_transcript") or item.get("transcript")
-        if not transcript:
-            raise ValueError(
-                f"Missing transcript text for sample {item.get('meeting_id', index)}"
-            )
-        target = item["summary"]
-
-        sender_text = (
-            "Read the meeting transcript and encode its key information: "
-            + transcript
-        )
-
+        sender_text = f"Context: {context} Question: {question}"
         receiver_prompt = (
-            "Write a concise meeting summary based on the received information:"
+            "Answer the question using the received context. "
+            f"Question: {question}"
         )
 
         sender_inputs = self.tokenizer(
@@ -53,9 +47,8 @@ class MeetingLatentDataset(Dataset):
             max_length=self.sender_max_length,
             truncation=True,
             padding="max_length",
-            return_tensors="pt"
+            return_tensors="pt",
         )
-
         receiver_inputs = self.tokenizer(
             receiver_prompt,
             max_length=self.receiver_max_length,
@@ -63,13 +56,12 @@ class MeetingLatentDataset(Dataset):
             padding="max_length",
             return_tensors="pt",
         )
-
         target_inputs = self.tokenizer(
-            target,
+            answer,
             max_length=self.target_max_length,
             truncation=True,
             padding="max_length",
-            return_tensors="pt"
+            return_tensors="pt",
         )
 
         labels = target_inputs["input_ids"].squeeze(0)
