@@ -40,10 +40,17 @@ LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 0.01
 GRAD_CLIP_NORM = 1.0
 UNFREEZE_RECEIVER_ENCODER_LAYERS = 2
+UNFREEZE_DECODER_CROSS_ATTENTION = True
+
+RECEIVER_TUNING_NAME = (
+    f"encoder{UNFREEZE_RECEIVER_ENCODER_LAYERS}_decoder_cross_attention"
+    if UNFREEZE_DECODER_CROSS_ATTENTION
+    else f"encoder{UNFREEZE_RECEIVER_ENCODER_LAYERS}_frozen_decoder"
+)
 
 
 def configure_trainable_parameters(model):
-    """Freeze sender; train CIPHER plus the receiver's final encoder layers."""
+    """Train CIPHER plus receiver layers that must consume latent messages."""
     for parameter in model.sender.parameters():
         parameter.requires_grad = False
 
@@ -62,6 +69,17 @@ def configure_trainable_parameters(model):
 
     for parameter in model.receiver.encoder.final_layer_norm.parameters():
         parameter.requires_grad = True
+
+    if UNFREEZE_DECODER_CROSS_ATTENTION:
+        # T5 decoder blocks contain self-attention, encoder-decoder attention,
+        # then feed-forward layers.  Only the middle cross-attention module
+        # needs to adapt to the non-native CIPHER encoder representation.
+        for decoder_block in model.receiver.decoder.block:
+            for parameter in decoder_block.layer[1].parameters():
+                parameter.requires_grad = True
+
+        for parameter in model.receiver.decoder.final_layer_norm.parameters():
+            parameter.requires_grad = True
 
 
 def move_batch_to_device(batch, device):
@@ -156,7 +174,7 @@ def main():
         / "llm_latent"
         / (
             f"cipher_{args.experiment_name}_{MODEL_NAME_TAG}_{COMMUNICATION_NAME}_"
-            f"samples{SAMPLE_COUNT or 'all'}.pt"
+            f"{RECEIVER_TUNING_NAME}_samples{SAMPLE_COUNT or 'all'}.pt"
         )
     )
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -205,6 +223,7 @@ def main():
     print(f"device: {device}")
     print(
         f"communication: {COMMUNICATION_NAME}, "
+        f"receiver_tuning: {RECEIVER_TUNING_NAME}, "
         f"sample_count: {SAMPLE_COUNT or 'all'}, "
         f"train_samples: {len(train_dataset)}, val_samples: {len(val_dataset)}, "
         f"compressed_latent_len: {COMPRESSED_LATENT_LEN}"
