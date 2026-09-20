@@ -1,5 +1,6 @@
-"""Train same-model CIPHER embedding communication on SQuAD QA."""
+"""Train same-model CIPHER embedding communication on prepared QA data."""
 
+import argparse
 from pathlib import Path
 
 import torch
@@ -11,11 +12,9 @@ from llm_latent.model import SameModelCipherSystem
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data" / "squad_v1_latent"
+DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "squad_v1_latent"
 
 MODEL_NAME = "google/long-t5-tglobal-large"
-TRAIN_PATH = DATA_DIR / "train.jsonl"
-VAL_PATH = DATA_DIR / "validation.jsonl"
 # Communication controls.  No compression keeps one latent message for every
 # non-padding sender token; compression reduces it to COMPRESSED_LATENT_LEN.
 USE_COMPRESSION = False
@@ -27,14 +26,6 @@ VALIDATE_ON_TRAIN_SAMPLES = True
 
 COMMUNICATION_NAME = "compressed" if USE_COMPRESSION else "uncompressed"
 MODEL_NAME_TAG = MODEL_NAME.rsplit("/", maxsplit=1)[-1].replace("-", "_")
-CHECKPOINT_PATH = (
-    PROJECT_ROOT
-    / "llm_latent"
-    / (
-        f"cipher_squad_{MODEL_NAME_TAG}_{COMMUNICATION_NAME}_"
-        f"samples{SAMPLE_COUNT or 'all'}.pt"
-    )
-)
 
 TEMPERATURE = 1.0
 SENDER_MAX_LENGTH = 4096
@@ -133,7 +124,41 @@ def build_dataset(path, tokenizer):
     )
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help="Directory containing train.jsonl and validation.jsonl.",
+    )
+    parser.add_argument(
+        "--experiment-name",
+        default="squad",
+        help="Checkpoint name prefix, for example qasper.",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+    data_dir = args.data_dir.resolve()
+    train_path = data_dir / "train.jsonl"
+    val_path = data_dir / "validation.jsonl"
+    if not train_path.is_file() or not val_path.is_file():
+        raise FileNotFoundError(
+            f"Expected train.jsonl and validation.jsonl under {data_dir}. "
+            "Run a preparation script first."
+        )
+
+    checkpoint_path = (
+        PROJECT_ROOT
+        / "llm_latent"
+        / (
+            f"cipher_{args.experiment_name}_{MODEL_NAME_TAG}_{COMMUNICATION_NAME}_"
+            f"samples{SAMPLE_COUNT or 'all'}.pt"
+        )
+    )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = SameModelCipherSystem(
         model_name=MODEL_NAME,
@@ -147,7 +172,7 @@ def main():
     model.receiver.gradient_checkpointing_enable()
     model.receiver.config.use_cache = False
 
-    train_dataset = build_dataset(TRAIN_PATH, model.tokenizer)
+    train_dataset = build_dataset(train_path, model.tokenizer)
     if SAMPLE_COUNT is not None:
         if len(train_dataset) < SAMPLE_COUNT:
             raise ValueError(
@@ -159,7 +184,7 @@ def main():
     if VALIDATE_ON_TRAIN_SAMPLES:
         val_dataset = train_dataset
     else:
-        val_dataset = build_dataset(VAL_PATH, model.tokenizer)
+        val_dataset = build_dataset(val_path, model.tokenizer)
         if SAMPLE_COUNT is not None:
             val_dataset.samples = val_dataset.samples[:SAMPLE_COUNT]
 
@@ -199,7 +224,8 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), CHECKPOINT_PATH)
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f"saved checkpoint: {checkpoint_path}", flush=True)
 
         print(
             f"Epoch {epoch}/{MAX_EPOCHS}, "
