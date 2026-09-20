@@ -9,16 +9,22 @@ when one is available.
 import argparse
 import json
 import random
+import tarfile
+from urllib.request import urlretrieve
 from pathlib import Path
 
-from datasets import load_dataset
 from transformers import AutoTokenizer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = PROJECT_ROOT / "data" / "qasper_latent"
+RAW_DATA_DIR = PROJECT_ROOT / "data" / "qasper_raw"
 MODEL_NAME = "google/long-t5-tglobal-large"
 CONTEXT_WINDOW_TOKENS = 3900
+TRAIN_DEV_ARCHIVE_URL = (
+    "https://qasper-dataset.s3.us-west-2.amazonaws.com/"
+    "qasper-train-dev-v0.3.tgz"
+)
 
 
 def flatten_text(value):
@@ -107,7 +113,16 @@ def make_context_window(document, evidence, tokenizer, max_tokens):
 
 
 def iter_rows(split, tokenizer, max_tokens):
-    for paper_index, paper in enumerate(split):
+    if isinstance(split, dict):
+        papers = []
+        for paper_id, paper in split.items():
+            paper = dict(paper)
+            paper.setdefault("id", paper_id)
+            papers.append(paper)
+    else:
+        papers = split
+
+    for paper_index, paper in enumerate(papers):
         document = flatten_text(paper.get("full_text"))
         if not document:
             document = "\n\n".join(
@@ -118,6 +133,8 @@ def iter_rows(split, tokenizer, max_tokens):
 
         paper_id = paper.get("id") or paper.get("paper_id") or str(paper_index)
         qas = paper.get("qas") or paper.get("questions") or []
+        if isinstance(qas, dict):
+            qas = [qas] if "question" in qas else qas.values()
         for qa_index, qa in enumerate(qas):
             question = (qa.get("question") or "").strip()
             answers = qa.get("answers") or []
@@ -158,21 +175,72 @@ def write_split(name, split, tokenizer, max_tokens, limit, seed):
     print(f"saved {name}: {output_path}, rows={len(rows)}")
 
 
+def extract_archive(archive_path, destination):
+    """Extract the trusted official archive without allowing path traversal."""
+    destination = destination.resolve()
+    with tarfile.open(archive_path, "r:gz") as archive:
+        for member in archive.getmembers():
+            target = (destination / member.name).resolve()
+            if not target.is_relative_to(destination):
+                raise ValueError(f"Unsafe archive member: {member.name}")
+        archive.extractall(destination)
+
+
+def ensure_official_data(raw_dir):
+    train_path = raw_dir / "qasper-train-v0.3.json"
+    dev_path = raw_dir / "qasper-dev-v0.3.json"
+    if train_path.is_file() and dev_path.is_file():
+        return train_path, dev_path
+
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = raw_dir / "qasper-train-dev-v0.3.tgz"
+    if not archive_path.is_file():
+        print("downloading official QASPER v0.3 train/dev archive...", flush=True)
+        urlretrieve(TRAIN_DEV_ARCHIVE_URL, archive_path)
+    print("extracting QASPER archive...", flush=True)
+    extract_archive(archive_path, raw_dir)
+    if not train_path.is_file() or not dev_path.is_file():
+        raise FileNotFoundError("Official QASPER archive did not contain train/dev JSON files.")
+    return train_path, dev_path
+
+
+def load_official_json(path):
+    with path.open("r", encoding="utf-8") as data_file:
+        return json.load(data_file)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num-train", type=int, default=None)
     parser.add_argument("--num-val", type=int, default=None)
     parser.add_argument("--max-context-tokens", type=int, default=CONTEXT_WINDOW_TOKENS)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--raw-dir",
+        type=Path,
+        default=RAW_DATA_DIR,
+        help="Cache location for the official QASPER v0.3 JSON files.",
+    )
     args = parser.parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=True)
-    qasper = load_dataset("allenai/qasper")
-    write_split("train", qasper["train"], tokenizer, args.max_context_tokens, args.num_train, args.seed)
-    validation = qasper.get("validation", qasper.get("test"))
-    if validation is None:
-        raise ValueError("QASPER has neither a validation nor a test split.")
-    write_split("validation", validation, tokenizer, args.max_context_tokens, args.num_val, args.seed + 1)
+    train_path, dev_path = ensure_official_data(args.raw_dir.resolve())
+    write_split(
+        "train",
+        load_official_json(train_path),
+        tokenizer,
+        args.max_context_tokens,
+        args.num_train,
+        args.seed,
+    )
+    write_split(
+        "validation",
+        load_official_json(dev_path),
+        tokenizer,
+        args.max_context_tokens,
+        args.num_val,
+        args.seed + 1,
+    )
 
 
 if __name__ == "__main__":
