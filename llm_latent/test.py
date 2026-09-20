@@ -1,5 +1,6 @@
-"""Answer SQuAD questions through the trained same-model CIPHER channel."""
+"""Generate QA answers through a trained same-model CIPHER channel."""
 
+import argparse
 import json
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +13,7 @@ from llm_latent.model import SameModelCipherSystem
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data" / "squad_v1_latent"
+DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "squad_v1_latent"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 MODEL_NAME = "google/long-t5-tglobal-large"
@@ -20,21 +21,9 @@ MODEL_NAME = "google/long-t5-tglobal-large"
 USE_COMPRESSION = False
 COMPRESSED_LATENT_LEN = 8
 SAMPLE_COUNT = 30
-EVALUATE_TRAIN_SAMPLES = True
 
 COMMUNICATION_NAME = "compressed" if USE_COMPRESSION else "uncompressed"
 MODEL_NAME_TAG = MODEL_NAME.rsplit("/", maxsplit=1)[-1].replace("-", "_")
-CHECKPOINT_PATH = (
-    PROJECT_ROOT
-    / "llm_latent"
-    / (
-        f"cipher_squad_{MODEL_NAME_TAG}_{COMMUNICATION_NAME}_"
-        f"samples{SAMPLE_COUNT or 'all'}.pt"
-    )
-)
-OVERFIT_PATH = DATA_DIR / "train.jsonl"
-TEST_PATH = DATA_DIR / "validation.jsonl"
-
 TEMPERATURE = 1.0
 SENDER_MAX_LENGTH = 4096
 RECEIVER_MAX_LENGTH = 128
@@ -61,8 +50,8 @@ def infer_latent_len(state_dict):
     )
 
 
-def load_model(device):
-    state_dict = torch.load(CHECKPOINT_PATH, map_location=device)
+def load_model(device, checkpoint_path):
+    state_dict = torch.load(checkpoint_path, map_location=device)
     model = SameModelCipherSystem(
         model_name=MODEL_NAME,
         latent_len=infer_latent_len(state_dict),
@@ -127,14 +116,51 @@ def format_result(index, row, generated_answer):
     )
 
 
-def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    metadata_path = OVERFIT_PATH if EVALUATE_TRAIN_SAMPLES else TEST_PATH
-    rows = read_jsonl(metadata_path)
-    if SAMPLE_COUNT is not None:
-        rows = rows[:SAMPLE_COUNT]
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help="Directory containing train.jsonl and validation.jsonl.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        required=True,
+        help="Checkpoint created by llm_latent.train.",
+    )
+    parser.add_argument(
+        "--split",
+        choices=("train", "validation"),
+        default="validation",
+        help="Use train for the 30-sample overfit check.",
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=SAMPLE_COUNT,
+        help="Number of examples to generate; use 0 for all examples.",
+    )
+    return parser.parse_args()
 
-    model = load_model(device)
+
+def main():
+    args = parse_args()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    metadata_path = args.data_dir.resolve() / f"{args.split}.jsonl"
+    checkpoint_path = args.checkpoint.resolve()
+    if not metadata_path.is_file():
+        raise FileNotFoundError(f"Missing prepared data split: {metadata_path}")
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"Missing checkpoint: {checkpoint_path}")
+
+    rows = read_jsonl(metadata_path)
+    sample_count = None if args.num_samples == 0 else args.num_samples
+    if sample_count is not None:
+        rows = rows[:sample_count]
+
+    model = load_model(device, checkpoint_path)
     dataset = QALatentDataset(
         metadata_path=metadata_path,
         tokenizer=model.tokenizer,
@@ -142,8 +168,8 @@ def main():
         receiver_max_length=RECEIVER_MAX_LENGTH,
         target_max_length=TARGET_MAX_LENGTH,
     )
-    if SAMPLE_COUNT is not None:
-        dataset.samples = dataset.samples[:SAMPLE_COUNT]
+    if sample_count is not None:
+        dataset.samples = dataset.samples[:sample_count]
 
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     result_blocks = []
@@ -154,8 +180,7 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    mode = "train_samples" if EVALUATE_TRAIN_SAMPLES else "test"
-    output_path = OUTPUT_DIR / f"{timestamp}_cipher_squad_{MODEL_NAME_TAG}_{mode}.txt"
+    output_path = OUTPUT_DIR / f"{timestamp}_{checkpoint_path.stem}_{args.split}.txt"
     output_path.write_text("\n\n".join(result_blocks) + "\n", encoding="utf-8")
     print(f"saved output: {output_path}")
 
