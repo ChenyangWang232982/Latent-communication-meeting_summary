@@ -19,9 +19,22 @@ class SameModelCipherSystem(nn.Module):
         super().__init__()
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Some Transformers versions do not restore LongT5's padding token
+        # from tokenizer.json.  <pad> is already in the T5 vocabulary, so
+        # assigning it does not resize or otherwise change model weights.
+        if self.tokenizer.pad_token is None:
+            vocabulary = self.tokenizer.get_vocab()
+            if "<pad>" in vocabulary:
+                self.tokenizer.pad_token = "<pad>"
+            elif self.tokenizer.eos_token is not None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            else:
+                raise ValueError("The tokenizer has neither a pad token nor an EOS token.")
 
         self.sender = AutoModelForSeq2SeqLM.from_pretrained(model_name)
         self.receiver = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        self.sender.config.pad_token_id = self.tokenizer.pad_token_id
+        self.receiver.config.pad_token_id = self.tokenizer.pad_token_id
         self.sender.generation_config.max_length = None
         self.receiver.generation_config.max_length = None
 
