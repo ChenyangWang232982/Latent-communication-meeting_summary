@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data" / "squad_v1_latent"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
-MODEL_NAME = "google/flan-t5-small"
+MODEL_NAME = "google/long-t5-tglobal-large"
 # Keep these values identical to train.py for the checkpoint being tested.
 USE_COMPRESSION = False
 COMPRESSED_LATENT_LEN = 8
@@ -23,19 +23,23 @@ SAMPLE_COUNT = 30
 EVALUATE_TRAIN_SAMPLES = True
 
 COMMUNICATION_NAME = "compressed" if USE_COMPRESSION else "uncompressed"
+MODEL_NAME_TAG = MODEL_NAME.rsplit("/", maxsplit=1)[-1].replace("-", "_")
 CHECKPOINT_PATH = (
     PROJECT_ROOT
     / "llm_latent"
-    / f"cipher_squad_{COMMUNICATION_NAME}_samples{SAMPLE_COUNT or 'all'}.pt"
+    / (
+        f"cipher_squad_{MODEL_NAME_TAG}_{COMMUNICATION_NAME}_"
+        f"samples{SAMPLE_COUNT or 'all'}.pt"
+    )
 )
 OVERFIT_PATH = DATA_DIR / "train.jsonl"
 TEST_PATH = DATA_DIR / "validation.jsonl"
 
 TEMPERATURE = 1.0
-SENDER_MAX_LENGTH = 256
-RECEIVER_MAX_LENGTH = 64
-TARGET_MAX_LENGTH = 32
-MAX_NEW_TOKENS = 32
+SENDER_MAX_LENGTH = 4096
+RECEIVER_MAX_LENGTH = 128
+TARGET_MAX_LENGTH = 256
+MAX_NEW_TOKENS = 256
 
 
 def read_jsonl(path):
@@ -151,7 +155,7 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     mode = "train_samples" if EVALUATE_TRAIN_SAMPLES else "test"
-    output_path = OUTPUT_DIR / f"{timestamp}_cipher_squad_{mode}.txt"
+    output_path = OUTPUT_DIR / f"{timestamp}_cipher_squad_{MODEL_NAME_TAG}_{mode}.txt"
     output_path.write_text("\n\n".join(result_blocks) + "\n", encoding="utf-8")
     print(f"saved output: {output_path}")
 

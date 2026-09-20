@@ -9,8 +9,8 @@ from transformers import AutoTokenizer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = PROJECT_ROOT / "data" / "squad_v1_latent"
-MODEL_NAME = "google/flan-t5-small"
-CONTEXT_WINDOW_TOKENS = 180
+MODEL_NAME = "google/long-t5-tglobal-large"
+CONTEXT_WINDOW_TOKENS = 4096
 
 
 def make_answer_window(context, answer_start, answer_text, tokenizer):

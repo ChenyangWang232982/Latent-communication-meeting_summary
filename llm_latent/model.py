@@ -9,7 +9,7 @@ from llm_latent.cipher_comm import CipherEmbeddingComm
 class SameModelCipherSystem(nn.Module):
     def __init__(
         self,
-        model_name="google/flan-t5-small",
+        model_name="google/long-t5-tglobal-large",
         latent_len=8,
         temperature=1.0,
         use_compression=True,

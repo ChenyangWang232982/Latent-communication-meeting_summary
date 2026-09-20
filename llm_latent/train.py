@@ -13,7 +13,7 @@ from llm_latent.model import SameModelCipherSystem
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data" / "squad_v1_latent"
 
-MODEL_NAME = "google/flan-t5-small"
+MODEL_NAME = "google/long-t5-tglobal-large"
 TRAIN_PATH = DATA_DIR / "train.jsonl"
 VAL_PATH = DATA_DIR / "validation.jsonl"
 # Communication controls.  No compression keeps one latent message for every
@@ -26,18 +26,24 @@ SAMPLE_COUNT = 30
 VALIDATE_ON_TRAIN_SAMPLES = True
 
 COMMUNICATION_NAME = "compressed" if USE_COMPRESSION else "uncompressed"
+MODEL_NAME_TAG = MODEL_NAME.rsplit("/", maxsplit=1)[-1].replace("-", "_")
 CHECKPOINT_PATH = (
     PROJECT_ROOT
     / "llm_latent"
-    / f"cipher_squad_{COMMUNICATION_NAME}_samples{SAMPLE_COUNT or 'all'}.pt"
+    / (
+        f"cipher_squad_{MODEL_NAME_TAG}_{COMMUNICATION_NAME}_"
+        f"samples{SAMPLE_COUNT or 'all'}.pt"
+    )
 )
 
 TEMPERATURE = 1.0
-SENDER_MAX_LENGTH = 256
-RECEIVER_MAX_LENGTH = 64
-TARGET_MAX_LENGTH = 32
+SENDER_MAX_LENGTH = 4096
+RECEIVER_MAX_LENGTH = 128
+TARGET_MAX_LENGTH = 256
 
-BATCH_SIZE = 2
+BATCH_SIZE = 1
+GRADIENT_ACCUMULATION_STEPS = 4
+USE_BF16 = True
 MAX_EPOCHS = 200
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 0.01
@@ -84,21 +90,33 @@ def run_epoch(model, loader, optimizer, device):
         model.receiver.decoder.eval()
 
     total_loss = 0.0
-    for batch in loader:
+    if is_training:
+        optimizer.zero_grad(set_to_none=True)
+
+    for step, batch in enumerate(loader, start=1):
         batch = move_batch_to_device(batch, device)
 
         with torch.set_grad_enabled(is_training):
-            outputs = model(**batch)
-            loss = outputs.loss
+            with torch.autocast(
+                device_type="cuda",
+                dtype=torch.bfloat16,
+                enabled=USE_BF16 and device.startswith("cuda"),
+            ):
+                outputs = model(**batch)
+                loss = outputs.loss
 
             if is_training:
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    [p for p in model.parameters() if p.requires_grad],
-                    GRAD_CLIP_NORM,
-                )
-                optimizer.step()
+                (loss / GRADIENT_ACCUMULATION_STEPS).backward()
+                if (
+                    step % GRADIENT_ACCUMULATION_STEPS == 0
+                    or step == len(loader)
+                ):
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for p in model.parameters() if p.requires_grad],
+                        GRAD_CLIP_NORM,
+                    )
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
 
         total_loss += loss.item()
 
@@ -126,6 +144,8 @@ def main():
         freeze_receiver=True,
     ).to(device)
     configure_trainable_parameters(model)
+    model.receiver.gradient_checkpointing_enable()
+    model.receiver.config.use_cache = False
 
     train_dataset = build_dataset(TRAIN_PATH, model.tokenizer)
     if SAMPLE_COUNT is not None:
@@ -163,6 +183,12 @@ def main():
         f"sample_count: {SAMPLE_COUNT or 'all'}, "
         f"train_samples: {len(train_dataset)}, val_samples: {len(val_dataset)}, "
         f"compressed_latent_len: {COMPRESSED_LATENT_LEN}"
+    )
+    print(
+        f"sender_max_length: {SENDER_MAX_LENGTH}, "
+        f"batch_size: {BATCH_SIZE}, "
+        f"gradient_accumulation: {GRADIENT_ACCUMULATION_STEPS}, "
+        f"bf16: {USE_BF16 and device.startswith('cuda')}"
     )
     print(f"parameters: total={total_parameters:,}, trainable={trainable_count:,}")
 

@@ -11,9 +11,9 @@ class QALatentDataset(Dataset):
         self,
         metadata_path,
         tokenizer,
-        sender_max_length=256,
-        receiver_max_length=64,
-        target_max_length=32,
+        sender_max_length=4096,
+        receiver_max_length=128,
+        target_max_length=256,
     ):
         self.tokenizer = tokenizer
         self.sender_max_length = sender_max_length

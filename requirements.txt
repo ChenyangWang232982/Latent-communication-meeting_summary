@@ -7,6 +7,7 @@ torchaudio==2.8.0+cu128
 
 # HuggingFace model stack.
 transformers>=4.44.0
+huggingface_hub>=0.24.0
 datasets>=2.20.0
 accelerate>=0.33.0
 evaluate>=0.4.2
@@ -29,6 +30,7 @@ einops
 tensorboard
 wandb
 rich
+langgraph>=0.2.0
 
 # Metrics.
 rouge-score
