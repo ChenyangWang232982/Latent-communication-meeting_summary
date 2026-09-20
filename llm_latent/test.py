@@ -82,10 +82,11 @@ def generate_answer(model, batch):
         encoder_outputs=receiver_encoder_outputs,
         attention_mask=combined_mask,
         max_new_tokens=MAX_NEW_TOKENS,
-        num_beams=4,
-        repetition_penalty=1.2,
-        no_repeat_ngram_size=4,
-        early_stopping=True,
+        # Greedy decoding is the cleanest communication diagnostic. Beam
+        # search and repetition penalties can turn a marginal early mistake
+        # into an unrelated answer, masking what the latent actually carries.
+        num_beams=1,
+        do_sample=False,
     )
     return model.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
 

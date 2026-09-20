@@ -36,16 +36,22 @@ BATCH_SIZE = 1
 GRADIENT_ACCUMULATION_STEPS = 4
 USE_BF16 = True
 MAX_EPOCHS = 200
-LEARNING_RATE = 1e-4
+# Full decoder adaptation is less stable at the adapter-only learning rate.
+LEARNING_RATE = 3e-5
 WEIGHT_DECAY = 0.01
 GRAD_CLIP_NORM = 1.0
 UNFREEZE_RECEIVER_ENCODER_LAYERS = 2
 UNFREEZE_DECODER_CROSS_ATTENTION = True
+UNFREEZE_FULL_DECODER = True
 
 RECEIVER_TUNING_NAME = (
-    f"encoder{UNFREEZE_RECEIVER_ENCODER_LAYERS}_decoder_cross_attention"
-    if UNFREEZE_DECODER_CROSS_ATTENTION
-    else f"encoder{UNFREEZE_RECEIVER_ENCODER_LAYERS}_frozen_decoder"
+    f"encoder{UNFREEZE_RECEIVER_ENCODER_LAYERS}_full_decoder"
+    if UNFREEZE_FULL_DECODER
+    else (
+        f"encoder{UNFREEZE_RECEIVER_ENCODER_LAYERS}_decoder_cross_attention"
+        if UNFREEZE_DECODER_CROSS_ATTENTION
+        else f"encoder{UNFREEZE_RECEIVER_ENCODER_LAYERS}_frozen_decoder"
+    )
 )
 
 
@@ -70,7 +76,15 @@ def configure_trainable_parameters(model):
     for parameter in model.receiver.encoder.final_layer_norm.parameters():
         parameter.requires_grad = True
 
-    if UNFREEZE_DECODER_CROSS_ATTENTION:
+    if UNFREEZE_FULL_DECODER:
+        # Teacher forcing can hide a weak latent-to-text interface.  Let the
+        # decoder learn both how to attend to CIPHER latents and how to remain
+        # stable during autoregressive generation.
+        for parameter in model.receiver.decoder.parameters():
+            parameter.requires_grad = True
+        for parameter in model.receiver.lm_head.parameters():
+            parameter.requires_grad = True
+    elif UNFREEZE_DECODER_CROSS_ATTENTION:
         # T5 decoder blocks contain self-attention, encoder-decoder attention,
         # then feed-forward layers.  Only the middle cross-attention module
         # needs to adapt to the non-native CIPHER encoder representation.
@@ -93,9 +107,9 @@ def run_epoch(model, loader, optimizer, device):
     # Sender is frozen, so keep its dropout disabled. Receiver stays in train
     # mode only during training because its last encoder layers are trainable.
     model.sender.eval()
-    if is_training:
-        # The decoder is frozen in this first experiment.  Keeping it in eval
-        # mode makes its teacher-forced loss deterministic for a given latent.
+    if is_training and not UNFREEZE_FULL_DECODER:
+        # For the frozen-decoder and cross-attention-only baselines, disabling
+        # decoder dropout makes teacher-forced loss comparisons less noisy.
         model.receiver.decoder.eval()
 
     total_loss = 0.0
