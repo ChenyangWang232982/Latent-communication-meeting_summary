@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument("--train-hidden", type=Path, required=True)
     parser.add_argument("--val-hidden", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--model", default="Qwen/Qwen2.5-14B-Instruct")
+    parser.add_argument("--model", default="Qwen/Qwen2.5-7B-Instruct")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--gradient-accumulation", type=int, default=8)
@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument(
         "--gradient-checkpointing",
         action="store_true",
-        help="Trade compute for lower activation memory; recommended for 14B models.",
+        help="Trade compute for lower activation memory; recommended for 7B-or-larger models.",
     )
     parser.add_argument("--train-limit", type=int)
     parser.add_argument("--val-limit", type=int)

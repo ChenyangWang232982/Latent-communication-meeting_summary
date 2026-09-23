@@ -23,7 +23,7 @@ question prompt and the continuous hidden-state sequence.
   `<eop>` delimit the inserted latent trajectory.
 - **Training:** task cross-entropy plus plan-alignment and shuffled-plan
   contrastive losses.
-- **Same model:** `Qwen/Qwen2.5-14B-Instruct` is used for both roles, so the
+- **Same model:** `Qwen/Qwen2.5-7B-Instruct` is used for both roles, so the
   dimensional projection is an identity mapping. The receiver-side attention
   integration module is still learned.
 - **Compression:** `--compressed-latent-len K` replaces a full trajectory with
@@ -67,17 +67,17 @@ Run this once per split. The output contains only the generated Sender plan and
 its last-layer states; it can be several hundred MB for a full split.
 
 ```powershell
-python -m interlat_same_model.collect --data data/qasper_latent/train.jsonl --output interlat_same_model/data/qasper_train_hidden.pt --model Qwen/Qwen2.5-14B-Instruct
+python -m interlat_same_model.collect --data data/qasper_latent/train.jsonl --output interlat_same_model/data/qasper_train_hidden.pt --model Qwen/Qwen2.5-7B-Instruct
 
-python -m interlat_same_model.collect --data data/qasper_latent/validation.jsonl --output interlat_same_model/data/qasper_validation_hidden.pt --model Qwen/Qwen2.5-14B-Instruct
+python -m interlat_same_model.collect --data data/qasper_latent/validation.jsonl --output interlat_same_model/data/qasper_validation_hidden.pt --model Qwen/Qwen2.5-7B-Instruct
 ```
 
 For the oracle-evidence diagnostic, substitute the two input paths:
 
 ```powershell
-python -m interlat_same_model.collect --data data/qasper_oracle_evidence/train.jsonl --output interlat_same_model/data/qasper_oracle_train_hidden_l1024.pt --model Qwen/Qwen2.5-14B-Instruct --sender-max-new-tokens 1024
+python -m interlat_same_model.collect --data data/qasper_oracle_evidence/train.jsonl --output interlat_same_model/data/qasper_oracle_train_hidden_l1024.pt --model Qwen/Qwen2.5-7B-Instruct --sender-max-new-tokens 1024
 
-python -m interlat_same_model.collect --data data/qasper_oracle_evidence/validation.jsonl --output interlat_same_model/data/qasper_oracle_validation_hidden_l1024.pt --model Qwen/Qwen2.5-14B-Instruct --sender-max-new-tokens 1024
+python -m interlat_same_model.collect --data data/qasper_oracle_evidence/validation.jsonl --output interlat_same_model/data/qasper_oracle_validation_hidden_l1024.pt --model Qwen/Qwen2.5-7B-Instruct --sender-max-new-tokens 1024
 ```
 
 Use `--limit 30` for a pipeline smoke test. `--source-max-tokens 4096` and
@@ -93,12 +93,12 @@ validation task loss, not total loss, because the latent-alignment auxiliary
 loss can improve while answer quality worsens.
 
 ```powershell
-python -m interlat_same_model.train --train-hidden interlat_same_model/data/qasper_train_hidden.pt --val-hidden interlat_same_model/data/qasper_validation_hidden.pt --output-dir interlat_same_model/checkpoints/qasper_qwen14b --epochs 10 --batch-size 1 --gradient-accumulation 8 --gradient-checkpointing
+python -m interlat_same_model.train --train-hidden interlat_same_model/data/qasper_train_hidden.pt --val-hidden interlat_same_model/data/qasper_validation_hidden.pt --output-dir interlat_same_model/checkpoints/qasper_qwen7b --epochs 10 --batch-size 1 --gradient-accumulation 8 --gradient-checkpointing
 ```
 
-Full-parameter Receiver tuning is not suitable for a 48GB GPU with a 14B
-backbone and AdamW. Use it only with parameter-efficient fine-tuning support.
-For the 14B baseline, leave the Receiver frozen and train the latent module.
+Full-parameter Receiver tuning is not recommended with this implementation:
+AdamW optimizer states can still consume most of a 48GB GPU. For the 7B
+baseline, leave the Receiver frozen and train the latent module.
 
 Try learned compression only after the uncompressed channel produces coherent
 answers:

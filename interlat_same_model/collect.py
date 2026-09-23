@@ -21,7 +21,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=Path, required=True, help="JSONL with context, question, answer")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--model", default="Qwen/Qwen2.5-14B-Instruct")
+    parser.add_argument("--model", default="Qwen/Qwen2.5-7B-Instruct")
     parser.add_argument("--source-max-tokens", type=int, default=4096)
     parser.add_argument("--sender-max-new-tokens", type=int, default=1024)
     parser.add_argument("--limit", type=int)
