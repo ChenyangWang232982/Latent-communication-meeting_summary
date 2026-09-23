@@ -62,7 +62,9 @@ Use `--limit 30` for a pipeline smoke test. `--source-max-tokens 4096` and
 ## 2. Train the Receiver-Side Interlat Module
 
 Start uncompressed and train only the latent module plus the two boundary-token
-embeddings. This is the least expensive first check.
+embeddings. This is the least expensive first check. `best.pt` is selected by
+validation task loss, not total loss, because the latent-alignment auxiliary
+loss can improve while answer quality worsens.
 
 ```powershell
 python -m interlat_same_model.train --train-hidden interlat_same_model/data/qasper_train_hidden.pt --val-hidden interlat_same_model/data/qasper_validation_hidden.pt --output-dir interlat_same_model/checkpoints/qasper_qwen15b --epochs 10 --batch-size 1 --gradient-accumulation 8

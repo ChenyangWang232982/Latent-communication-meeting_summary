@@ -30,6 +30,12 @@ def parse_args():
     parser.add_argument("--compressed-latent-len", type=int, default=0)
     parser.add_argument("--plan-similarity-weight", type=float, default=0.5)
     parser.add_argument("--random-contrast-weight", type=float, default=0.1)
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=3,
+        help="Stop after this many epochs without validation task-loss improvement; 0 disables it.",
+    )
     parser.add_argument("--unfreeze-receiver", action="store_true")
     parser.add_argument("--train-limit", type=int)
     parser.add_argument("--val-limit", type=int)
@@ -121,7 +127,8 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "tokenizer").mkdir(exist_ok=True)
     tokenizer.save_pretrained(args.output_dir / "tokenizer")
-    best_val = float("inf")
+    best_task_loss = float("inf")
+    epochs_without_improvement = 0
     history = []
     for epoch in range(1, args.epochs + 1):
         train_metrics = run_epoch(model, train_loader, tokenizer, bop_id, eop_id, optimizer, device, args, train=True)
@@ -129,12 +136,17 @@ def main():
         row = {"epoch": epoch, "train": train_metrics, "validation": val_metrics}
         history.append(row)
         print(json.dumps(row), flush=True)
-        if val_metrics["loss"] < best_val:
-            best_val = val_metrics["loss"]
+        # The auxiliary losses make latent representations easier to consume,
+        # but answer quality is represented by task_loss. Select checkpoints by
+        # task_loss so a decreasing alignment term cannot hide worse answers.
+        if val_metrics["task_loss"] < best_task_loss:
+            best_task_loss = val_metrics["task_loss"]
+            epochs_without_improvement = 0
             checkpoint = {
                 "model_name": args.model, "source_hidden_size": source_size, "num_heads": args.num_heads,
                 "compressed_latent_len": args.compressed_latent_len, "plan_similarity_weight": args.plan_similarity_weight,
                 "random_contrast_weight": args.random_contrast_weight, "unfreeze_receiver": args.unfreeze_receiver,
+                "best_validation_task_loss": best_task_loss,
                 "adapter": model.adapter.state_dict(),
                 "compressor": model.compressor.state_dict() if model.compressor else None,
                 "boundary_embeddings": receiver.get_input_embeddings().weight.detach()[[bop_id, eop_id]].cpu(),
@@ -143,6 +155,11 @@ def main():
                 checkpoint["receiver"] = receiver.state_dict()
             torch.save(checkpoint, args.output_dir / "best.pt")
             print(f"saved checkpoint: {args.output_dir / 'best.pt'}")
+        else:
+            epochs_without_improvement += 1
+            if args.early_stopping_patience and epochs_without_improvement >= args.early_stopping_patience:
+                print("early stopping: validation task_loss did not improve", flush=True)
+                break
     (args.output_dir / "history.json").write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
 
 
