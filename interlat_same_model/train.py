@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument("--train-hidden", type=Path, required=True)
     parser.add_argument("--val-hidden", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser.add_argument("--model", default="Qwen/Qwen2.5-14B-Instruct")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--gradient-accumulation", type=int, default=8)
@@ -37,6 +37,11 @@ def parse_args():
         help="Stop after this many epochs without validation task-loss improvement; 0 disables it.",
     )
     parser.add_argument("--unfreeze-receiver", action="store_true")
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Trade compute for lower activation memory; recommended for 14B models.",
+    )
     parser.add_argument("--train-limit", type=int)
     parser.add_argument("--val-limit", type=int)
     parser.add_argument("--device", default="auto")
@@ -108,6 +113,9 @@ def main():
     receiver = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype, low_cpu_mem_usage=True)
     receiver.resize_token_embeddings(len(tokenizer))
     receiver.config.pad_token_id = tokenizer.pad_token_id
+    if args.gradient_checkpointing:
+        receiver.gradient_checkpointing_enable()
+        receiver.config.use_cache = False
     if not args.unfreeze_receiver:
         for parameter in receiver.parameters():
             parameter.requires_grad = False
@@ -146,6 +154,7 @@ def main():
                 "model_name": args.model, "source_hidden_size": source_size, "num_heads": args.num_heads,
                 "compressed_latent_len": args.compressed_latent_len, "plan_similarity_weight": args.plan_similarity_weight,
                 "random_contrast_weight": args.random_contrast_weight, "unfreeze_receiver": args.unfreeze_receiver,
+                "gradient_checkpointing": args.gradient_checkpointing,
                 "best_validation_task_loss": best_task_loss,
                 "adapter": model.adapter.state_dict(),
                 "compressor": model.compressor.state_dict() if model.compressor else None,
