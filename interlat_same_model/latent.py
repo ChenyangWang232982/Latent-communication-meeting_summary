@@ -66,6 +66,10 @@ class InterlatReceiver(nn.Module):
             if compressed_latent_len else None
         )
         self.adapter = HiddenStateAdapter(source_hidden_size, target_size, num_heads)
+        # Message delimiters are learned separately so adapter-only training
+        # never needs to unfreeze the Receiver's whole vocabulary table.
+        self.boundary_embeddings = nn.Parameter(torch.empty(2, target_size))
+        nn.init.normal_(self.boundary_embeddings, mean=0.0, std=0.02)
         self.plan_similarity_weight = plan_similarity_weight
         self.random_contrast_weight = random_contrast_weight
 
@@ -84,8 +88,13 @@ class InterlatReceiver(nn.Module):
         embedding_dtype = token_embedding.weight.dtype
         latent = self.prepare_latents(sender_states).to(dtype=embedding_dtype)
         batch_size = prompt_ids.size(0)
-        bop = token_embedding(torch.full((batch_size, 1), bop_id, dtype=torch.long, device=device))
-        eop = token_embedding(torch.full((batch_size, 1), eop_id, dtype=torch.long, device=device))
+        # Retain bop_id/eop_id for call and checkpoint compatibility. The
+        # actual boundary vectors live in this module, not the vocabulary.
+        del bop_id, eop_id
+        bop = self.boundary_embeddings[0].to(device=device, dtype=embedding_dtype).view(1, 1, -1)
+        eop = self.boundary_embeddings[1].to(device=device, dtype=embedding_dtype).view(1, 1, -1)
+        bop = bop.expand(batch_size, -1, -1)
+        eop = eop.expand(batch_size, -1, -1)
         # The Receiver must read its task condition before the hidden message.
         # Qwen's generation prompt already ends in an assistant-turn marker, so
         # this makes the latent trajectory the first continuous content of that

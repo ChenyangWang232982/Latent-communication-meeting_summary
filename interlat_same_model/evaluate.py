@@ -36,11 +36,11 @@ def main():
     if checkpoint["unfreeze_receiver"]:
         receiver.load_state_dict(checkpoint["receiver"])
     bop_id, eop_id = tokenizer.convert_tokens_to_ids("<bop>"), tokenizer.convert_tokens_to_ids("<eop>")
-    receiver.get_input_embeddings().weight.data[[bop_id, eop_id]] = checkpoint["boundary_embeddings"].to(receiver.dtype)
     model = InterlatReceiver(
         receiver, checkpoint["source_hidden_size"], checkpoint["num_heads"],
         checkpoint["compressed_latent_len"] or None, checkpoint["plan_similarity_weight"], checkpoint["random_contrast_weight"],
     ).to(device=device, dtype=dtype).eval()
+    model.boundary_embeddings.data.copy_(checkpoint["boundary_embeddings"].to(device=device, dtype=dtype))
     model.adapter.load_state_dict(checkpoint["adapter"])
     if model.compressor:
         model.compressor.load_state_dict(checkpoint["compressor"])

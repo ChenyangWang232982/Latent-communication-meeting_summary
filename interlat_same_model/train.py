@@ -119,8 +119,6 @@ def main():
     if not args.unfreeze_receiver:
         for parameter in receiver.parameters():
             parameter.requires_grad = False
-        # Boundary embeddings must adapt even in adapter-only training.
-        receiver.get_input_embeddings().weight.requires_grad = True
     model = InterlatReceiver(
         receiver, source_hidden_size=source_size, num_heads=args.num_heads,
         compressed_latent_len=args.compressed_latent_len or None,
@@ -158,7 +156,7 @@ def main():
                 "best_validation_task_loss": best_task_loss,
                 "adapter": model.adapter.state_dict(),
                 "compressor": model.compressor.state_dict() if model.compressor else None,
-                "boundary_embeddings": receiver.get_input_embeddings().weight.detach()[[bop_id, eop_id]].cpu(),
+                "boundary_embeddings": model.boundary_embeddings.detach().cpu(),
             }
             if args.unfreeze_receiver:
                 checkpoint["receiver"] = receiver.state_dict()

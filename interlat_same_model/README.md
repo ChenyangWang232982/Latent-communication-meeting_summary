@@ -26,6 +26,9 @@ question prompt and the continuous hidden-state sequence.
 - **Same model:** `Qwen/Qwen2.5-7B-Instruct` is used for both roles, so the
   dimensional projection is an identity mapping. The receiver-side attention
   integration module is still learned.
+- **Adapter-only default:** Receiver Transformer blocks and its vocabulary
+  embedding table are frozen. Only the Interlat adapter, optional compressor,
+  and two learned latent-message boundary vectors are optimized.
 - **Compression:** `--compressed-latent-len K` replaces a full trajectory with
   K learned attention-pooled vectors. Start with `0` (uncompressed) for the
   first experiment.

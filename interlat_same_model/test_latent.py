@@ -38,6 +38,8 @@ class InterlatComponentTest(unittest.TestCase):
         )
         self.assertEqual(embeds.shape[1], 3 + 1 + 4 + 1 + 2)
         self.assertTrue(torch.equal(embeds[:, :3], receiver.embedding(prompt)))
+        self.assertTrue(torch.equal(embeds[:, 3], model.boundary_embeddings[0].view(1, -1)))
+        self.assertTrue(torch.equal(embeds[:, 8], model.boundary_embeddings[1].view(1, -1)))
         self.assertTrue(torch.equal(labels[:, :9], torch.full((1, 9), -100)))
         self.assertEqual(latent.shape, (1, 4, 8))
 
