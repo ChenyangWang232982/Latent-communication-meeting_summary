@@ -45,6 +45,22 @@ data/qasper_latent/validation.jsonl
 
 Each row must provide `id`, `context`, `question`, and `answer`.
 
+### Oracle-evidence diagnostic
+
+For a controlled upper-bound experiment, build a separate split whose
+`context` is QASPER's human-annotated evidence, rather than the beginning of
+the paper. This measures whether the Sender-to-Receiver latent channel works
+after the correct evidence is already available; it is **not** an end-to-end
+retrieval evaluation.
+
+```powershell
+python -m interlat_same_model.prepare_oracle_qasper --raw-dir data/qasper_raw --output-dir data/qasper_oracle_evidence
+```
+
+This leaves `data/qasper_latent/` unchanged. Annotations that have no evidence
+are skipped by default. Use the generated `train.jsonl` and `validation.jsonl`
+in the collection commands below.
+
 ## 1. Collect Frozen Sender Trajectories
 
 Run this once per split. The output contains only the generated Sender plan and
@@ -56,8 +72,18 @@ python -m interlat_same_model.collect --data data/qasper_latent/train.jsonl --ou
 python -m interlat_same_model.collect --data data/qasper_latent/validation.jsonl --output interlat_same_model/data/qasper_validation_hidden.pt --model Qwen/Qwen2.5-1.5B-Instruct
 ```
 
+For the oracle-evidence diagnostic, substitute the two input paths:
+
+```powershell
+python -m interlat_same_model.collect --data data/qasper_oracle_evidence/train.jsonl --output interlat_same_model/data/qasper_oracle_train_hidden_l1024.pt --model Qwen/Qwen2.5-1.5B-Instruct --sender-max-new-tokens 1024
+
+python -m interlat_same_model.collect --data data/qasper_oracle_evidence/validation.jsonl --output interlat_same_model/data/qasper_oracle_validation_hidden_l1024.pt --model Qwen/Qwen2.5-1.5B-Instruct --sender-max-new-tokens 1024
+```
+
 Use `--limit 30` for a pipeline smoke test. `--source-max-tokens 4096` and
-`--sender-max-new-tokens 256` are the defaults.
+`--sender-max-new-tokens 1024` are the defaults. The latter is the maximum
+number of Sender plan tokens and therefore the maximum uncompressed latent
+trajectory length; it is independent of the 4096-token source-context limit.
 
 ## 2. Train the Receiver-Side Interlat Module
 

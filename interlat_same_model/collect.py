@@ -23,7 +23,7 @@ def parse_args():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--source-max-tokens", type=int, default=4096)
-    parser.add_argument("--sender-max-new-tokens", type=int, default=256)
+    parser.add_argument("--sender-max-new-tokens", type=int, default=1024)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--device", default="auto")
     return parser.parse_args()
