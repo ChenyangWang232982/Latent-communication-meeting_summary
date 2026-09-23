@@ -1,0 +1,146 @@
+================================================================================
+Sample 1
+Question id: 1901.01010_1_1
+
+Question:
+What kind of model do they use?
+
+Sender internal draft (not transmitted as text):
+In the case of Wikipedia, this is BIBREF5 , who use structural features and readability scores as features to build a random forest classifier; for arXiv, this is BIBREF2 , who use hand-crafted features, such as the number of references and TF-IDF weighted bag-of-words in abstract, to build a classifier based on the best of logistic regression, multi-layer perception, and AdaBoost. biLSTM: first derive a sentence representation by averaging across words in a sentence, then
+
+CIPHER latent token count: 128
+
+Receiver answer from CIPHER latent:
+Answer: What kind of model do they use?
+
+Gold answer:
+Inception V3 biLSTM
+
+================================================================================
+Sample 2
+Question id: 1907.06292_2_0
+
+Question:
+How do they determine if tweets have been used by journalists?
+
+Sender internal draft (not transmitted as text):
+In recent years, while several tools for core natural language understanding tasks involving syntactic and semantic analysis have been developed for noisy social media text BIBREF0 , BIBREF1 , BIBREF2 , BIBREF3 , there is little work on question answering or reading comprehension over social media, with the primary bottleneck being the lack of available datasets. Rather than naively obtaining tweets from Twitter using the Twitter API which can yield irrelevant tweets with no valuable information, we restrict ourselves only to tweets which have been used by journalists in news
+
+CIPHER latent token count: 128
+
+Receiver answer from CIPHER latent:
+Answer: How do they determine if tweets have been used by journalists?
+
+Gold answer:
+we look into the archived snapshots of two major news websites (CNN, NBC), and then extract the tweet blocks that are embedded in the news articles
+
+================================================================================
+Sample 3
+Question id: 1904.01548_1_0
+
+Question:
+What datasets are used?
+
+Sender internal draft (not transmitted as text):
+We propose to use a neural network pretrained as a language model to probe what features of language drive these ERP responses, and in turn to probe what features of language mediate the cognitive processes that underlie human language comprehension, and especially the integration of meaning across words. The broad point we wish to make is that by better understanding which ERP components share information with each other and with behavioral data through the type of analysis we present here (multitask learning) or other means, we can better understand what drives each ERP component and in turn the processes involved in human language comprehension. Additionally, we have shown that information can be shared
+
+CIPHER latent token count: 128
+
+Receiver answer from CIPHER latent:
+Answer: What datasets are used?
+
+Gold answer:
+Answer with content missing: (Whole Method and Results sections) The primary dataset we use is the ERP data collected and computed by Frank et al. (2015), and we also use behavioral data (eye-tracking data and self-paced reading times) from Frank et al. (2013) which were collected on the same set of 205 sentences.
+Select:
+- ERP data collected and computed by Frank et al. (2015)
+- behavioral data (eye-tracking data and self-paced reading times) from Frank et al. (2013)
+
+================================================================================
+Sample 4
+Question id: 1906.07662_3_0
+
+Question:
+Which approaches have been applied to solve word segmentation in Vietnamese?
+
+Sender internal draft (not transmitted as text):
+For example, the sentence “Megabit trên giây là n v o tc truyn dn d liu ." (”Megabit per second is a unit to measure the network traffic.” in English) with the word boundary result “Megabit trên giây là n_v o tc_ truyn_dn d_liu ." is encoded as “Megabit/B trên/B g
+
+CIPHER latent token count: 128
+
+Receiver answer from CIPHER latent:
+Answer: Which approaches have been applied to solve word segmentation in Vietnamese?
+
+Gold answer:
+Maximum Entropy Weighted Finite State Transducer (WFST) support vector machines (SVM) conditional random fields (CRF)
+
+================================================================================
+Sample 5
+Question id: 1804.05918_0_0
+
+Question:
+What discourse relations does it work best/worst for?
+
+Sender internal draft (not transmitted as text):
+The Softmax Prediction Layer: Finally, we concatenate two adjacent discourse unit representations $hDU_t-1$ and $hDU_t$ and predict the discourse relation between them using a softmax function: $$y_t-1 = softmax(W_y*[hDU_t-1,hDU_t]+b_y)$$ (Eq. Since none of the recent previous work reported class-wise implicit relation classification performance in the multi-way classification setting, for better comparisons, we re-implemented the neural tensor network architecture
+
+CIPHER latent token count: 128
+
+Receiver answer from CIPHER latent:
+Answer: What discourse relations does it work best/worst for?
+
+Gold answer:
+explicit discourse relations
+
+================================================================================
+Sample 6
+Question id: 2003.13032_5_1
+
+Question:
+What baseline systems are proposed?
+
+Sender internal draft (not transmitted as text):
+grouin-etal-2019-clinical presented a corpus with medical entity annotations of clinical cases written in French, copdPhenotype presented a corpus focusing on phenotypic information for chronic obstructive pulmonary disease while 10.1093/database/bay143 presented a corpus focusing on identifying main finding sentences in case reports. The number of tokens per entity ranges from one token for all types to 5 tokens for cases (average length 3.1), nine tokens for conditions (average length 2.0), 16 tokens for factors (
+
+CIPHER latent token count: 128
+
+Receiver answer from CIPHER latent:
+Answer: What baseline systems are proposed?
+
+Gold answer:
+Conditional Random Fields BiLSTM-CRF Multi-Task Learning BioBERT
+
+================================================================================
+Sample 7
+Question id: 1809.02279_3_1
+
+Question:
+Which datasets were used?
+
+Sender internal draft (not transmitted as text):
+To enhance the interaction between layers in a way similar to how LSTMs keep and forget the information from the previous time step, we introduce the additional forget gate INLINEFORM0 that determines whether to accept or ignore the signals coming from the previous layer. two cell states are combined by unweighted summation similar to multidimensional RNNs BIBREF27 , and found that it leads to performance degradation and unstable convergence, likely due to mismatch in the range of cell state values between layers ( INLINEFORM3 for the first layer and INLINEFORM4 for the others). DISP
+
+CIPHER latent token count: 128
+
+Receiver answer from CIPHER latent:
+Answer: Which datasets were used?
+
+Gold answer:
+SNLI BIBREF22 and MultiNLI BIBREF23 datasets Quora Question Pairs dataset BIBREF24 Stanford Sentiment Treebank (SST) BIBREF25
+
+================================================================================
+Sample 8
+Question id: 1908.05441_0_0
+
+Question:
+Which datasets are used for evaluation?
+
+Sender internal draft (not transmitted as text):
+As predicted by the error analysis, while a model trained with question and answer candidate text performs better at QC than a model using question text alone, a large proportion of the incorrect predictions become associated with a negative answer candidate, reducing overall QA performance, and highlighting the importance of evaluating QC and QA models together. Hyperparameters: Pilot experiments on both pre-trained BERT-Base and BERT-Large checkpoints showed similar performance benefits at the finest levels of question classification granularity (L6), but the BERT-Large
+
+CIPHER latent token count: 128
+
+Receiver answer from CIPHER latent:
+Answer: Which datasets are used for evaluation?
+
+Gold answer:
+ARC TREC GARD MLBioMedLAT

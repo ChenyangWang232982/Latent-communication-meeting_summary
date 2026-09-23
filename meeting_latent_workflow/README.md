@@ -1,89 +1,57 @@
-# Meeting Latent Workflow
+# Meeting CIPHER Workflow
 
-This project uses LangGraph to run a lightweight, bounded meeting-summarization
-workflow:
+LangGraph workflow for meeting audio or transcripts. It retains the previous
+hierarchical architecture, but replaces the deleted learned bridge with the
+strict training-free CIPHER implementation in `cipher_training_free/`.
 
 ```text
-ASR transcript -> transcript cleaner -> parallel topic / decision / action agents
--> summary receiver -> critic -> optional one-pass refiner -> final summary
+audio -> Whisper large-v3 -> transcript chunks -> clean text
+      -> topic / decision / action specialists -> recursive evidence merge
+      -> CIPHER Sender -> continuous latent message -> CIPHER Receiver
+      -> critic -> optional one-pass refiner -> final summary
 ```
 
-Store each local Hugging Face model in `meeting_latent_workflow/model/` and
-select it with `--model`. The recommended backbone is
-`long-t5-tglobal-large`; its current workflow input limit is 4096 tokens,
-matching the pretrained configuration. Longer meetings should be split before
-entering this graph.
+`--mode cipher` is the default. Sender and Receiver are identical frozen
+decoder-only Qwen models. The Sender draft is converted by its native `lm_head`
+and the Receiver's native input embeddings; no Sender text, adapter, learned
+projector, compressor, checkpoint, or optimizer is used at the communication
+boundary. `--mode text` is the natural-language baseline with the same
+chunking, prompts, and downstream critic/refiner.
 
-Long transcripts are segmented at paragraph/sentence boundaries into 2800-token
-chunks with 256-token overlap. LangGraph dynamically sends each chunk to the
-cleaner and three specialist extractors, then recursively merges reports in
-groups of three before final summarization. Override these settings with
-`--chunk-tokens`, `--chunk-overlap-tokens`, and `--reduce-group-size`.
-`--max-concurrency` defaults to `1` to avoid concurrent LongT5 generations
-exhausting a single GPU's memory.
+## Directories
 
-The ASR boundary remains normal text. The research communication boundary is
-between the three specialist senders and the summary receiver.
+- `input/`: put one `.txt` transcript, audio file, or a folder tree here.
+- `model/`: put the local Qwen model folder here. Supply its folder name with
+  `--model`.
+- `output/`: transcripts from audio and final `.summary.txt` files are written
+  here, retaining the input tree structure.
 
-Audio inputs use `openai/whisper-large-v3`. On the first audio run, download it
-to `meeting_latent_workflow/model/whisper-large-v3/` with
-`--download-asr-model`. The workflow stores the plain transcript and
-timestamped Whisper result beside the final summary in `output/`.
+Audio supports `.wav`, `.mp3`, `.flac`, `.m4a`, and `.ogg`; it uses
+`openai/whisper-large-v3`. Add `--download-asr-model` on the first audio run
+to place that model in `model/whisper-large-v3/`.
 
-- `--mode text`: concatenates specialist notes as a natural-language baseline.
-- `--mode cipher`: converts specialist notes to continuous CIPHER embeddings
-  before they reach the receiver. It requires a CIPHER checkpoint trained for
-  meeting summarization with matching model and compression settings.
+## Run
 
-## Install
+Place a local copy of `Qwen/Qwen2.5-1.5B-Instruct` in
+`meeting_latent_workflow/model/Qwen2.5-1.5B-Instruct/`, then put a transcript
+at `meeting_latent_workflow/input/example.txt`.
 
 ```powershell
-pip install -r requirements.txt
+python -m meeting_latent_workflow.run example.txt --model Qwen2.5-1.5B-Instruct --mode cipher
 ```
 
-## Run the text baseline
-
-Put transcript files in `meeting_latent_workflow/input/`. The command accepts
-one file name or one folder name relative to that directory and writes matching
-`.summary.txt` files under `meeting_latent_workflow/output/`.
+For an entire input folder:
 
 ```powershell
-python -m meeting_latent_workflow.run example_meeting.txt `
-  --model long-t5-tglobal-large `
-  --mode text
+python -m meeting_latent_workflow.run ami_test --model Qwen2.5-1.5B-Instruct --mode cipher
 ```
 
-Process every `.txt` transcript below `input/ami_test/`:
+For a text-channel baseline, change only `--mode`:
 
 ```powershell
-python -m meeting_latent_workflow.run ami_test `
-  --model long-t5-tglobal-large `
-  --mode text
+python -m meeting_latent_workflow.run example.txt --model Qwen2.5-1.5B-Instruct --mode text
 ```
 
-## Run from audio
-
-Put `.wav`, `.mp3`, `.flac`, `.m4a`, or `.ogg` audio in `input/`. The first
-run downloads Whisper large-v3; later runs reuse the local snapshot.
-
-```powershell
-python -m meeting_latent_workflow.run ami_audio `
-  --model long-t5-tglobal-large `
-  --mode text `
-  --download-asr-model
-```
-
-## Run CIPHER communication
-
-```powershell
-python -m meeting_latent_workflow.run `
-  example_meeting.txt `
-  --model long-t5-tglobal-large `
-  --mode cipher `
-  --cipher-checkpoint checkpoints/cipher_meeting_uncompressed.pt
-```
-
-For a valid comparison, keep the prompts, source transcript, generation
-settings, and receiver model fixed; only replace the sender-to-receiver
-communication channel. Run text, uncompressed CIPHER, compressed CIPHER, and
-zero/shuffled-latent controls on the same meeting split.
+Use `--chunk-tokens`, `--chunk-overlap-tokens`, and `--reduce-group-size` to
+adjust the long-meeting hierarchy. `--max-concurrency` defaults to `1` because
+strict CIPHER keeps two copies of the same model on the GPU.

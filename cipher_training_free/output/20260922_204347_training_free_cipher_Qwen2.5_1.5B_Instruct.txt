@@ -1,0 +1,194 @@
+================================================================================
+Sample 1
+Question id: 1901.01010_1_1
+
+Question:
+What kind of model do they use?
+
+Sender internal draft (not transmitted as text):
+They use a joint model that integrates visual features learned through Inception V3 with textual features learned through a BiLSTM.
+
+CIPHER latent token count: 26
+
+Receiver answer from CIPHER latent:
+They use a joint model that integrates visual features learned through Inception V3 with textual features learned through a biLSTM.
+
+Gold answer:
+Inception V3 biLSTM
+
+================================================================================
+Sample 2
+Question id: 1907.06292_2_0
+
+Question:
+How do they determine if tweets have been used by journalists?
+
+Sender internal draft (not transmitted as text):
+They restrict themselves only to tweets which have been used by journalists in news articles.
+
+CIPHER latent token count: 17
+
+Receiver answer from CIPHER latent:
+They restrict themselves only to tweets that have been used by journalists in news articles.
+
+Gold answer:
+we look into the archived snapshots of two major news websites (CNN, NBC), and then extract the tweet blocks that are embedded in the news articles
+
+================================================================================
+Sample 3
+Question id: 1904.01548_1_0
+
+Question:
+What datasets are used?
+
+Sender internal draft (not transmitted as text):
+The dataset used in this research includes:
+
+1. **Electroencephelography (EEG)** - Data collected during experiments involving human subjects.
+2. **Eye-tracking** - Data collected to track eye movements during reading tasks.
+3. **Self-paced reading time** - Time taken to read text at a comfortable pace.
+4. **Behavioral data** - Measures such as reaction times, accuracy rates, etc., obtained from experimental trials.
+
+These datasets provide comprehensive information about neural activity, eye movements, reading behavior, and linguistic performance, allowing researchers to study various aspects of human language comprehension and processing.
+
+CIPHER latent token count: 123
+
+Receiver answer from CIPHER latent:
+The datasets used in this work are:
+
+1. EEG (Electroencephalography) data from human participants.
+2. Eye-tracking data collected to monitor eye movements during reading tasks.
+3. Self-paced reading time data, which measures the speed at which individuals read text.
+4. Behavioral data related to word times and other cognitive processes observed during reading tasks.
+
+These datasets provide comprehensive information about neural activity, eye movements, reading speeds, and behavioral responses, enabling researchers to study various aspects of human language comprehension and processing.
+
+Gold answer:
+Answer with content missing: (Whole Method and Results sections) The primary dataset we use is the ERP data collected and computed by Frank et al. (2015), and we also use behavioral data (eye-tracking data and self-paced reading times) from Frank et al. (2013) which were collected on the same set of 205 sentences.
+Select:
+- ERP data collected and computed by Frank et al. (2015)
+- behavioral data (eye-tracking data and self-paced reading times) from Frank et al. (2013)
+
+================================================================================
+Sample 4
+Question id: 1906.07662_3_0
+
+Question:
+Which approaches have been applied to solve word segmentation in Vietnamese?
+
+Sender internal draft (not transmitted as text):
+Maximum Matching, Hidden Markov Model (HMM), n-gram language modeling, Conditional Random Fields (CRF), Support Vector Machines (SVM).
+
+CIPHER latent token count: 32
+
+Receiver answer from CIPHER latent:
+The approaches applied to solve word segmentation in Vietnamese include Hidden Markov Model (HMM), n-gram language modeling, Conditional Random Fields (CRF), and Support Vector Machines (SVM).
+
+Gold answer:
+Maximum Entropy Weighted Finite State Transducer (WFST) support vector machines (SVM) conditional random fields (CRF)
+
+================================================================================
+Sample 5
+Question id: 1804.05918_0_0
+
+Question:
+What discourse relations does it work best/worst for?
+
+Sender internal draft (not transmitted as text):
+The paragraph-level neural network model works best for implicit discourse relations on the PDTB dataset, achieving a macro-average F1-score of 48.82%. It also performs well for explicit discourse relations, improving upon the best previous system by 1 percentage point.
+
+CIPHER latent token count: 55
+
+Receiver answer from CIPHER latent:
+The paragraph-level neural network model works best for implicit discourse relations, achieving a macro-average F1-score of 48.82%. It also performs well for explicit discourse relations, improving the previous system by 1 percentage point.
+
+Gold answer:
+explicit discourse relations
+
+================================================================================
+Sample 6
+Question id: 2003.13032_5_1
+
+Question:
+What baseline systems are proposed?
+
+Sender internal draft (not transmitted as text):
+Four baseline systems are proposed:
+
+1. **Conditional Random Fields (CRF)** - Uses a combination of linguistic and semantic features.
+2. **BiLSTM-CRF** - Combines word-level and character-level inputs with a bidirectional LSTM.
+3. **Multi-Task Learning (MTL)** - Jointly optimizes multiple loss functions including NER and Relation Extraction (RE).
+4. **BioBERT** - Uses Transformer-based representations derived from BERT pre-trained on biomedical data.
+
+CIPHER latent token count: 100
+
+Receiver answer from CIPHER latent:
+The proposed baseline systems are:
+
+1. **Conditional Random Fields (CRF)**: A combination of linguistic and semantic features.
+2. **BiLSTM-CRF**: Incorporates word-level and character-level inputs with a bidirectional LSTM.
+3. **Multi-Task Learning (MTL)**: Trains multiple loss functions, including NER and RE.
+4. **BioBERT**: Uses BERT-based representations from pre-trained on biomedical data.
+
+Gold answer:
+Conditional Random Fields BiLSTM-CRF Multi-Task Learning BioBERT
+
+================================================================================
+Sample 7
+Question id: 1809.02279_3_1
+
+Question:
+Which datasets were used?
+
+Sender internal draft (not transmitted as text):
+The datasets used in the study include:
+
+1. **SNLI** (Stanford Natural Language Inference)
+2. **MultiNLI** (Multilingual Natural Language Inference)
+3. **Quora Question Pairs**
+4. **Sentiment Treebank (SST)**
+
+These datasets were employed for evaluating the performance of the proposed method on natural language inference (NLI), paraphrase identification (PI), and sentiment classification tasks.
+
+CIPHER latent token count: 90
+
+Receiver answer from CIPHER latent:
+The datasets used in the experiments are:
+
+1. SN1 (Stanford Natural Language Inference)
+2. MultiNLI (Multiilingual Natural Language Inference)
+3. Quora Question Pairs
+4. SST (SentiTreebank)
+
+Gold answer:
+SNLI BIBREF22 and MultiNLI BIBREF23 datasets Quora Question Pairs dataset BIBREF24 Stanford Sentiment Treebank (SST) BIBREF25
+
+================================================================================
+Sample 8
+Question id: 1908.05441_0_0
+
+Question:
+Which datasets are used for evaluation?
+
+Sender internal draft (not transmitted as text):
+The datasets used for evaluation include:
+
+1. **ARC** - The Academic Reading Comprehension (ARC) dataset.
+2. **TREC** - The Text Retrieval Conference (TREC) dataset.
+3. **GARD** - The Genetic and Rare Diseases (GARD) dataset.
+4. **MLBioMedLAT** - The Multi-label Biomedical Questions (MLBioMedLAT) dataset.
+
+CIPHER latent token count: 84
+
+Receiver answer from CIPHER latent:
+The datasets used for evaluation are:
+
+1. **ARC (Reading Comprehension)** - The ARCTIC dataset, which is part of the TREC (Text Retrieval Conference) series.
+2. **TREC** - The Text Retrieval Conference dataset.
+3. **GARD** - The Genetic and Rare Diseases (GARD) dataset.
+4. **MLBioMedLAT** - The Multi-label Biomedical Question (MLBioMedLAT) dataset.
+
+These datasets are utilized in various research contexts to evaluate different aspects of information retrieval, question answering systems, and biomedical text analysis.
+
+Gold answer:
+ARC TREC GARD MLBioMedLAT

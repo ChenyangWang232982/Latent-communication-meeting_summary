@@ -15,17 +15,11 @@ class FakeTokenizer:
 class FakeTextAgent:
     tokenizer = FakeTokenizer()
 
-    def __init__(self, *_args):
-        pass
-
     def generate(self, prompt):
         return "APPROVED" if "Reply with either" in prompt else "note"
 
 
 class FakeCipherAgent:
-    def __init__(self, *_args):
-        pass
-
     def generate(self, *_args):
         return "note"
 
@@ -33,30 +27,19 @@ class FakeCipherAgent:
 def test_split_transcript_preserves_token_budget():
     chunks = split_transcript(
         "one two three four five six seven eight nine ten eleven twelve",
-        FakeTokenizer(),
-        chunk_tokens=5,
-        overlap_tokens=1,
+        FakeTokenizer(), chunk_tokens=5, overlap_tokens=1,
     )
     assert len(chunks) == 3
     assert all(len(chunk["text"].split()) <= 5 for chunk in chunks)
 
 
 def test_hierarchical_graph_collects_all_chunk_reports():
-    with (
-        patch("meeting_latent_workflow.graph.load_system", return_value=object()),
-        patch("meeting_latent_workflow.graph.TextAgent", FakeTextAgent),
-        patch("meeting_latent_workflow.graph.CipherSummaryAgent", FakeCipherAgent),
+    with patch(
+        "meeting_latent_workflow.graph.load_agents",
+        return_value=(FakeTextAgent(), FakeCipherAgent()),
     ):
-        graph = build_workflow(
-            WorkflowConfig(
-                chunk_tokens=5,
-                chunk_overlap_tokens=1,
-                reduce_group_size=2,
-            )
-        )
-        result = graph.invoke({
-            "transcript": "one two three four five six seven eight nine ten eleven twelve"
-        })
+        graph = build_workflow(WorkflowConfig(model_name="unused", chunk_tokens=5, chunk_overlap_tokens=1, reduce_group_size=2))
+        result = graph.invoke({"transcript": "one two three four five six seven eight nine ten eleven twelve"})
 
     assert result["chunk_count"] == 3
     assert len(result["chunk_reports"]) == 3

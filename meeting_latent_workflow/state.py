@@ -15,7 +15,7 @@ class ChunkReport(TypedDict):
 
 
 class MeetingWorkflowState(TypedDict, total=False):
-    """State exchanged by the hierarchical long-meeting LangGraph workflow."""
+    """State exchanged by the hierarchical LangGraph meeting workflow."""
 
     transcript: str
     chunk: TranscriptChunk
