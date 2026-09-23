@@ -86,8 +86,12 @@ class InterlatReceiver(nn.Module):
         batch_size = prompt_ids.size(0)
         bop = token_embedding(torch.full((batch_size, 1), bop_id, dtype=torch.long, device=device))
         eop = token_embedding(torch.full((batch_size, 1), eop_id, dtype=torch.long, device=device))
-        parts = [bop, latent, eop, token_embedding(prompt_ids)]
-        ignored_length = bop.size(1) + latent.size(1) + eop.size(1) + prompt_ids.size(1)
+        # The Receiver must read its task condition before the hidden message.
+        # Qwen's generation prompt already ends in an assistant-turn marker, so
+        # this makes the latent trajectory the first continuous content of that
+        # turn: question -> <bop> -> latent -> <eop> -> answer.
+        parts = [token_embedding(prompt_ids), bop, latent, eop]
+        ignored_length = prompt_ids.size(1) + bop.size(1) + latent.size(1) + eop.size(1)
         if target_ids is not None:
             parts.append(token_embedding(target_ids))
         inputs_embeds = torch.cat(parts, dim=1)
@@ -113,7 +117,8 @@ class InterlatReceiver(nn.Module):
             return_dict=True,
         )
         latent_length = latent.size(1)
-        received_plan = output.hidden_states[-1][:, 1:1 + latent_length]
+        latent_start = prompt_ids.size(1) + 1  # question prompt followed by <bop>
+        received_plan = output.hidden_states[-1][:, latent_start:latent_start + latent_length]
         plan_loss = F.mse_loss(received_plan.float(), latent.detach().float())
         shuffled = latent.roll(1, dims=1)
         positive = F.cosine_similarity(received_plan.float(), latent.detach().float(), dim=-1).mean()

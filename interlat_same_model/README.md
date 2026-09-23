@@ -8,7 +8,7 @@ training-free CIPHER variant.
 long context + question
   -> frozen Qwen Sender generates an internal evidence/reasoning plan
   -> Sender final-layer states, one vector per generated plan token
-  -> <bop> + learned latent integration (+ optional compression) + <eop>
+  -> Receiver question prompt + <bop> + learned latent integration (+ optional compression) + <eop>
   -> same-family Qwen Receiver
   -> answer / meeting-summary target
 ```
