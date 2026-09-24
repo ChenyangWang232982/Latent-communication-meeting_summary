@@ -110,14 +110,20 @@ answers:
 python -m interlat_same_model.train --train-hidden interlat_same_model/data/qasper_train_hidden.pt --val-hidden interlat_same_model/data/qasper_validation_hidden.pt --output-dir interlat_same_model/checkpoints/qasper_qwen15b_k32 --compressed-latent-len 32
 ```
 
-## 3. Latent-Only Evaluation
+## 3. Evaluation and Controls
 
 The evaluation command deliberately has no `context` or Sender plan argument.
 It gives the Receiver only stored hidden states and the question.
 
 ```powershell
-python -m interlat_same_model.evaluate --hidden-data interlat_same_model/data/qasper_validation_hidden.pt --checkpoint interlat_same_model/checkpoints/qasper_qwen15b/best.pt --output interlat_same_model/output/qasper_validation.txt --num-samples 8
+python -m interlat_same_model.evaluate --hidden-data interlat_same_model/data/qasper_validation_hidden.pt --checkpoint interlat_same_model/checkpoints/qasper_qwen7b/best.pt --output interlat_same_model/output/qasper_validation.txt --num-samples 8 --include-baselines
 ```
+
+`--include-baselines` adds two controls to each output block: **question only**
+(no source and no Sender message) and **text-plan upper bound** (the stored
+Sender plan is supplied as ordinary text). The Interlat answer remains
+latent-only. Comparing these three conditions isolates whether errors come
+from the Sender plan, the base model, or latent communication.
 
 ## Checks
 

@@ -20,8 +20,44 @@ def parse_args():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--num-samples", type=int, default=8)
     parser.add_argument("--max-new-tokens", type=int, default=128)
+    parser.add_argument(
+        "--include-baselines",
+        action="store_true",
+        help="Also generate question-only and Sender-plan-as-text control answers.",
+    )
     parser.add_argument("--device", default="auto")
     return parser.parse_args()
+
+
+def baseline_user_prompt(question: str, sender_draft: str | None = None) -> str:
+    if sender_draft is None:
+        return (
+            "Answer the question concisely. Do not invent details that are not "
+            f"supported by the question.\n\nQuestion: {question}"
+        )
+    return (
+        "Answer the question using only the internal plan below. Return only a "
+        "concise answer and do not mention the plan.\n\n"
+        f"Internal plan:\n{sender_draft}\n\nQuestion: {question}"
+    )
+
+
+@torch.inference_mode()
+def generate_text_control(receiver, tokenizer, user_prompt: str, device: str, max_new_tokens: int) -> str:
+    rendered = tokenizer.apply_chat_template(
+        [{"role": "user", "content": user_prompt}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    inputs = tokenizer(rendered, return_tensors="pt").to(device)
+    output = receiver.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        do_sample=False,
+        num_beams=1,
+        pad_token_id=tokenizer.pad_token_id,
+    )
+    return tokenizer.decode(output[0, inputs.input_ids.size(1):], skip_special_tokens=True).strip()
 
 
 def main():
@@ -53,10 +89,30 @@ def main():
             bop_id=bop_id, eop_id=eop_id, prompt_ids=prompt, max_new_tokens=args.max_new_tokens,
         )
         answer = tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+        controls = ""
+        if args.include_baselines:
+            question_only = generate_text_control(
+                receiver,
+                tokenizer,
+                baseline_user_prompt(record["question"]),
+                device,
+                args.max_new_tokens,
+            )
+            text_plan = generate_text_control(
+                receiver,
+                tokenizer,
+                baseline_user_prompt(record["question"], record["sender_draft"]),
+                device,
+                args.max_new_tokens,
+            )
+            controls = (
+                f"\n\nQuestion-only baseline (no context, no Sender message):\n{question_only}"
+                f"\n\nText-plan upper bound (Sender plan transmitted as text):\n{text_plan}"
+            )
         blocks.append(
             f"{'=' * 80}\nSample {index}\nId: {record['id']}\n\nQuestion:\n{record['question']}\n\n"
             f"Sender internal plan (not transmitted as text):\n{record['sender_draft']}\n\n"
-            f"Interlat receiver answer:\n{answer}\n\nGold answer:\n{record['answer']}"
+            f"Interlat receiver answer (latent-only):\n{answer}{controls}\n\nGold answer:\n{record['answer']}"
         )
         print(f"processed {index}/{len(rows)}", flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
