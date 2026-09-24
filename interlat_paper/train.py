@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--train-hidden", type=Path, required=True)
     parser.add_argument("--val-hidden", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--actor-model", default="Qwen/Qwen2.5-7B-Instruct")
+    parser.add_argument("--actor-model", default="Qwen/Qwen2.5-3B-Instruct")
     parser.add_argument(
         "--attention-implementation",
         default="flash_attention_2",
