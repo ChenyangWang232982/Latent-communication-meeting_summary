@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 from contextlib import nullcontext
 from pathlib import Path
@@ -263,6 +264,14 @@ def main():
     scheduler = make_scheduler(optimizer, total_updates, args.warmup_ratio)
     deepspeed_engine = None
     if args.deepspeed_config:
+        # DeepSpeed otherwise tries MPI discovery when launched as plain
+        # ``python -m ...``. A single-GPU run needs neither MPI nor mpi4py.
+        if "RANK" not in os.environ:
+            os.environ.setdefault("RANK", "0")
+            os.environ.setdefault("LOCAL_RANK", "0")
+            os.environ.setdefault("WORLD_SIZE", "1")
+            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+            os.environ.setdefault("MASTER_PORT", "29500")
         try:
             import deepspeed
         except ImportError as error:
