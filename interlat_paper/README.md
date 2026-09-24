@@ -23,15 +23,17 @@ python -m interlat_same_model.collect --data data/qasper_oracle_evidence/train.j
 python -m interlat_same_model.collect --data data/qasper_oracle_evidence/validation.jsonl --output interlat_paper/data/qasper_oracle_validation.pt --model Qwen/Qwen2.5-7B-Instruct --source-max-tokens 4096 --sender-max-new-tokens 1024
 ```
 
-For a 48GB GPU, install the updated environment and run the full Actor with ZeRO-3:
+For a 48GB GPU, install the updated environment and run the full Actor with ZeRO-2 and optimizer-only CPU offload:
 
 ```bash
-python -m interlat_paper.train --train-hidden interlat_paper/data/qasper_oracle_train.pt --val-hidden interlat_paper/data/qasper_oracle_validation.pt --output-dir interlat_paper/checkpoints/qasper_oracle_qwen7b --actor-model Qwen/Qwen2.5-7B-Instruct --epochs 3 --batch-size 1 --gradient-accumulation 16 --learning-rate 1e-5 --warmup-ratio 0.03 --gradient-checkpointing --deepspeed-config interlat_paper/deepspeed_zero3_cpu.json
+python -m interlat_paper.train --train-hidden interlat_paper/data/qasper_oracle_train.pt --val-hidden interlat_paper/data/qasper_oracle_validation.pt --output-dir interlat_paper/checkpoints/qasper_oracle_qwen7b --actor-model Qwen/Qwen2.5-7B-Instruct --epochs 3 --batch-size 1 --gradient-accumulation 16 --learning-rate 1e-5 --warmup-ratio 0.03 --gradient-checkpointing --deepspeed-config interlat_paper/deepspeed_zero2_optimizer_offload.json
 ```
 
 The authors use BF16 and FlashAttention 2. The command therefore requests `flash_attention_2`; install a CUDA-compatible `flash-attn` wheel on the Linux training machine before this run. If that cannot be installed, pass `--attention-implementation ""` for a slower compatibility run, which is no longer the exact performance setting.
 
-The current ZeRO JSON sets DeepSpeed accumulation to one because the script owns the paper-style global-batch accumulation. CPU parameter offload is slower but keeps the full 7B Actor feasible on a single 48GB card.
+The current ZeRO JSON sets DeepSpeed accumulation to one because the script owns the paper-style global-batch accumulation. It keeps model parameters on the GPU and offloads only optimizer states, avoiding the large CPU initialization peak of ZeRO-3 parameter offload.
+
+`deepspeed_zero3_cpu.json` is kept as an alternative for machines with ample per-container CPU memory; it is not the recommended choice for the current hosted 48GB setup.
 
 ## Evaluation
 
