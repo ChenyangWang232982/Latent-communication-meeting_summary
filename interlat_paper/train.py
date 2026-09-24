@@ -260,8 +260,8 @@ def main():
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, collate_fn=lambda rows: rows)
     val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, collate_fn=lambda rows: rows)
     total_updates = args.epochs * math.ceil(len(train_loader) / args.gradient_accumulation)
-    optimizer = AdamW(model.parameters(), lr=args.learning_rate)
-    scheduler = make_scheduler(optimizer, total_updates, args.warmup_ratio)
+    optimizer = None
+    scheduler = None
     deepspeed_engine = None
     if args.deepspeed_config:
         # DeepSpeed otherwise tries MPI discovery when launched as plain
@@ -276,17 +276,20 @@ def main():
             import deepspeed
         except ImportError as error:
             raise RuntimeError("Install deepspeed to use --deepspeed-config.") from error
+        deepspeed_config = json.loads(args.deepspeed_config.read_text(encoding="utf-8"))
+        deepspeed_config.setdefault("optimizer", {}).setdefault("params", {})["lr"] = args.learning_rate
         deepspeed_engine, optimizer, _, _ = deepspeed.initialize(
             model=model,
             model_parameters=model.parameters(),
-            optimizer=optimizer,
-            config=str(args.deepspeed_config),
+            config=deepspeed_config,
         )
         model = deepspeed_engine.module
         device = deepspeed_engine.device
         scheduler = None
     else:
         model = model.to(device=device, dtype=dtype)
+        optimizer = AdamW(model.parameters(), lr=args.learning_rate)
+        scheduler = make_scheduler(optimizer, total_updates, args.warmup_ratio)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     tokenizer.save_pretrained(args.output_dir / "tokenizer")
