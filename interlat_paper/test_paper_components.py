@@ -30,6 +30,16 @@ class PaperComponentTest(unittest.TestCase):
         self.assertTrue(torch.equal(mixed[:, :2], latent[:, :2]))
         self.assertTrue(torch.equal(mixed[:, 2:], actor.embedding(plan_ids)[:, 2:]))
 
+    def test_adapter_clamps_inserted_latent_range(self):
+        actor = DummyActor()
+        model = InterlatActor(actor, source_hidden_size=8, num_heads=2).eval()
+        with torch.no_grad():
+            model.adapter.adaptive_projection.scale.fill_(100.0)
+            model.adapter.adaptive_projection.output_scale.fill_(1.0)
+        output = model.adapt_latents(torch.randn(1, 4, 8))
+        self.assertLessEqual(float(output.max()), 10.0)
+        self.assertGreaterEqual(float(output.min()), -10.0)
+
     def test_build_inputs_uses_vocab_boundary_embeddings_and_masks_prefix(self):
         actor = DummyActor()
         model = InterlatActor(actor, source_hidden_size=8, num_heads=2)

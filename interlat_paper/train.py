@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--train-hidden", type=Path, required=True)
     parser.add_argument("--val-hidden", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--actor-model", default="Qwen/Qwen2.5-3B-Instruct")
+    parser.add_argument("--actor-model", default="Qwen/Qwen2.5-0.5B-Instruct")
     parser.add_argument(
         "--attention-implementation",
         default="flash_attention_2",
@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument("--max-answer-tokens", type=int, default=256)
     parser.add_argument("--max-plan-tokens", type=int, default=1024)
     parser.add_argument("--num-heads", type=int, default=8)
-    parser.add_argument("--early-stopping-patience", type=int, default=2)
+    parser.add_argument("--early-stopping-patience", type=int, default=5)
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument(
         "--pure-latent-start-epoch",

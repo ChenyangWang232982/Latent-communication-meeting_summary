@@ -60,7 +60,10 @@ class CommunicationAdapter(nn.Module):
         projected = self.input_projector(states)
         normalized = self.pre_ln(projected)
         attended, _ = self.mha(normalized, normalized, normalized, need_weights=False)
-        return self.adaptive_projection(self.post_ln(normalized + attended))
+        processed = self.adaptive_projection(self.post_ln(normalized + attended))
+        # The released Interlat adapter constrains its inserted latent vectors
+        # after projection to keep them in a stable embedding-compatible range.
+        return torch.clamp(processed, -10.0, 10.0)
 
 
 class InterlatActor(nn.Module):
