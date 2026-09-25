@@ -1,4 +1,4 @@
-"""Evaluate a paper-stage Interlat checkpoint with latent-only and text controls."""
+"""Evaluate a paper-stage Interlat checkpoint with latent-only and curriculum controls."""
 
 from __future__ import annotations
 
@@ -21,15 +21,22 @@ def parse_args():
     parser.add_argument("--num-samples", type=int, default=8)
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--include-text-control", action="store_true")
+    parser.add_argument(
+        "--mix-ratios",
+        type=float,
+        nargs="*",
+        default=[],
+        help="Paper curriculum replacement rates to evaluate (0=text, 1=latent).",
+    )
     parser.add_argument("--device", default="auto")
     return parser.parse_args()
 
 
 @torch.inference_mode()
-def generate_text_message(model, prompt_prefix, assistant_prefix, plan, bop_id, eop_id, max_new_tokens):
+def generate_message(model, prompt_prefix, assistant_prefix, message, bop_id, eop_id, max_new_tokens):
     embedding = model.actor.get_input_embeddings()
     bop, eop = model._boundary_embeddings(bop_id, eop_id, prompt_prefix.size(0))
-    inputs = torch.cat((embedding(prompt_prefix), bop, embedding(plan), eop, embedding(assistant_prefix)), dim=1)
+    inputs = torch.cat((embedding(prompt_prefix), bop, message, eop, embedding(assistant_prefix)), dim=1)
     mask = torch.ones(inputs.shape[:2], dtype=torch.long, device=inputs.device)
     return model.actor.generate(
         inputs_embeds=inputs,
@@ -43,6 +50,8 @@ def generate_text_message(model, prompt_prefix, assistant_prefix, plan, bop_id, 
 
 def main():
     args = parse_args()
+    if any(rate < 0.0 or rate > 1.0 for rate in args.mix_ratios):
+        raise ValueError("--mix-ratios values must be between 0 and 1.")
     device_name = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
     device = torch.device(device_name)
     dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
@@ -70,12 +79,36 @@ def main():
         )
         latent_answer = tokenizer.decode(latent[0], skip_special_tokens=True).strip()
         controls = ""
+        plan = None
         if args.include_text_control:
             plan = draft_ids(tokenizer, record["sender_draft"], device, metadata["max_plan_tokens"])
-            text = generate_text_message(
-                model, prompt_prefix, assistant_prefix, plan, metadata["bop_id"], metadata["eop_id"], args.max_new_tokens
+            text = generate_message(
+                model,
+                prompt_prefix,
+                assistant_prefix,
+                model.actor.get_input_embeddings()(plan).to(dtype),
+                metadata["bop_id"],
+                metadata["eop_id"],
+                args.max_new_tokens,
             )
             controls = "\n\nText-message control:\n" + tokenizer.decode(text[0], skip_special_tokens=True).strip()
+        if args.mix_ratios:
+            if plan is None:
+                plan = draft_ids(tokenizer, record["sender_draft"], device, metadata["max_plan_tokens"])
+            adapted = model.adapt_latents(states)
+            for rate in args.mix_ratios:
+                mixed = model.mix_plan_tokens(adapted, plan, rate)
+                generated = generate_message(
+                    model,
+                    prompt_prefix,
+                    assistant_prefix,
+                    mixed,
+                    metadata["bop_id"],
+                    metadata["eop_id"],
+                    args.max_new_tokens,
+                )
+                answer = tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+                controls += f"\n\nCurriculum mix r={rate:g} (latent proportion):\n{answer}"
         blocks.append(
             f"{'=' * 80}\nSample {number}\nId: {record['id']}\n\nQuestion:\n{record['question']}\n\n"
             f"Sender plan (debug only; not sent as text):\n{record['sender_draft']}\n\n"

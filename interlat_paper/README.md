@@ -42,3 +42,11 @@ The default 3B all-GPU training checkpoint is already consolidated:
 ```bash
 python -m interlat_paper.evaluate --hidden-data interlat_paper/data/qasper_oracle_validation.pt --checkpoint interlat_paper/checkpoints/qasper_oracle_qwen3b/best.pt --output interlat_paper/output/qasper_oracle.txt --num-samples 8 --include-text-control
 ```
+
+To diagnose the paper curriculum before changing training, compare a mostly-latent
+message with the pure-latent endpoint. `r` is the latent proportion: `0` is text
+plan only and `1` is latent only.
+
+```bash
+python -m interlat_paper.evaluate --hidden-data interlat_paper/data/qasper_oracle_validation.pt --checkpoint interlat_paper/checkpoints/qasper_oracle_qwen3b_v3/best.pt --output interlat_paper/output/qasper_oracle_qwen3b_v3_mixes.txt --num-samples 8 --include-text-control --mix-ratios 0.5 0.9 1.0
+```
