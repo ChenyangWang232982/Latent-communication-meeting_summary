@@ -72,11 +72,20 @@ def chat_prompt(tokenizer, content: str) -> str:
     return f"Instruction:\n{content}\n\nResponse:\n"
 
 
-def prompt_ids(tokenizer, question: str, device: torch.device, max_tokens: int) -> torch.Tensor:
+def prompt_parts(tokenizer, question: str, device: torch.device, max_tokens: int) -> tuple[torch.Tensor, torch.Tensor]:
     content = "Answer the question concisely using the received message.\n\nQuestion: " + question
-    return tokenizer(
-        chat_prompt(tokenizer, content), return_tensors="pt", truncation=True, max_length=max_tokens
-    ).input_ids.to(device)
+    if getattr(tokenizer, "chat_template", None):
+        messages = [{"role": "user", "content": content}]
+        prefix = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False, return_tensors="pt")
+        with_assistant = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt")
+        if prefix.size(1) > max_tokens or not torch.equal(with_assistant[:, :prefix.size(1)], prefix):
+            raise ValueError("Question prompt exceeds max-prompt-tokens or has a non-prefix chat template.")
+        return prefix.to(device), with_assistant[:, prefix.size(1):].to(device)
+    prefix = tokenizer("Instruction:\n" + content + "\n\n", return_tensors="pt").input_ids
+    assistant = tokenizer("Response:\n", add_special_tokens=False, return_tensors="pt").input_ids
+    if prefix.size(1) > max_tokens:
+        raise ValueError("Question prompt exceeds max-prompt-tokens.")
+    return prefix.to(device), assistant.to(device)
 
 
 def target_ids(tokenizer, answer: str, device: torch.device, max_tokens: int) -> torch.Tensor:
@@ -120,24 +129,28 @@ def sample_metrics(model, record, negative_record, tokenizer, bop_id, eop_id, de
     states = record["sender_states"].unsqueeze(0).to(device=device, dtype=dtype)
     negative_states = negative_record["sender_states"].unsqueeze(0).to(device=device, dtype=dtype)
     negative_states = same_length_negative(states, negative_states)
-    prompt = prompt_ids(tokenizer, record["question"], device, args.max_prompt_tokens)
+    prompt_prefix, assistant_prefix = prompt_parts(tokenizer, record["question"], device, args.max_prompt_tokens)
     target = target_ids(tokenizer, record["answer"], device, args.max_answer_tokens)
     plan = draft_ids(tokenizer, record["sender_draft"], device, args.max_plan_tokens)
     replacement_rate = random.choice(CURRICULUM_RATES) if train else 0.5
 
     adapted = model.adapt_latents(states)
     mixed_message = model.mix_plan_tokens(adapted, plan, replacement_rate)
-    matched, matched_labels = model.forward_message(prompt, target, mixed_message, bop_id, eop_id)
+    matched, matched_labels = model.forward_message(
+        prompt_prefix, assistant_prefix, target, mixed_message, bop_id, eop_id
+    )
 
     # Eq. (3): textual reasoning is a teacher signal, not input to the Actor at inference.
     with torch.no_grad():
         textual, textual_labels = model.forward_message(
-            prompt, target, model.actor.get_input_embeddings()(plan).to(dtype), bop_id, eop_id
+            prompt_prefix, assistant_prefix, target, model.actor.get_input_embeddings()(plan).to(dtype), bop_id, eop_id
         )
         mismatched_message = model.mix_plan_tokens(
             model.adapt_latents(negative_states), plan, random.choice(CURRICULUM_RATES) if train else 0.5
         )
-        mismatched, mismatched_labels = model.forward_message(prompt, target, mismatched_message, bop_id, eop_id)
+        mismatched, mismatched_labels = model.forward_message(
+            prompt_prefix, assistant_prefix, target, mismatched_message, bop_id, eop_id
+        )
 
     task_loss = matched.loss
     contrast_loss = random_contrast_loss(

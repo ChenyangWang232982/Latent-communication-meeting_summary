@@ -102,19 +102,23 @@ class InterlatActor(nn.Module):
 
     def build_inputs(
         self,
-        prompt_ids: torch.Tensor,
+        prompt_prefix_ids: torch.Tensor,
+        assistant_prefix_ids: torch.Tensor,
         target_ids: torch.Tensor,
         message_embeddings: torch.Tensor,
         bop_id: int,
         eop_id: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         embedding = self.actor.get_input_embeddings()
-        prompt = embedding(prompt_ids)
+        prompt = embedding(prompt_prefix_ids)
+        assistant_prefix = embedding(assistant_prefix_ids)
         target = embedding(target_ids)
-        batch_size = prompt_ids.size(0)
+        batch_size = prompt_prefix_ids.size(0)
         bop, eop = self._boundary_embeddings(bop_id, eop_id, batch_size)
-        inputs = torch.cat((prompt, bop, message_embeddings, eop, target), dim=1)
-        ignored = prompt.size(1) + bop.size(1) + message_embeddings.size(1) + eop.size(1)
+        # Interlat inserts the latent message after the human/user turn and
+        # before the assistant generation prefix, not into the answer itself.
+        inputs = torch.cat((prompt, bop, message_embeddings, eop, assistant_prefix, target), dim=1)
+        ignored = prompt.size(1) + bop.size(1) + message_embeddings.size(1) + eop.size(1) + assistant_prefix.size(1)
         labels = torch.cat(
             (
                 torch.full((batch_size, ignored), IGNORE_INDEX, dtype=torch.long, device=inputs.device),
@@ -127,19 +131,23 @@ class InterlatActor(nn.Module):
 
     def forward_message(
         self,
-        prompt_ids: torch.Tensor,
+        prompt_prefix_ids: torch.Tensor,
+        assistant_prefix_ids: torch.Tensor,
         target_ids: torch.Tensor,
         message_embeddings: torch.Tensor,
         bop_id: int,
         eop_id: int,
     ):
-        inputs, mask, labels = self.build_inputs(prompt_ids, target_ids, message_embeddings, bop_id, eop_id)
+        inputs, mask, labels = self.build_inputs(
+            prompt_prefix_ids, assistant_prefix_ids, target_ids, message_embeddings, bop_id, eop_id
+        )
         return self.actor(inputs_embeds=inputs, attention_mask=mask, labels=labels, return_dict=True), labels
 
     @torch.inference_mode()
     def generate(
         self,
-        prompt_ids: torch.Tensor,
+        prompt_prefix_ids: torch.Tensor,
+        assistant_prefix_ids: torch.Tensor,
         sender_states: torch.Tensor,
         bop_id: int,
         eop_id: int,
@@ -147,9 +155,10 @@ class InterlatActor(nn.Module):
     ) -> torch.Tensor:
         latent = self.adapt_latents(sender_states)
         embedding = self.actor.get_input_embeddings()
-        prompt = embedding(prompt_ids)
-        bop, eop = self._boundary_embeddings(bop_id, eop_id, prompt_ids.size(0))
-        inputs = torch.cat((prompt, bop, latent, eop), dim=1)
+        prompt = embedding(prompt_prefix_ids)
+        assistant_prefix = embedding(assistant_prefix_ids)
+        bop, eop = self._boundary_embeddings(bop_id, eop_id, prompt_prefix_ids.size(0))
+        inputs = torch.cat((prompt, bop, latent, eop, assistant_prefix), dim=1)
         mask = torch.ones(inputs.shape[:2], dtype=torch.long, device=inputs.device)
         return self.actor.generate(
             inputs_embeds=inputs,

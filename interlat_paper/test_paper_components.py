@@ -34,13 +34,15 @@ class PaperComponentTest(unittest.TestCase):
         actor = DummyActor()
         model = InterlatActor(actor, source_hidden_size=8, num_heads=2)
         prompt = torch.tensor([[3, 4]])
+        assistant_prefix = torch.tensor([[7]])
         target = torch.tensor([[5, 6]])
         message = torch.randn(1, 3, 8)
-        inputs, _, labels = model.build_inputs(prompt, target, message, bop_id=1, eop_id=2)
-        self.assertEqual(inputs.shape, (1, 2 + 1 + 3 + 1 + 2, 8))
+        inputs, _, labels = model.build_inputs(prompt, assistant_prefix, target, message, bop_id=1, eop_id=2)
+        self.assertEqual(inputs.shape, (1, 2 + 1 + 3 + 1 + 1 + 2, 8))
         self.assertTrue(torch.equal(inputs[:, 2], actor.embedding(torch.tensor([1]))))
-        self.assertTrue(torch.equal(labels[:, :7], torch.full((1, 7), IGNORE_INDEX)))
-        self.assertTrue(torch.equal(labels[:, 7:], target))
+        self.assertTrue(torch.equal(inputs[:, 7], actor.embedding(assistant_prefix).squeeze(1)))
+        self.assertTrue(torch.equal(labels[:, :8], torch.full((1, 8), IGNORE_INDEX)))
+        self.assertTrue(torch.equal(labels[:, 8:], target))
 
     def test_distribution_losses_handle_distinct_prefix_lengths(self):
         # Each labels tensor masks a different prefix, as latent and textual

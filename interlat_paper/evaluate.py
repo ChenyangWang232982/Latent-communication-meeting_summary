@@ -9,7 +9,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from interlat_paper.model import InterlatActor
-from interlat_paper.train import draft_ids, prompt_ids
+from interlat_paper.train import draft_ids, prompt_parts
 from interlat_same_model.data import HiddenStateDataset
 
 
@@ -26,10 +26,10 @@ def parse_args():
 
 
 @torch.inference_mode()
-def generate_text_message(model, prompt, plan, bop_id, eop_id, max_new_tokens):
+def generate_text_message(model, prompt_prefix, assistant_prefix, plan, bop_id, eop_id, max_new_tokens):
     embedding = model.actor.get_input_embeddings()
-    bop, eop = model._boundary_embeddings(bop_id, eop_id, prompt.size(0))
-    inputs = torch.cat((embedding(prompt), bop, embedding(plan), eop), dim=1)
+    bop, eop = model._boundary_embeddings(bop_id, eop_id, prompt_prefix.size(0))
+    inputs = torch.cat((embedding(prompt_prefix), bop, embedding(plan), eop, embedding(assistant_prefix)), dim=1)
     mask = torch.ones(inputs.shape[:2], dtype=torch.long, device=inputs.device)
     return model.actor.generate(
         inputs_embeds=inputs,
@@ -63,17 +63,17 @@ def main():
     records = HiddenStateDataset(args.hidden_data, args.num_samples)
     blocks = []
     for number, record in enumerate(records, start=1):
-        prompt = prompt_ids(tokenizer, record["question"], device, metadata["max_prompt_tokens"])
+        prompt_prefix, assistant_prefix = prompt_parts(tokenizer, record["question"], device, metadata["max_prompt_tokens"])
         states = record["sender_states"].unsqueeze(0).to(device=device, dtype=dtype)
         latent = model.generate(
-            prompt, states, metadata["bop_id"], metadata["eop_id"], args.max_new_tokens
+            prompt_prefix, assistant_prefix, states, metadata["bop_id"], metadata["eop_id"], args.max_new_tokens
         )
         latent_answer = tokenizer.decode(latent[0], skip_special_tokens=True).strip()
         controls = ""
         if args.include_text_control:
             plan = draft_ids(tokenizer, record["sender_draft"], device, metadata["max_plan_tokens"])
             text = generate_text_message(
-                model, prompt, plan, metadata["bop_id"], metadata["eop_id"], args.max_new_tokens
+                model, prompt_prefix, assistant_prefix, plan, metadata["bop_id"], metadata["eop_id"], args.max_new_tokens
             )
             controls = "\n\nText-message control:\n" + tokenizer.decode(text[0], skip_special_tokens=True).strip()
         blocks.append(

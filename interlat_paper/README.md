@@ -14,6 +14,8 @@ It does not reuse the adapter-only objective in `interlat_same_model`.
 
 The paper's compression reasoning model is intentionally not included in this stage. It is trained only after the full Actor has converged, with the Actor and adapter frozen.
 
+The latent message is inserted after the user turn and before the assistant generation prefix. Checkpoints trained before this insertion rule was fixed are not compatible with this implementation and must be retrained.
+
 ## Main-stage command
 
 First collect plans with an instruction-tuned Sender. Use the Oracle-evidence JSONL split for the controlled experiment:
