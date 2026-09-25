@@ -78,6 +78,12 @@ def prompt_parts(tokenizer, question: str, device: torch.device, max_tokens: int
         messages = [{"role": "user", "content": content}]
         prefix = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False, return_tensors="pt")
         with_assistant = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt")
+        # Transformers versions differ: some return a Tensor while newer
+        # tokenizers return BatchEncoding when ``return_tensors`` is supplied.
+        if not isinstance(prefix, torch.Tensor):
+            prefix = prefix["input_ids"]
+        if not isinstance(with_assistant, torch.Tensor):
+            with_assistant = with_assistant["input_ids"]
         if prefix.size(1) > max_tokens or not torch.equal(with_assistant[:, :prefix.size(1)], prefix):
             raise ValueError("Question prompt exceeds max-prompt-tokens or has a non-prefix chat template.")
         return prefix.to(device), with_assistant[:, prefix.size(1):].to(device)
