@@ -143,6 +143,18 @@ def make_scheduler(optimizer, total_updates: int, warmup_ratio: float):
     return LambdaLR(optimizer, multiplier)
 
 
+def save_checkpoint_atomically(checkpoint: dict, path: Path) -> None:
+    """Keep an earlier valid best checkpoint if writing a replacement fails."""
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        torch.save(checkpoint, temporary_path)
+        os.replace(temporary_path, path)
+    except Exception:
+        if temporary_path.exists():
+            temporary_path.unlink()
+        raise
+
+
 def same_length_negative(states: torch.Tensor, negative_states: torch.Tensor) -> torch.Tensor:
     """Crop or repeat the cross-task state sequence as in the official code."""
     target_length = states.size(1)
@@ -397,7 +409,7 @@ def main():
             else:
                 checkpoint["actor"] = model.actor.state_dict()
                 checkpoint["adapter"] = model.adapter.state_dict()
-                torch.save(checkpoint, args.output_dir / "best.pt")
+                save_checkpoint_atomically(checkpoint, args.output_dir / "best.pt")
             saved_path = args.output_dir / ("deepspeed/best" if deepspeed_engine else "best.pt")
             print(f"saved checkpoint: {saved_path}", flush=True)
         else:
