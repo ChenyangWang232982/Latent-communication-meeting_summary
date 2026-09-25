@@ -52,6 +52,29 @@ def parse_args():
     parser.add_argument("--early-stopping-patience", type=int, default=2)
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument(
+        "--pure-latent-start-epoch",
+        type=int,
+        default=0,
+        help="Enable endpoint adaptation from this one-indexed epoch; 0 disables it.",
+    )
+    parser.add_argument(
+        "--pure-latent-probability",
+        type=float,
+        default=0.0,
+        help="Probability of r=1.0 during endpoint-adaptation training epochs.",
+    )
+    parser.add_argument(
+        "--validation-replacement-rate",
+        type=float,
+        default=0.5,
+        help="Latent proportion used for validation and best-checkpoint selection.",
+    )
+    parser.add_argument(
+        "--init-checkpoint",
+        type=Path,
+        help="Optional consolidated best.pt from which to start a new adaptation run.",
+    )
+    parser.add_argument(
         "--deepspeed-config",
         type=Path,
         help="Optional DeepSpeed JSON config. Required in practice for full 7B training on a 48GB card.",
@@ -130,7 +153,19 @@ def same_length_negative(states: torch.Tensor, negative_states: torch.Tensor) ->
     return repeated + torch.randn_like(repeated) * 0.01
 
 
-def sample_metrics(model, record, negative_record, tokenizer, bop_id, eop_id, device, args, train):
+def choose_replacement_rate(args, train: bool, epoch: int) -> float:
+    if not train:
+        return args.validation_replacement_rate
+    if (
+        args.pure_latent_start_epoch
+        and epoch >= args.pure_latent_start_epoch
+        and random.random() < args.pure_latent_probability
+    ):
+        return 1.0
+    return random.choice(CURRICULUM_RATES)
+
+
+def sample_metrics(model, record, negative_record, tokenizer, bop_id, eop_id, device, args, train, epoch):
     dtype = next(model.parameters()).dtype
     states = record["sender_states"].unsqueeze(0).to(device=device, dtype=dtype)
     negative_states = negative_record["sender_states"].unsqueeze(0).to(device=device, dtype=dtype)
@@ -138,7 +173,7 @@ def sample_metrics(model, record, negative_record, tokenizer, bop_id, eop_id, de
     prompt_prefix, assistant_prefix = prompt_parts(tokenizer, record["question"], device, args.max_prompt_tokens)
     target = target_ids(tokenizer, record["answer"], device, args.max_answer_tokens)
     plan = draft_ids(tokenizer, record["sender_draft"], device, args.max_plan_tokens)
-    replacement_rate = random.choice(CURRICULUM_RATES) if train else 0.5
+    replacement_rate = choose_replacement_rate(args, train, epoch)
 
     adapted = model.adapt_latents(states)
     mixed_message = model.mix_plan_tokens(adapted, plan, replacement_rate)
@@ -151,9 +186,10 @@ def sample_metrics(model, record, negative_record, tokenizer, bop_id, eop_id, de
         textual, textual_labels = model.forward_message(
             prompt_prefix, assistant_prefix, target, model.actor.get_input_embeddings()(plan).to(dtype), bop_id, eop_id
         )
-        mismatched_message = model.mix_plan_tokens(
-            model.adapt_latents(negative_states), plan, random.choice(CURRICULUM_RATES) if train else 0.5
-        )
+        # Pure-latent endpoint examples must compare two pure latent messages.
+        # Otherwise the contrastive objective can still exploit a plan suffix.
+        negative_rate = replacement_rate if replacement_rate == 1.0 else choose_replacement_rate(args, train, epoch)
+        mismatched_message = model.mix_plan_tokens(model.adapt_latents(negative_states), plan, negative_rate)
         mismatched, mismatched_labels = model.forward_message(
             prompt_prefix, assistant_prefix, target, mismatched_message, bop_id, eop_id
         )
@@ -176,6 +212,7 @@ def sample_metrics(model, record, negative_record, tokenizer, bop_id, eop_id, de
         "alignment_loss": alignment_loss,
         "lambda_contrast": torch.tensor(lambda_contrast, device=device),
         "lambda_align": torch.tensor(lambda_align, device=device),
+        "replacement_rate": torch.tensor(replacement_rate, device=device),
     }
 
 
@@ -195,7 +232,7 @@ def run_epoch(
 ):
     train = optimizer is not None
     model.train(train)
-    totals = {name: 0.0 for name in ("loss", "task_loss", "contrast_loss", "alignment_loss")}
+    totals = {name: 0.0 for name in ("loss", "task_loss", "contrast_loss", "alignment_loss", "replacement_rate")}
     count = 0
     if train:
         if deepspeed_engine:
@@ -216,7 +253,7 @@ def run_epoch(
             context = nullcontext() if train else torch.inference_mode()
             with context:
                 metrics = sample_metrics(
-                    model, record, negative_record, tokenizer, bop_id, eop_id, device, args, train
+                    model, record, negative_record, tokenizer, bop_id, eop_id, device, args, train, epoch
                 )
             if train:
                 scaled_loss = metrics["loss"] / (len(batch) * args.gradient_accumulation)
@@ -250,6 +287,12 @@ def main():
     args = parse_args()
     if args.batch_size < 1 or args.gradient_accumulation < 1:
         raise ValueError("batch-size and gradient-accumulation must be positive")
+    if not 0.0 <= args.pure_latent_probability <= 1.0:
+        raise ValueError("pure-latent-probability must be between 0 and 1")
+    if not 0.0 <= args.validation_replacement_rate <= 1.0:
+        raise ValueError("validation-replacement-rate must be between 0 and 1")
+    if args.pure_latent_start_epoch < 0:
+        raise ValueError("pure-latent-start-epoch must be non-negative")
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     device_name = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
@@ -275,6 +318,17 @@ def main():
         actor.gradient_checkpointing_enable()
         actor.config.use_cache = False
     model = InterlatActor(actor, source_size, args.num_heads)
+    if args.init_checkpoint:
+        initial = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+        if "actor" not in initial or "adapter" not in initial:
+            raise ValueError("--init-checkpoint must be a consolidated non-DeepSpeed best.pt checkpoint.")
+        initial_metadata = initial.get("metadata", {})
+        if initial_metadata.get("actor_model") not in (None, args.actor_model):
+            raise ValueError("--init-checkpoint was trained with a different actor model.")
+        if initial_metadata.get("source_hidden_size") not in (None, source_size):
+            raise ValueError("--init-checkpoint expects a different Sender hidden size.")
+        model.actor.load_state_dict(initial["actor"])
+        model.adapter.load_state_dict(initial["adapter"])
 
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, collate_fn=lambda rows: rows)
     val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, collate_fn=lambda rows: rows)
