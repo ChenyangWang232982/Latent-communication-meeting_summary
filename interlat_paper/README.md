@@ -70,3 +70,21 @@ judged from `r=1`, not from the text or mixed controls.
 ```bash
 python -m interlat_paper.evaluate --hidden-data interlat_paper/data/qasper_oracle_validation.pt --checkpoint interlat_paper/checkpoints/qasper_oracle_qwen3b_v3_pure_latent/best.pt --output interlat_paper/output/qasper_oracle_qwen3b_v3_pure_latent.txt --num-samples 8 --include-text-control --mix-ratios 0.5 0.9 1.0
 ```
+
+## Pure-Latent-Only Adaptation
+
+Use this only after the mixed endpoint adaptation has failed. Every training and
+validation message is pure latent (`r=1`); no Sender-plan text remains in the
+Actor input. This is a QASPER-specific ablation, not the original paper
+curriculum. Keep `qasper_oracle_qwen3b_v3` as the control checkpoint, but remove
+the failed mixed-adaptation directory before this run if disk capacity is tight.
+
+```bash
+rm -rf interlat_paper/checkpoints/qasper_oracle_qwen3b_v3_pure_latent
+
+python -m interlat_paper.train --train-hidden interlat_paper/data/qasper_oracle_train.pt --val-hidden interlat_paper/data/qasper_oracle_validation.pt --output-dir interlat_paper/checkpoints/qasper_oracle_qwen3b_v3_all_pure_latent --init-checkpoint interlat_paper/checkpoints/qasper_oracle_qwen3b_v3/best.pt --actor-model Qwen/Qwen2.5-3B-Instruct --epochs 6 --batch-size 1 --gradient-accumulation 16 --learning-rate 1e-5 --warmup-ratio 0.03 --gradient-checkpointing --pure-latent-start-epoch 1 --pure-latent-probability 1.0 --validation-replacement-rate 1.0 --early-stopping-patience 3
+```
+
+```bash
+python -m interlat_paper.evaluate --hidden-data interlat_paper/data/qasper_oracle_validation.pt --checkpoint interlat_paper/checkpoints/qasper_oracle_qwen3b_v3_all_pure_latent/best.pt --output interlat_paper/output/qasper_oracle_qwen3b_v3_all_pure_latent.txt --num-samples 8 --include-text-control --mix-ratios 0.5 0.9 1.0
+```
