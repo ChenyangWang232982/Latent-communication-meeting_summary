@@ -28,6 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regularization", type=float, default=1e-3)
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
     parser.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help="Allow Qwen3 reasoning blocks. They are excluded from the transmitted message.",
+    )
+    parser.add_argument(
         "--variants",
         nargs="+",
         default=["statebridge", "text", "raw_hidden", "random_prefix", "no_comm"],
@@ -56,10 +61,16 @@ def trim_context(tokenizer, context: str, max_tokens: int) -> str:
     return tokenizer.decode(ids, skip_special_tokens=True)
 
 
-def chat_prompt(tokenizer, system: str, user: str) -> str:
+def chat_prompt(tokenizer, system: str, user: str, enable_thinking: bool) -> str:
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     if getattr(tokenizer, "chat_template", None):
-        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        options = {"tokenize": False, "add_generation_prompt": True}
+        if not enable_thinking:
+            try:
+                return tokenizer.apply_chat_template(messages, enable_thinking=False, **options)
+            except TypeError:
+                pass
+        return tokenizer.apply_chat_template(messages, **options)
     return f"{system}\n\n{user}\n\nAnswer:"
 
 
@@ -100,6 +111,21 @@ def decode(tokenizer, token_ids: torch.Tensor) -> str:
     return tokenizer.decode(token_ids[0], skip_special_tokens=True).strip()
 
 
+def remove_thinking_tokens(tokenizer, token_ids: torch.Tensor, states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Keep only the post-``</think>`` message, as in StateBridge for Qwen3."""
+    closing = tokenizer.encode("</think>", add_special_tokens=False)
+    if not closing:
+        return token_ids, states
+    sequence = token_ids[0].tolist()
+    start = 0
+    for index in range(len(sequence) - len(closing) + 1):
+        if sequence[index : index + len(closing)] == closing:
+            start = index + len(closing)
+    if start and len(sequence) - start >= 2:
+        return token_ids[:, start:], states[start:]
+    return token_ids, states
+
+
 @torch.inference_mode()
 def sender_message(model, tokenizer, record: dict[str, Any], args: argparse.Namespace):
     evidence = trim_context(tokenizer, record["context"], args.source_max_tokens)
@@ -108,7 +134,9 @@ def sender_message(model, tokenizer, record: dict[str, Any], args: argparse.Name
         "Write a short factual handoff for another agent. Include the exact answer and the "
         "evidence needed to justify it. Do not add unsupported details."
     )
-    prompt = chat_prompt(tokenizer, "You extract factual answers from research papers.", user)
+    prompt = chat_prompt(
+        tokenizer, "You extract factual answers from research papers.", user, args.enable_thinking
+    )
     encoded = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=args.source_max_tokens).to(args.device)
     full_ids, message_ids = generate_from_ids(
         model, tokenizer, encoded.input_ids, encoded.attention_mask, args.sender_max_new_tokens
@@ -117,28 +145,31 @@ def sender_message(model, tokenizer, record: dict[str, Any], args: argparse.Name
         raise RuntimeError("Sender produced fewer than two tokens; cannot construct a StateBridge prefix.")
     outputs = model(input_ids=full_ids, attention_mask=torch.ones_like(full_ids), output_hidden_states=True)
     message_states = outputs.hidden_states[-1][:, -message_ids.size(1) :, :][0]
+    message_ids, message_states = remove_thinking_tokens(tokenizer, message_ids, message_states)
     count = min(args.prefix_tokens, message_ids.size(1))
     return decode(tokenizer, message_ids), message_states[-count:], message_ids[0, -count:]
 
 
-def receiver_prompt(tokenizer, question: str, handoff: str | None = None) -> str:
+def receiver_prompt(tokenizer, question: str, enable_thinking: bool, handoff: str | None = None) -> str:
     user = f"Question: {question}\n\nAnswer the question concisely and factually."
     if handoff is not None:
         user += f"\n\nSender handoff:\n{handoff}"
-    return chat_prompt(tokenizer, "You answer research-paper questions using the provided handoff.", user)
+    return chat_prompt(
+        tokenizer, "You answer research-paper questions using the provided handoff.", user, enable_thinking
+    )
 
 
 @torch.inference_mode()
 def answer_variant(model, tokenizer, bridge, record, plan, states, token_ids, variant, args):
     if variant == "text":
-        prompt = receiver_prompt(tokenizer, record["question"], plan)
+        prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, plan)
         encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
         _, answer_ids = generate_from_ids(
             model, tokenizer, encoded.input_ids, encoded.attention_mask, args.receiver_max_new_tokens
         )
         return decode(tokenizer, answer_ids)
 
-    prompt = receiver_prompt(tokenizer, record["question"])
+    prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking)
     encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
     if variant == "no_comm":
         _, answer_ids = generate_from_ids(

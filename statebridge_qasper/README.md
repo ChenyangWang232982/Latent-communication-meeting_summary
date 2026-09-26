@@ -32,6 +32,11 @@ Receiver. The QASPER JSONL currently contains full paper text rather than
 the earlier deleted oracle-evidence derivative; use an oracle-evidence JSONL
 with the same fields if you recreate it.
 
+Qwen3 thinking is disabled by default so the fixed generation budget is spent
+on the factual handoff and final answer. Pass `--enable-thinking` only for a
+longer, paper-style reasoning run; the implementation then excludes all states
+up to and including `</think>` from the transmitted prefix.
+
 ## Full validation split
 
 ```bash
