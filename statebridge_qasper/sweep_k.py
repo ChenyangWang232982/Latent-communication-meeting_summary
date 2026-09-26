@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--sample-index", type=int, default=0, help="Zero-based line index in the JSONL file")
+    parser.add_argument("--sample-id", help="Optional QASPER id; overrides --sample-index")
     parser.add_argument("--k-values", type=int, nargs="+", default=[16, 32, 64, 96, 128])
     parser.add_argument("--source-max-tokens", type=int, default=4096)
     parser.add_argument("--sender-max-new-tokens", type=int, default=256)
@@ -35,9 +36,15 @@ def main() -> None:
     if not args.k_values or min(args.k_values) < 2:
         raise ValueError("--k-values must contain integers of at least 2")
     records = load_records(args.data, 0)
-    if not 0 <= args.sample_index < len(records):
-        raise IndexError(f"--sample-index must be between 0 and {len(records) - 1}")
-    record = records[args.sample_index]
+    if args.sample_id:
+        matches = [record for record in records if record["id"] == args.sample_id]
+        if not matches:
+            raise ValueError(f"No record with id={args.sample_id!r} in {args.data}")
+        record = matches[0]
+    else:
+        if not 0 <= args.sample_index < len(records):
+            raise IndexError(f"--sample-index must be between 0 and {len(records) - 1}")
+        record = records[args.sample_index]
 
     dtype = torch.bfloat16 if args.device.startswith("cuda") and torch.cuda.is_bf16_supported() else torch.float16
     tokenizer = AutoTokenizer.from_pretrained(args.model)

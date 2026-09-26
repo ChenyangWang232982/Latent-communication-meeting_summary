@@ -70,3 +70,16 @@ python -m statebridge_qasper.sweep_k \
   --k-values 16 32 64 96 128 \
   --source-max-tokens 4096
 ```
+
+For the longer `1908.05441_0_0` example, which previously lost `ARC` at
+`K=64`, use its id and an 8192-token source window. This validation JSONL's
+longest contexts fit within that window, so Sender reads the full paper text.
+
+```bash
+python -m statebridge_qasper.sweep_k \
+  --data data/qasper_latent/validation.jsonl \
+  --output statebridge_qasper/output/qasper_1908_05441_k_sweep_fulltext.txt \
+  --sample-id 1908.05441_0_0 \
+  --k-values 16 32 64 96 128 \
+  --source-max-tokens 8192
+```
