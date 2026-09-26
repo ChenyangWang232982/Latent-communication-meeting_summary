@@ -55,3 +55,18 @@ The decisive comparison is `statebridge` versus `text`, `raw_hidden`,
 `random_prefix`, and `no_comm`. StateBridge is meaningful only if it beats the
 non-semantic prefix controls and produces answers that carry Sender-specific
 information.
+
+## One sample, multiple K values
+
+The following command generates the Sender message once for the selected
+zero-based JSONL line, then evaluates suffix lengths `K=16,32,64,96,128` on
+that exact same message.
+
+```bash
+python -m statebridge_qasper.sweep_k \
+  --data data/qasper_latent/validation.jsonl \
+  --output statebridge_qasper/output/qasper_sample0_k_sweep.txt \
+  --sample-index 0 \
+  --k-values 16 32 64 96 128 \
+  --source-max-tokens 4096
+```
