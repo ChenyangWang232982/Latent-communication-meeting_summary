@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, required=True, help="QASPER JSONL file")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
+    parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--num-samples", type=int, default=8, help="0 means all records")
     parser.add_argument("--source-max-tokens", type=int, default=4096)
     parser.add_argument("--sender-max-new-tokens", type=int, default=256)

@@ -21,13 +21,14 @@ python -m statebridge_qasper.run \
   --data data/qasper_latent/validation.jsonl \
   --output statebridge_qasper/output/qasper_smoke.txt \
   --num-samples 8 \
-  --model Qwen/Qwen2.5-0.5B-Instruct \
+  --model Qwen/Qwen3-4B \
   --source-max-tokens 4096 \
   --prefix-tokens 64
 ```
 
-`K=64` is the initial StateBridge prefix length. Use the same model for Sender
-and Receiver. The QASPER JSONL currently contains full paper text rather than
+`K=64` is the initial StateBridge prefix length. `Qwen/Qwen3-4B` is the
+paper's smallest evaluated Qwen setting. Use the same model for Sender and
+Receiver. The QASPER JSONL currently contains full paper text rather than
 the earlier deleted oracle-evidence derivative; use an oracle-evidence JSONL
 with the same fields if you recreate it.
 
@@ -38,7 +39,7 @@ python -m statebridge_qasper.run \
   --data data/qasper_latent/validation.jsonl \
   --output statebridge_qasper/output/qasper_validation_k64.txt \
   --num-samples 0 \
-  --model Qwen/Qwen2.5-0.5B-Instruct \
+  --model Qwen/Qwen3-4B \
   --source-max-tokens 4096 \
   --sender-max-new-tokens 256 \
   --receiver-max-new-tokens 128 \
