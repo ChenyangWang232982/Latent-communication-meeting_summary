@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-samples", type=int, default=1, help="0 means all records")
     parser.add_argument("--chunk-tokens", type=int, default=512)
     parser.add_argument("--chunk-overlap-tokens", type=int, default=64)
-    parser.add_argument("--top-chunks", type=int, default=4)
+    parser.add_argument("--top-chunks", type=int, default=6)
     parser.add_argument("--roles", nargs="+", choices=sorted(ROLE_INSTRUCTIONS), default=["facts", "decisions", "actions", "risks"])
     parser.add_argument("--agent-max-new-tokens", type=int, default=160)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=128)
@@ -55,6 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regularization", type=float, default=1e-3)
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
     parser.add_argument("--enable-thinking", action="store_true")
+    parser.add_argument(
+        "--strict-evidence",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require each specialist handoff to tie its conclusion to selected chunk IDs.",
+    )
     parser.add_argument("--variants", nargs="+", choices=["statebridge", "text", "no_comm"], default=["statebridge", "text", "no_comm"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=7)
@@ -67,11 +73,17 @@ def evidence_text(selected: list[tuple[Chunk, float]]) -> str:
 
 @torch.inference_mode()
 def specialist_message(model, tokenizer, record: dict[str, Any], role: str, selected, args: argparse.Namespace):
+    evidence_instruction = (
+        "First give one or more short exact supporting phrases with their [chunk N] IDs, then give "
+        "the conclusion. Do not claim that evidence is absent unless none of the selected excerpts states it."
+        if args.strict_evidence
+        else "Write the conclusion directly."
+    )
     user = (
         f"Question: {record['question']}\n\n"
         f"Selected source excerpts:\n{evidence_text(selected)}\n\n"
         f"{ROLE_INSTRUCTIONS[role]} Write a concise factual handoff for a summary agent. "
-        "Only use the excerpts. State missing information explicitly rather than guessing."
+        f"Only use the excerpts. {evidence_instruction} State missing information explicitly rather than guessing."
     )
     prompt = chat_prompt(
         tokenizer,
@@ -147,7 +159,8 @@ def main() -> None:
             specialists = []
             all_states, all_ids = [], []
             for role in args.roles:
-                selected = select_chunks(chunks, f"{record['question']} {ROLE_INSTRUCTIONS[role]}", args.top_chunks)
+                selection_query = record["question"] if role == "facts" else f"{record['question']} {ROLE_INSTRUCTIONS[role]}"
+                selected = select_chunks(chunks, selection_query, args.top_chunks)
                 message, states, token_ids = specialist_message(model, tokenizer, record, role, selected, args)
                 specialists.append({"role": role, "message": message, "selected": [{"chunk_id": chunk.chunk_id, "score": score} for chunk, score in selected]})
                 all_states.append(states)

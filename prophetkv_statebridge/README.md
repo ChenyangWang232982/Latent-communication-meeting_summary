@@ -30,7 +30,7 @@ python -m prophetkv_statebridge.run \
   --model Qwen/Qwen3-4B \
   --chunk-tokens 512 \
   --chunk-overlap-tokens 64 \
-  --top-chunks 4 \
+  --top-chunks 6 \
   --prefix-tokens-per-agent 16
 ```
 
@@ -47,8 +47,8 @@ python -m prophetkv_statebridge.run \
   --output prophetkv_statebridge/output/qasper_facts_only.txt \
   --num-samples 8 \
   --roles facts \
-  --top-chunks 4 \
-  --prefix-tokens-per-agent 64
+  --top-chunks 6 \
+  --prefix-tokens-per-agent 160
 ```
 
 ## What to compare
@@ -62,3 +62,8 @@ separated into retrieval failures and StateBridge-transfer failures. Only after
 the selected-context pipeline has good evidence coverage is it worthwhile to
 add a true ProphetKV-compatible serving backend for KV reuse and selective
 recomputation.
+
+By default, each specialist must cite short source phrases with `[chunk N]`
+identifiers before reaching a conclusion (`--strict-evidence`). This makes the
+handoff more auditable and reduces unsupported claims. Use
+`--no-strict-evidence` only for an ablation.
