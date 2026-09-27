@@ -35,10 +35,17 @@ from .run import ROLE_INSTRUCTIONS
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", type=Path, required=True)
+    input_source = parser.add_mutually_exclusive_group(required=True)
+    input_source.add_argument("--data", type=Path, help="QASPER-style JSONL input")
+    input_source.add_argument("--transcript", type=Path, help="One UTF-8 meeting transcript")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--num-samples", type=int, default=1, help="0 means all records")
+    parser.add_argument(
+        "--meeting-question",
+        default="Create an evidence-grounded meeting summary covering the most important facts.",
+        help="Shared objective used when --transcript is supplied.",
+    )
     parser.add_argument("--source-max-tokens", type=int, default=4096)
     parser.add_argument("--roles", nargs="+", choices=sorted(ROLE_INSTRUCTIONS), default=["facts", "decisions", "actions", "risks"])
     parser.add_argument("--agent-max-new-tokens", type=int, default=256)
@@ -97,26 +104,33 @@ def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_
     return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:]
 
 
-def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None) -> str:
-    user = f"Question: {question}\n\nGive a concise factual answer."
+def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None, *, meeting_mode: bool = False) -> str:
+    if meeting_mode:
+        user = (
+            f"Objective: {question}\n\nCreate a concise meeting summary with exactly these sections:\n"
+            "Decisions\nAction items\nRisks and open questions\n"
+            "Only name an owner or deadline when explicitly supported by the specialist findings."
+        )
+    else:
+        user = f"Question: {question}\n\nGive a concise factual answer."
     if reports is not None:
         user += f"\n\nSpecialist handoffs:\n{reports}"
     return chat_prompt(
         tokenizer,
-        "You aggregate specialist findings into an evidence-grounded answer. Do not invent facts.",
+        "You aggregate specialist findings into an evidence-grounded response. Do not invent facts.",
         user,
         enable_thinking,
     )
 
 
 @torch.inference_mode()
-def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args):
+def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args, *, meeting_mode: bool):
     if variant == "text":
-        prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, reports)
+        prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, reports, meeting_mode=meeting_mode)
         encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
         _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, args.receiver_max_new_tokens)
         return decode(tokenizer, answer_ids)
-    prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking)
+    prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, meeting_mode=meeting_mode)
     encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
     if variant == "no_comm":
         _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, args.receiver_max_new_tokens)
@@ -130,7 +144,21 @@ def main() -> None:
     if args.prefix_tokens_per_agent < 2:
         raise ValueError("--prefix-tokens-per-agent must be at least 2")
     torch.manual_seed(args.seed)
-    records = load_records(args.data, args.num_samples)
+    meeting_mode = args.transcript is not None
+    if meeting_mode:
+        if not args.transcript.is_file():
+            raise FileNotFoundError(f"Transcript not found: {args.transcript}")
+        transcript = args.transcript.read_text(encoding="utf-8").strip()
+        if not transcript:
+            raise ValueError(f"Transcript is empty: {args.transcript}")
+        records = [{
+            "id": args.transcript.stem,
+            "context": transcript,
+            "question": args.meeting_question,
+            "answer": "",
+        }]
+    else:
+        records = load_records(args.data, args.num_samples)
     dtype = torch.bfloat16 if args.device.startswith("cuda") and torch.cuda.is_bf16_supported() else torch.float16
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
@@ -141,7 +169,8 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     jsonl_path = args.output.with_suffix(".jsonl")
     with jsonl_path.open("w", encoding="utf-8") as jsonl, args.output.open("w", encoding="utf-8") as report:
-        report.write(f"Cross-agent Prefix KV Cache + StateBridge run: {datetime.now().isoformat(timespec='seconds')}\n")
+        run_kind = "Meeting" if meeting_mode else "QASPER"
+        report.write(f"Cross-agent Prefix KV Cache + StateBridge {run_kind} run: {datetime.now().isoformat(timespec='seconds')}\n")
         report.write(f"model={args.model}, source_max_tokens={args.source_max_tokens}, roles={','.join(args.roles)}\n")
         report.write("Each source prefix is prefetched once and reused by cloned per-agent KV caches.\n\n")
         for index, record in enumerate(records, start=1):
@@ -193,7 +222,12 @@ def main() -> None:
                 all_ids.append(token_ids)
             reports = "\n\n".join(f"[{item['role']}]\n{item['message']}" for item in specialists)
             states, token_ids = torch.cat(all_states), torch.cat(all_ids)
-            answers = {variant: answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args) for variant in args.variants}
+            answers = {
+                variant: answer_variant(
+                    model, tokenizer, bridge, record, reports, states, token_ids, variant, args, meeting_mode=meeting_mode
+                )
+                for variant in args.variants
+            }
             result = {
                 "id": record["id"],
                 "question": record["question"],
@@ -214,7 +248,8 @@ def main() -> None:
                 report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
             for variant, answer in answers.items():
                 report.write(f"{variant} answer:\n{answer}\n\n")
-            report.write(f"Gold answer:\n{record.get('answer', '')}\n\n")
+            if not meeting_mode:
+                report.write(f"Gold answer:\n{record.get('answer', '')}\n\n")
             report.flush()
             print(f"completed {index}/{len(records)}: {record['id']}", flush=True)
 

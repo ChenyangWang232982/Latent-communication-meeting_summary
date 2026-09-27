@@ -97,3 +97,25 @@ For a real meeting, use all four roles. Keep each role's handoff concise (for
 example `--agent-max-new-tokens 96 --prefix-tokens-per-agent 96`) so that the
 StateBridge aggregator receives the useful facts rather than a long repeated
 transcript.
+
+## Meeting transcript run
+
+The same runner accepts one UTF-8 transcript directly. It produces a meeting
+summary with `Decisions`, `Action items`, and `Risks and open questions` for
+each communication condition.
+
+```bash
+python -m prophetkv_statebridge.run_prefix_cache \
+  --transcript meeting_latent_workflow/input/example.txt \
+  --output prophetkv_statebridge/output/example_prefix_cache_summary.txt \
+  --model Qwen/Qwen3-4B \
+  --source-max-tokens 8192 \
+  --roles facts decisions actions risks \
+  --agent-max-new-tokens 96 \
+  --prefix-tokens-per-agent 96
+```
+
+The long transcript is prefetched once; all four roles reuse its exact common
+chat-prefix KV cache. The `text` condition is the natural-language handoff
+control, `statebridge` passes only aligned continuous states, and `no_comm`
+shows what the aggregator produces without specialist evidence.
