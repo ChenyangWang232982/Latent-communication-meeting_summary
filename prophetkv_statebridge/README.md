@@ -111,8 +111,8 @@ python -m prophetkv_statebridge.run_prefix_cache \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 8192 \
   --roles facts decisions actions risks \
-  --agent-max-new-tokens 96 \
-  --prefix-tokens-per-agent 96
+  --agent-max-new-tokens 128 \
+  --prefix-tokens-per-agent 128
 ```
 
 The long transcript is prefetched once; all four roles reuse its exact common

@@ -33,6 +33,26 @@ from .prefix_cache import cache_nbytes, generate_after_prefix_cache, prefill_pre
 from .run import ROLE_INSTRUCTIONS
 
 
+MEETING_ROLE_CONTRACTS = {
+    "facts": (
+        "List only high-confidence factual meeting context. Do not infer a decision, action, owner, "
+        "or deadline from a participant's job title."
+    ),
+    "decisions": (
+        "List only decisions explicitly accepted, agreed, chosen, approved, or rejected in the transcript. "
+        "Do not turn a project description, goal, or proposal into a decision."
+    ),
+    "actions": (
+        "List only explicit commitments or assigned follow-ups. An action needs an explicit task; include an "
+        "owner or deadline only when the transcript explicitly states one. Do not infer work from a person's role."
+    ),
+    "risks": (
+        "List only explicitly stated risks, blockers, uncertainties, disagreements, or unresolved questions. "
+        "Do not invent a risk from normal project context."
+    ),
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     input_source = parser.add_mutually_exclusive_group(required=True)
@@ -61,12 +81,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def specialist_prompt(tokenizer, source: str, record: dict[str, Any], role: str, enable_thinking: bool) -> str:
+def specialist_prompt(
+    tokenizer, source: str, record: dict[str, Any], role: str, enable_thinking: bool, *, meeting_mode: bool
+) -> str:
     """Build a normal Qwen chat prompt; cache only its token-identical prefix."""
+    task = ROLE_INSTRUCTIONS[role]
+    format_instruction = ""
+    if meeting_mode:
+        task = MEETING_ROLE_CONTRACTS[role]
+        format_instruction = (
+            " Return at most four short bullets. Every bullet must contain a direct supporting quotation or "
+            "timestamp from the transcript. If no supported item exists, output exactly: None explicitly stated."
+        )
     user = (
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
-        f"Task: {ROLE_INSTRUCTIONS[role]} Give a concise factual handoff for another agent. "
-        "Only use the transcript. Include specific facts and state missing information rather than guessing."
+        f"Task: {task} Give a concise factual handoff for another agent. "
+        f"Only use the transcript. Include specific facts and state missing information rather than guessing.{format_instruction}"
     )
     return chat_prompt(
         tokenizer,
@@ -177,7 +207,9 @@ def main() -> None:
             source = trim_context(tokenizer, record["context"], args.source_max_tokens)
             role_inputs = [
                 tokenizer(
-                    specialist_prompt(tokenizer, source, record, role, args.enable_thinking),
+                    specialist_prompt(
+                        tokenizer, source, record, role, args.enable_thinking, meeting_mode=meeting_mode
+                    ),
                     return_tensors="pt",
                     add_special_tokens=False,
                 ).to(args.device).input_ids
@@ -190,7 +222,9 @@ def main() -> None:
             if len(role_inputs) == 1:
                 alternate_role = next(role for role in ROLE_INSTRUCTIONS if role not in args.roles)
                 alternate_input = tokenizer(
-                    specialist_prompt(tokenizer, source, record, alternate_role, args.enable_thinking),
+                    specialist_prompt(
+                        tokenizer, source, record, alternate_role, args.enable_thinking, meeting_mode=meeting_mode
+                    ),
                     return_tensors="pt",
                     add_special_tokens=False,
                 ).to(args.device).input_ids
