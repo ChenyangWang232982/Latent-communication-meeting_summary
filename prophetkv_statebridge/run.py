@@ -34,7 +34,10 @@ ROLE_INSTRUCTIONS = {
     "facts": "Extract the facts that directly answer the question.",
     "decisions": "Extract decisions, commitments, and chosen approaches relevant to the question.",
     "actions": "Extract actions, owners, deadlines, and follow-ups relevant to the question.",
+    "discussion": "Extract discussion topics, proposals, alternatives, and ideas that were raised but not confirmed as decisions.",
     "risks": "Extract unresolved issues, caveats, and risks relevant to the question.",
+    "questions": "Extract explicit questions that still need confirmation, investigation, or an answer.",
+    "next_steps": "Extract explicit meeting scheduling, sequencing, and process-transition arrangements that are not assigned action items.",
 }
 
 

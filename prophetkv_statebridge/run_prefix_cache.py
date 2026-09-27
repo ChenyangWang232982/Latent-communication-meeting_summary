@@ -44,7 +44,8 @@ MEETING_ROLE_CONTRACTS = {
         "List only decisions explicitly accepted, agreed, chosen, approved, rejected, or committed to in the transcript. "
         "A discussion topic, observation, problem, question, or suggestion is NOT a decision. If no such statement exists, "
         "output None explicitly stated. The supporting quote must itself contain a commitment cue such as 'decided', "
-        "'agreed', 'approved', 'chosen', 'we will', or 'we are going to'."
+        "'agreed', 'approved', 'chosen', or 'we have settled on'. A project brief or a statement of planned work is not "
+        "automatically a decision made in this meeting."
     ),
     "actions": (
         "List only explicit commitments or assigned follow-ups. An action needs an explicit task and a commitment or assignment "
@@ -56,7 +57,29 @@ MEETING_ROLE_CONTRACTS = {
         "List only explicitly stated risks, blockers, constraints, uncertainties, disagreements, or unresolved questions. "
         "A normal feature discussion is not a risk. Do not invent a risk from ordinary project context."
     ),
+    "discussion": (
+        "List agenda items, proposals, alternatives, brainstorming, and ordinary discussion topics that were raised but not "
+        "settled. Do not call an item a decision merely because the group said it needs discussion. Do not turn a suggestion "
+        "into an action item."
+    ),
+    "questions": (
+        "List only explicit questions that need an answer, confirmation, investigation, or later resolution. Preserve the "
+        "uncertainty in the claim. A rhetorical question or a question already answered in the same quoted exchange is not a "
+        "pending question."
+    ),
+    "next_steps": (
+        "List only explicit meeting logistics, sequencing, stage transitions, or follow-up arrangements, such as when the "
+        "group will reconvene or what process stage comes next. A task with an explicit owner or commitment belongs in actions, "
+        "not next_steps. A vague intention belongs in discussion."
+    ),
 }
+
+QASPER_DEFAULT_ROLES = ["facts", "decisions", "actions", "risks"]
+MEETING_DEFAULT_ROLES = ["facts", "decisions", "actions", "discussion", "risks", "questions", "next_steps"]
+MEETING_SECTIONS = (
+    "Key facts\nConfirmed decisions\nConfirmed action items\nDiscussion topics\n"
+    "Risks and open questions\nPending questions\nNext steps"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,7 +115,13 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Chronological neighbors included around each deterministically selected review chunk.",
     )
-    parser.add_argument("--roles", nargs="+", choices=sorted(ROLE_INSTRUCTIONS), default=["facts", "decisions", "actions", "risks"])
+    parser.add_argument(
+        "--roles",
+        nargs="+",
+        choices=sorted(ROLE_INSTRUCTIONS),
+        default=None,
+        help="Specialists to run. Defaults to seven meeting roles for --transcript and four research-QA roles for --data.",
+    )
     parser.add_argument("--agent-max-new-tokens", type=int, default=256)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
@@ -215,8 +244,10 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
     if meeting_mode:
         user = (
             f"Objective: {question}\n\nCreate a concise meeting summary with exactly these sections:\n"
-            "Decisions\nAction items\nRisks and open questions\n"
-            "Only name an owner or deadline when explicitly supported by the specialist findings."
+            f"{MEETING_SECTIONS}\n"
+            "Keep each item in its proper section: agenda items and proposals are not decisions; unassigned process "
+            "arrangements are not action items. Under each section, write 'None explicitly stated.' when the specialist "
+            "findings provide no supported item. Only name an owner or deadline when explicitly supported by the specialist findings."
         )
     else:
         user = f"Question: {question}\n\nGive a concise factual answer."
@@ -257,6 +288,8 @@ def main() -> None:
         raise ValueError("--backfill-neighbor-chunks cannot be negative")
     torch.manual_seed(args.seed)
     meeting_mode = args.transcript is not None
+    if args.roles is None:
+        args.roles = MEETING_DEFAULT_ROLES if meeting_mode else QASPER_DEFAULT_ROLES
     if meeting_mode:
         if not args.transcript.is_file():
             raise FileNotFoundError(f"Transcript not found: {args.transcript}")
