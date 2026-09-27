@@ -6,10 +6,18 @@ token limit, 256 training records, and stage 1 only. Stage 1 freezes the
 transformer blocks and trains the latent projector, input embeddings, and LM
 head; stage 2 full-parameter training is disabled.
 
+`sft_config_qwen3_4b_stage1_aligned.yaml` is the full-data version. It retains
+the public 14B config's data, one-epoch schedule, loss weights, curriculum,
+and checkpoint cadence. Its necessary single-GPU changes are Qwen3-4B, a 4096
+token cap, SDPA attention, ZeRO-2, and stage 1 only. Use it only after the
+smoke run succeeds.
+
 Copy it into the external LaTER checkout before running:
 
 ```bash
 cp later_configs/sft_config_qwen3_4b_stage1_smoke.yaml \
+  external/LaTER/later/src/config/
+cp later_configs/sft_config_qwen3_4b_stage1_aligned.yaml \
   external/LaTER/later/src/config/
 ```
 
@@ -28,3 +36,6 @@ PYTHONPATH=$PWD torchrun --standalone --nproc_per_node=1 \
   -m later.src.train.train \
   --config later/src/config/sft_config_qwen3_4b_stage1_smoke.yaml
 ```
+
+For the aligned full-data run, replace the final config path with
+`later/src/config/sft_config_qwen3_4b_stage1_aligned.yaml`.
