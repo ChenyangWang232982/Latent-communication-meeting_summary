@@ -35,20 +35,22 @@ from .run import ROLE_INSTRUCTIONS
 
 MEETING_ROLE_CONTRACTS = {
     "facts": (
-        "List only high-confidence factual meeting context. Do not infer a decision, action, owner, "
-        "or deadline from a participant's job title."
+        "List only high-confidence context needed for the minutes. Omit introductions, icebreakers, personal "
+        "details, and speculative design ideas. Do not infer a decision, action, owner, or deadline from a job title."
     ),
     "decisions": (
-        "List only decisions explicitly accepted, agreed, chosen, approved, or rejected in the transcript. "
-        "Do not turn a project description, goal, or proposal into a decision."
+        "List only decisions explicitly accepted, agreed, chosen, approved, rejected, or committed to in the transcript. "
+        "A discussion topic, observation, problem, question, or suggestion is NOT a decision. If no such statement exists, "
+        "output None explicitly stated."
     ),
     "actions": (
-        "List only explicit commitments or assigned follow-ups. An action needs an explicit task; include an "
-        "owner or deadline only when the transcript explicitly states one. Do not infer work from a person's role."
+        "List only explicit commitments or assigned follow-ups. An action needs an explicit task and a commitment or assignment "
+        "such as 'will', 'assigned', 'responsible', 'need to', or a stated deadline. Include an owner or deadline only when the "
+        "transcript explicitly states one. Do not infer work from a person's role."
     ),
     "risks": (
-        "List only explicitly stated risks, blockers, uncertainties, disagreements, or unresolved questions. "
-        "Do not invent a risk from normal project context."
+        "List only explicitly stated risks, blockers, constraints, uncertainties, disagreements, or unresolved questions. "
+        "A normal feature discussion is not a risk. Do not invent a risk from ordinary project context."
     ),
 }
 
@@ -90,8 +92,9 @@ def specialist_prompt(
     if meeting_mode:
         task = MEETING_ROLE_CONTRACTS[role]
         format_instruction = (
-            " Return at most four short bullets. Every bullet must contain a direct supporting quotation or "
-            "timestamp from the transcript. If no supported item exists, output exactly: None explicitly stated."
+            " Return at most four short bullets. Every bullet must use exactly this format: "
+            "- [timestamp] \"verbatim transcript quotation\" -> claim. The quotation must be sufficient on its own to support "
+            "the claim. A timestamp alone is not evidence. If no supported item exists, output exactly: None explicitly stated."
         )
     user = (
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
@@ -147,7 +150,8 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
         user += f"\n\nSpecialist handoffs:\n{reports}"
     return chat_prompt(
         tokenizer,
-        "You aggregate specialist findings into an evidence-grounded response. Do not invent facts.",
+        "You aggregate specialist findings into an evidence-grounded response. Do not invent facts. "
+        "Treat a suggestion or discussion topic as neither a decision nor an action unless the quoted evidence states a commitment.",
         user,
         enable_thinking,
     )
