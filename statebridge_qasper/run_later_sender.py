@@ -169,6 +169,12 @@ def states_for_handoff(model, tokenizer, handoff: str, device: str) -> tuple[tor
     return outputs.hidden_states[-1][0], encoded.input_ids[0]
 
 
+def visible_handoff(tokenizer, token_ids: list[int], device: torch.device) -> tuple[str, torch.Tensor]:
+    """Decode only usable text, excluding EOS and chat-control tokens."""
+    ids = torch.tensor([token_ids], device=device, dtype=torch.long)
+    return decode(tokenizer, ids), ids
+
+
 @torch.inference_mode()
 def later_sender_message(wrapper, record: dict[str, Any], args: argparse.Namespace):
     """Run LaTER's official latent/explcit switch on a QASPER-adapted prompt."""
@@ -204,11 +210,11 @@ def later_sender_message(wrapper, record: dict[str, Any], args: argparse.Namespa
         for token_id, token_type in zip(all_generated_ids[0], type_masks[0])
         if int(token_type) == 1
     ]
+    final_cache = final_caches[0] if isinstance(final_caches, list) else final_caches
     if not explicit_ids:
         # The entropy policy can use the entire bounded budget in latent mode.
         # LaTER's intended protocol ends with explicit verification, so reuse
         # the final latent KV cache and force that final visible handoff.
-        final_cache = final_caches[0] if isinstance(final_caches, list) else final_caches
         (
             _,
             verified_ids,
@@ -227,8 +233,36 @@ def later_sender_message(wrapper, record: dict[str, Any], args: argparse.Namespa
         explicit_ids = [int(token_id) for token_id in verified_ids[0]]
         if not explicit_ids:
             raise RuntimeError("LaTER final explicit-verification step produced no tokens.")
-    handoff_ids = torch.tensor([explicit_ids], device=wrapper.model.device, dtype=torch.long)
-    states, _ = states_for_handoff(wrapper.model, tokenizer, decode(tokenizer, handoff_ids), args.device)
+    handoff, handoff_ids = visible_handoff(tokenizer, explicit_ids, wrapper.model.device)
+    if not handoff:
+        # A latent trajectory may terminate at EOS before the forced explicit
+        # step.  Add a small visible trigger to the same KV cache, rather than
+        # discarding the latent work and starting a separate Sender pass.
+        trigger = tokenizer("\nFinal factual handoff:", return_tensors="pt", add_special_tokens=False).input_ids
+        trigger = trigger.to(wrapper.model.device)
+        (
+            _,
+            retried_ids,
+            _,
+            _,
+            _,
+            _,
+        ) = wrapper.generate_explicit_thinking_step(
+            input_ids=trigger,
+            past_key_values=final_cache,
+            max_new_tokens=args.later_explicit_tokens,
+            temperature=args.later_temperature,
+            top_p=args.later_top_p,
+            step_delimiter="\n\n",
+        )
+        explicit_ids = [int(token_id) for token_id in retried_ids[0]]
+        handoff, handoff_ids = visible_handoff(tokenizer, explicit_ids, wrapper.model.device)
+    if not handoff:
+        raise RuntimeError(
+            "LaTER explicit verification emitted only control tokens; try a larger "
+            "--later-max-new-tokens or a smaller --later-latent-tokens."
+        )
+    states, _ = states_for_handoff(wrapper.model, tokenizer, handoff, args.device)
     handoff_ids, states = remove_thinking_tokens(tokenizer, handoff_ids, states)
     if handoff_ids.size(1) < 2:
         raise RuntimeError("LaTER's explicit handoff contained fewer than two usable tokens.")
