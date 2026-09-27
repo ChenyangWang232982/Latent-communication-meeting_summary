@@ -179,7 +179,7 @@ def later_sender_message(wrapper, record: dict[str, Any], args: argparse.Namespa
     )
     (
         generated_texts,
-        _,
+        final_caches,
         type_masks,
         all_generated_ids,
         _,
@@ -205,12 +205,28 @@ def later_sender_message(wrapper, record: dict[str, Any], args: argparse.Namespa
         if int(token_type) == 1
     ]
     if not explicit_ids:
-        # A run may finish entirely in latent mode.  Keep it observable rather
-        # than silently pretending it produced a factual message.
-        raise RuntimeError(
-            "LaTER ended without explicit tokens; increase --later-max-new-tokens "
-            "or lower --later-latent-tokens."
+        # The entropy policy can use the entire bounded budget in latent mode.
+        # LaTER's intended protocol ends with explicit verification, so reuse
+        # the final latent KV cache and force that final visible handoff.
+        final_cache = final_caches[0] if isinstance(final_caches, list) else final_caches
+        (
+            _,
+            verified_ids,
+            _,
+            _,
+            _,
+            _,
+        ) = wrapper.generate_explicit_thinking_step(
+            input_ids=None,
+            past_key_values=final_cache,
+            max_new_tokens=args.later_explicit_tokens,
+            temperature=args.later_temperature,
+            top_p=args.later_top_p,
+            step_delimiter="\n\n",
         )
+        explicit_ids = [int(token_id) for token_id in verified_ids[0]]
+        if not explicit_ids:
+            raise RuntimeError("LaTER final explicit-verification step produced no tokens.")
     handoff_ids = torch.tensor([explicit_ids], device=wrapper.model.device, dtype=torch.long)
     states, _ = states_for_handoff(wrapper.model, tokenizer, decode(tokenizer, handoff_ids), args.device)
     handoff_ids, states = remove_thinking_tokens(tokenizer, handoff_ids, states)
