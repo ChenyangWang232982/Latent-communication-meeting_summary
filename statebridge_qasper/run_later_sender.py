@@ -119,6 +119,26 @@ def install_dynamic_cache_compat() -> None:
     DynamicCache._later_tuple_access = True
 
 
+def install_generate_cache_position_compat(model) -> None:
+    """Adapt LaTER's older ``generate`` call to current Qwen3 Transformers.
+
+    LaTER forwards ``cache_position`` through ``model.generate`` during its
+    entropy probe.  Current Qwen3 accepts that argument in ``forward`` but its
+    generation validator rejects it.  DynamicCache already derives positions
+    from its stored sequence length, so remove it only at this API boundary.
+    """
+    if getattr(model, "_later_generate_cache_position_compat", False):
+        return
+    original_generate = model.generate
+
+    def generate_without_cache_position(*args, **kwargs):
+        kwargs.pop("cache_position", None)
+        return original_generate(*args, **kwargs)
+
+    model.generate = generate_without_cache_position
+    model._later_generate_cache_position_compat = True
+
+
 def sender_messages(context: str, question: str) -> list[dict[str, str]]:
     return [
         {
@@ -214,6 +234,7 @@ def main() -> None:
     model_wrapper_cls, later_args = load_later(args.later_root, args.device)
     wrapper = model_wrapper_cls(args.model, torch.device(args.device), args=later_args)
     model = wrapper.model
+    install_generate_cache_position_compat(model)
     tokenizer = wrapper.tokenizer
     bridge = StateBridge(
         model.get_input_embeddings().weight,
