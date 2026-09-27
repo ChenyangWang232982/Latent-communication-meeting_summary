@@ -80,6 +80,8 @@ def load_later(later_root: Path, device: str):
             "for example: pip install -r external/LaTER/requirements.txt"
         ) from error
 
+    install_dynamic_cache_compat()
+
     later_args = SimpleNamespace(
         latent_space_realign=False,
         enable_prefix_caching=False,
@@ -88,6 +90,33 @@ def load_later(later_root: Path, device: str):
         use_second_HF_model=False,
     )
     return models.ModelWrapper, later_args
+
+
+def install_dynamic_cache_compat() -> None:
+    """Give older LaTER tuple-style code read access to modern HF caches.
+
+    The published LaTER implementation has a few DynamicCache-aware helpers,
+    but other latent/explcit generation paths still access a cache as
+    ``past_key_values[layer][key_or_value]``.  Qwen3 with current Transformers
+    returns ``DynamicCache`` instead.  This read-only compatibility shim makes
+    that indexing return the same per-layer ``(key, value)`` pair; cache updates
+    remain owned by Transformers.
+    """
+    try:
+        from transformers.cache_utils import DynamicCache
+    except ImportError:
+        return
+    if getattr(DynamicCache, "_later_tuple_access", False):
+        return
+
+    def get_layer(cache, index: int):
+        if hasattr(cache, "layers"):
+            layer = cache.layers[index]
+            return layer.keys, layer.values
+        return cache.key_cache[index], cache.value_cache[index]
+
+    DynamicCache.__getitem__ = get_layer
+    DynamicCache._later_tuple_access = True
 
 
 def sender_messages(context: str, question: str) -> list[dict[str, str]]:
