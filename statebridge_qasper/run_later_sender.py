@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--later-top-p", type=float, default=0.95)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=128)
     parser.add_argument("--prefix-tokens", type=int, default=64, help="StateBridge K")
+    parser.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help="Allow Qwen3 thinking in the Receiver; disabled by default for concise QA.",
+    )
     parser.add_argument("--snap-ratio", type=float, default=0.3)
     parser.add_argument("--regularization", type=float, default=1e-3)
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
