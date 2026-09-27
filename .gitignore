@@ -55,3 +55,9 @@ data/
 tmp/
 temp/
 .codex_tmp/
+
+# External code, downloaded models, and experiment artifacts
+external/
+meeting_latent_workflow/model/
+output/
+statebridge_qasper/output/
