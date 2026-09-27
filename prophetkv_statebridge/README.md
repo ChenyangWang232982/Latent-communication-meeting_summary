@@ -98,6 +98,13 @@ KV1-2-3`), add `--prefill-chunk-tokens 1024`. Each new 1024-token block is
 forwarded with the previous block's `past_key_values`; separate chunk caches
 are never manually concatenated.
 
+`--backfill-rounds N` adds exactly `N` deterministic review passes for every
+role. Each pass appends a query-ranked local transcript packet to a clone of
+the shared meeting cache and asks the role to revise its previous handoff.
+The number of passes is a command-line experiment parameter, not an Agent
+decision. Use `--backfill-chunk-tokens` and `--backfill-neighbor-chunks` to
+control the local reread evidence.
+
 For a real meeting, use all four roles. Keep each role's handoff concise (for
 example `--agent-max-new-tokens 96 --prefix-tokens-per-agent 96`) so that the
 StateBridge aggregator receives the useful facts rather than a long repeated
@@ -116,6 +123,9 @@ python -m prophetkv_statebridge.run_prefix_cache \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 8192 \
   --prefill-chunk-tokens 1024 \
+  --backfill-rounds 2 \
+  --backfill-chunk-tokens 256 \
+  --backfill-neighbor-chunks 1 \
   --roles facts decisions actions risks \
   --agent-max-new-tokens 128 \
   --prefix-tokens-per-agent 128

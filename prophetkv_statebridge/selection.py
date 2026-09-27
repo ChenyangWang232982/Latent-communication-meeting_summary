@@ -57,20 +57,18 @@ def chunk_document(tokenizer, text: str, *, chunk_tokens: int, overlap_tokens: i
     return chunks
 
 
-def select_chunks(chunks: list[Chunk], query: str, limit: int) -> list[tuple[Chunk, float]]:
-    """Return query-relevant chunks using a compact BM25-style lexical score.
+def rank_chunks(chunks: list[Chunk], query: str) -> list[tuple[Chunk, float]]:
+    """Rank chunks by a compact BM25-style lexical score.
 
     Scores are calculated separately for each document. This makes selection
     stable for one meeting/transcript and avoids corpus-wide preprocessing.
     """
-    if limit < 1:
-        raise ValueError("limit must be at least 1")
     if not chunks:
         return []
 
     query_terms = Counter(terms(query))
     if not query_terms:
-        return [(chunk, 0.0) for chunk in chunks[:limit]]
+        return [(chunk, 0.0) for chunk in chunks]
     document_terms = [Counter(terms(chunk.text)) for chunk in chunks]
     doc_frequency = Counter()
     for counts in document_terms:
@@ -91,6 +89,13 @@ def select_chunks(chunks: list[Chunk], query: str, limit: int) -> list[tuple[Chu
             score += query_count * inverse_frequency * frequency * (k1 + 1.0) / denominator
         scored.append((chunk, score))
 
+    return sorted(scored, key=lambda item: (-item[1], item[0].chunk_id))
+
+
+def select_chunks(chunks: list[Chunk], query: str, limit: int) -> list[tuple[Chunk, float]]:
+    """Return the most relevant chunks in source order for coherent reading."""
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
     # Preserve source order after ranking: generation reads coherent context.
-    best = sorted(scored, key=lambda item: (-item[1], item[0].chunk_id))[:limit]
+    best = rank_chunks(chunks, query)[:limit]
     return sorted(best, key=lambda item: item[0].chunk_id)

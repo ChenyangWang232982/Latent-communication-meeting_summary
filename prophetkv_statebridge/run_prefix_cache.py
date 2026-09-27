@@ -31,6 +31,7 @@ from statebridge_qasper.run import (
 
 from .prefix_cache import cache_nbytes, generate_after_prefix_cache, prefill_prefix, prefill_prefix_streaming
 from .run import ROLE_INSTRUCTIONS
+from .selection import chunk_document, rank_chunks
 
 
 MEETING_ROLE_CONTRACTS = {
@@ -78,6 +79,19 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Append the shared prefix in chronological chunks; 0 performs one full prefill.",
     )
+    parser.add_argument(
+        "--backfill-rounds",
+        type=int,
+        default=0,
+        help="Fixed number of query-aware local evidence review passes per role.",
+    )
+    parser.add_argument("--backfill-chunk-tokens", type=int, default=256)
+    parser.add_argument(
+        "--backfill-neighbor-chunks",
+        type=int,
+        default=1,
+        help="Chronological neighbors included around each deterministically selected review chunk.",
+    )
     parser.add_argument("--roles", nargs="+", choices=sorted(ROLE_INSTRUCTIONS), default=["facts", "decisions", "actions", "risks"])
     parser.add_argument("--agent-max-new-tokens", type=int, default=256)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
@@ -92,10 +106,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def specialist_prompt(
-    tokenizer, source: str, record: dict[str, Any], role: str, enable_thinking: bool, *, meeting_mode: bool
+def specialist_user(
+    source: str,
+    record: dict[str, Any],
+    role: str,
+    *,
+    meeting_mode: bool,
+    previous_handoff: str | None = None,
+    review_packet: str | None = None,
+    review_round: int | None = None,
 ) -> str:
-    """Build a normal Qwen chat prompt; cache only its token-identical prefix."""
     task = ROLE_INSTRUCTIONS[role]
     format_instruction = ""
     if meeting_mode:
@@ -109,6 +129,37 @@ def specialist_prompt(
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
         f"Task: {task} Give a concise factual handoff for another agent. "
         f"Only use the transcript. Include specific facts and state missing information rather than guessing.{format_instruction}"
+    )
+    if review_packet is not None and previous_handoff is not None and review_round is not None:
+        user += (
+            f"\n\nFixed review pass {review_round}: reconsider the previous handoff using the following chronological "
+            "evidence packet. Correct over-classification and remove unsupported claims.\n\n"
+            f"Previous handoff:\n{previous_handoff}\n\nEvidence packet:\n{review_packet}"
+        )
+    return user
+
+
+def specialist_prompt(
+    tokenizer,
+    source: str,
+    record: dict[str, Any],
+    role: str,
+    enable_thinking: bool,
+    *,
+    meeting_mode: bool,
+    previous_handoff: str | None = None,
+    review_packet: str | None = None,
+    review_round: int | None = None,
+) -> str:
+    """Build a normal Qwen chat prompt; cache only its token-identical prefix."""
+    user = specialist_user(
+        source,
+        record,
+        role,
+        meeting_mode=meeting_mode,
+        previous_handoff=previous_handoff,
+        review_packet=review_packet,
+        review_round=review_round,
     )
     return chat_prompt(
         tokenizer,
@@ -129,6 +180,20 @@ def common_prefix_length(token_batches: list[torch.Tensor]) -> int:
         if any(sequence[index] != value for sequence in sequences[1:]):
             return index
     return limit
+
+
+def review_packet(ranked_chunks, round_index: int, neighbors: int) -> str:
+    """Select a deterministic ranked chunk and its chronological neighbors."""
+    if not ranked_chunks:
+        return "No additional evidence is available."
+    selected, _ = ranked_chunks[round_index % len(ranked_chunks)]
+    all_chunks = {chunk.chunk_id: chunk for chunk, _ in ranked_chunks}
+    packet = []
+    for chunk_id in range(max(0, selected.chunk_id - neighbors), selected.chunk_id + neighbors + 1):
+        chunk = all_chunks.get(chunk_id)
+        if chunk is not None:
+            packet.append(f"[review chunk {chunk.chunk_id}]\n{chunk.text}")
+    return "\n\n".join(packet)
 
 
 @torch.inference_mode()
@@ -186,6 +251,10 @@ def main() -> None:
     args = parse_args()
     if args.prefix_tokens_per_agent < 2:
         raise ValueError("--prefix-tokens-per-agent must be at least 2")
+    if args.backfill_rounds < 0:
+        raise ValueError("--backfill-rounds cannot be negative")
+    if args.backfill_neighbor_chunks < 0:
+        raise ValueError("--backfill-neighbor-chunks cannot be negative")
     torch.manual_seed(args.seed)
     meeting_mode = args.transcript is not None
     if meeting_mode:
@@ -219,6 +288,12 @@ def main() -> None:
         report.write(f"Each source prefix is prefetched once ({prefill_mode}) and reused by cloned per-agent KV caches.\n\n")
         for index, record in enumerate(records, start=1):
             source = trim_context(tokenizer, record["context"], args.source_max_tokens)
+            source_chunks = chunk_document(
+                tokenizer,
+                source,
+                chunk_tokens=args.backfill_chunk_tokens,
+                overlap_tokens=0,
+            )
             role_inputs = [
                 tokenizer(
                     specialist_prompt(
@@ -271,7 +346,38 @@ def main() -> None:
                     full_prompt_ids[:, common_length:],
                     args,
                 )
-                specialists.append({"role": role, "message": message})
+                reviews = []
+                ranking_query = f"{record['question']} {MEETING_ROLE_CONTRACTS.get(role, ROLE_INSTRUCTIONS[role])}"
+                ranked = rank_chunks(source_chunks, ranking_query)
+                for review_round in range(args.backfill_rounds):
+                    packet = review_packet(ranked, review_round, args.backfill_neighbor_chunks)
+                    review_ids = tokenizer(
+                        specialist_prompt(
+                            tokenizer,
+                            source,
+                            record,
+                            role,
+                            args.enable_thinking,
+                            meeting_mode=meeting_mode,
+                            previous_handoff=message,
+                            review_packet=packet,
+                            review_round=review_round + 1,
+                        ),
+                        return_tensors="pt",
+                        add_special_tokens=False,
+                    ).to(args.device).input_ids
+                    if not torch.equal(review_ids[:, :common_length], encoded_prefix):
+                        raise RuntimeError("Review prompt no longer shares the cached transcript prefix.")
+                    message, states, token_ids = specialist_from_cache(
+                        model,
+                        tokenizer,
+                        prefix_cache,
+                        encoded_prefix.size(1),
+                        review_ids[:, common_length:],
+                        args,
+                    )
+                    reviews.append({"round": review_round + 1, "packet": packet})
+                specialists.append({"role": role, "message": message, "backfill_reviews": reviews})
                 all_states.append(states)
                 all_ids.append(token_ids)
             reports = "\n\n".join(f"[{item['role']}]\n{item['message']}" for item in specialists)
@@ -292,6 +398,7 @@ def main() -> None:
                 "prefix_prefill_chunks": prefill_chunks,
                 "statebridge_tokens": int(states.size(0)),
                 "specialists": specialists,
+                "backfill_rounds": args.backfill_rounds,
                 "answers": answers,
             }
             jsonl.write(json.dumps(result, ensure_ascii=False) + "\n")
@@ -304,6 +411,8 @@ def main() -> None:
             report.write(f"StateBridge specialist prefix: {states.size(0)} tokens\n\n")
             for item in specialists:
                 report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
+                for review in item["backfill_reviews"]:
+                    report.write(f"{item['role']} fixed backfill pass {review['round']} evidence:\n{review['packet']}\n\n")
             for variant, answer in answers.items():
                 report.write(f"{variant} answer:\n{answer}\n\n")
             if not meeting_mode:
