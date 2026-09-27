@@ -1,0 +1,184 @@
+"""Run exact cross-agent Prefix KV reuse with StateBridge aggregation.
+
+One shared source prefix is prefetched once. Specialist Agents append their
+role-specific tasks after a cloned KV cache, so the long source is not encoded
+again for every Agent. This is a standard exact-prefix cache baseline, not
+ProphetKV's selective recomputation or cross-chunk cache fusion.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from statebridge_qasper.bridge import StateBridge
+from statebridge_qasper.run import (
+    chat_prompt,
+    decode,
+    generate_from_ids,
+    generate_from_prefix,
+    load_records,
+    remove_thinking_tokens,
+    trim_context,
+)
+
+from .prefix_cache import cache_nbytes, generate_after_prefix_cache, prefill_prefix
+from .run import ROLE_INSTRUCTIONS
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--model", default="Qwen/Qwen3-4B")
+    parser.add_argument("--num-samples", type=int, default=1, help="0 means all records")
+    parser.add_argument("--source-max-tokens", type=int, default=4096)
+    parser.add_argument("--roles", nargs="+", choices=sorted(ROLE_INSTRUCTIONS), default=["facts", "decisions", "actions", "risks"])
+    parser.add_argument("--agent-max-new-tokens", type=int, default=256)
+    parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
+    parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
+    parser.add_argument("--snap-ratio", type=float, default=0.3)
+    parser.add_argument("--regularization", type=float, default=1e-3)
+    parser.add_argument("--vocab-chunk-size", type=int, default=8192)
+    parser.add_argument("--enable-thinking", action="store_true")
+    parser.add_argument("--variants", nargs="+", choices=["statebridge", "text", "no_comm"], default=["statebridge", "text", "no_comm"])
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--seed", type=int, default=7)
+    return parser.parse_args()
+
+
+def shared_prefix(context: str) -> str:
+    return (
+        "You are a careful meeting and research-document analyst. Use only the source transcript below.\n\n"
+        f"Source transcript:\n{context}\n\n"
+    )
+
+
+def role_suffix(record: dict[str, Any], role: str) -> str:
+    return (
+        f"Question: {record['question']}\n\n"
+        f"Task: {ROLE_INSTRUCTIONS[role]} Give a concise factual handoff for another agent. "
+        "Only use the transcript. Include specific facts and state missing information rather than guessing.\n\n"
+        "Handoff:"
+    )
+
+
+@torch.inference_mode()
+def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, record: dict[str, Any], role: str, args):
+    encoded = tokenizer(role_suffix(record, role), return_tensors="pt", add_special_tokens=False).to(args.device)
+    message_ids, states = generate_after_prefix_cache(
+        model,
+        tokenizer,
+        prefix_cache,
+        prefix_length,
+        encoded.input_ids,
+        max_new_tokens=args.agent_max_new_tokens,
+    )
+    message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
+    count = min(args.prefix_tokens_per_agent, message_ids.size(1))
+    return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:]
+
+
+def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None) -> str:
+    user = f"Question: {question}\n\nGive a concise factual answer."
+    if reports is not None:
+        user += f"\n\nSpecialist handoffs:\n{reports}"
+    return chat_prompt(
+        tokenizer,
+        "You aggregate specialist findings into an evidence-grounded answer. Do not invent facts.",
+        user,
+        enable_thinking,
+    )
+
+
+@torch.inference_mode()
+def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args):
+    if variant == "text":
+        prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, reports)
+        encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
+        _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, args.receiver_max_new_tokens)
+        return decode(tokenizer, answer_ids)
+    prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking)
+    encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
+    if variant == "no_comm":
+        _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, args.receiver_max_new_tokens)
+        return decode(tokenizer, answer_ids)
+    prefix = bridge.align(states, token_ids)
+    return decode(tokenizer, generate_from_prefix(model, tokenizer, encoded.input_ids, prefix, args.receiver_max_new_tokens))
+
+
+def main() -> None:
+    args = parse_args()
+    if args.prefix_tokens_per_agent < 2:
+        raise ValueError("--prefix-tokens-per-agent must be at least 2")
+    torch.manual_seed(args.seed)
+    records = load_records(args.data, args.num_samples)
+    dtype = torch.bfloat16 if args.device.startswith("cuda") and torch.cuda.is_bf16_supported() else torch.float16
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype).to(args.device).eval()
+    bridge = StateBridge(model.get_input_embeddings().weight, regularization=args.regularization, snap_ratio=args.snap_ratio, vocab_chunk_size=args.vocab_chunk_size)
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_path = args.output.with_suffix(".jsonl")
+    with jsonl_path.open("w", encoding="utf-8") as jsonl, args.output.open("w", encoding="utf-8") as report:
+        report.write(f"Cross-agent Prefix KV Cache + StateBridge run: {datetime.now().isoformat(timespec='seconds')}\n")
+        report.write(f"model={args.model}, source_max_tokens={args.source_max_tokens}, roles={','.join(args.roles)}\n")
+        report.write("Each source prefix is prefetched once and reused by cloned per-agent KV caches.\n\n")
+        for index, record in enumerate(records, start=1):
+            source = trim_context(tokenizer, record["context"], args.source_max_tokens)
+            encoded_prefix = tokenizer(shared_prefix(source), return_tensors="pt", add_special_tokens=False).to(args.device)
+            started = time.perf_counter()
+            prefix_cache = prefill_prefix(model, encoded_prefix.input_ids)
+            if args.device.startswith("cuda"):
+                torch.cuda.synchronize()
+            prefill_seconds = time.perf_counter() - started
+            prefix_bytes = cache_nbytes(prefix_cache)
+
+            specialists = []
+            all_states, all_ids = [], []
+            for role in args.roles:
+                message, states, token_ids = specialist_from_cache(
+                    model, tokenizer, prefix_cache, encoded_prefix.input_ids.size(1), record, role, args
+                )
+                specialists.append({"role": role, "message": message})
+                all_states.append(states)
+                all_ids.append(token_ids)
+            reports = "\n\n".join(f"[{item['role']}]\n{item['message']}" for item in specialists)
+            states, token_ids = torch.cat(all_states), torch.cat(all_ids)
+            answers = {variant: answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args) for variant in args.variants}
+            result = {
+                "id": record["id"],
+                "question": record["question"],
+                "gold_answer": record.get("answer", ""),
+                "prefix_tokens": int(encoded_prefix.input_ids.size(1)),
+                "prefix_cache_bytes": prefix_bytes,
+                "prefix_prefill_seconds": prefill_seconds,
+                "statebridge_tokens": int(states.size(0)),
+                "specialists": specialists,
+                "answers": answers,
+            }
+            jsonl.write(json.dumps(result, ensure_ascii=False) + "\n")
+            jsonl.flush()
+            report.write("=" * 80 + f"\nSample {index}\nId: {record['id']}\n\nQuestion:\n{record['question']}\n\n")
+            report.write(f"Shared prefix: {result['prefix_tokens']} tokens; KV cache: {prefix_bytes / 2**20:.1f} MiB; prefill: {prefill_seconds:.2f}s\n")
+            report.write(f"StateBridge specialist prefix: {states.size(0)} tokens\n\n")
+            for item in specialists:
+                report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
+            for variant, answer in answers.items():
+                report.write(f"{variant} answer:\n{answer}\n\n")
+            report.write(f"Gold answer:\n{record.get('answer', '')}\n\n")
+            report.flush()
+            print(f"completed {index}/{len(records)}: {record['id']}", flush=True)
+
+
+if __name__ == "__main__":
+    main()

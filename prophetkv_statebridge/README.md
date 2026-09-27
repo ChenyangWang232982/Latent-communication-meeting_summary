@@ -67,3 +67,26 @@ By default, each specialist must cite short source phrases with `[chunk N]`
 identifiers before reaching a conclusion (`--strict-evidence`). This makes the
 handoff more auditable and reduces unsupported claims. Use
 `--no-strict-evidence` only for an ablation.
+
+## Exact cross-agent Prefix KV cache
+
+`run_prefix_cache.py` adds a separate, real KV-cache baseline for repeated
+analysis of the same source. It pre-fills one complete transcript prefix once,
+then each specialist continues from a clone of that immutable `past_key_values`
+cache with only its role-specific instruction appended.
+
+```bash
+python -m prophetkv_statebridge.run_prefix_cache \
+  --data data/qasper_latent/validation.jsonl \
+  --output prophetkv_statebridge/output/qasper_prefix_cache_smoke.txt \
+  --num-samples 1 \
+  --model Qwen/Qwen3-4B \
+  --source-max-tokens 4096 \
+  --roles facts decisions actions risks \
+  --prefix-tokens-per-agent 64
+```
+
+The report includes the shared-prefix token count, one-time prefill time, and
+KV-cache size. It is an **exact prefix-reuse** baseline: the source prefix is
+identical for every specialist. It is not ProphetKV's selective recomputation,
+and it does not attempt unsafe concatenation of independently created caches.
