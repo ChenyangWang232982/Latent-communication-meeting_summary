@@ -60,6 +60,39 @@ def prefill_prefix(model, prefix_ids: torch.Tensor):
 
 
 @torch.inference_mode()
+def prefill_prefix_streaming(model, prefix_ids: torch.Tensor, *, chunk_tokens: int):
+    """Build one exact prefix cache by appending chronological token chunks.
+
+    ``chunk 2`` receives the cache produced by ``chunk 1``; no independent
+    caches are concatenated.  When the complete prefix fits the model context,
+    the result is the streaming counterpart of a single full-prefix prefill.
+    """
+    if chunk_tokens < 1:
+        raise ValueError("chunk_tokens must be positive")
+    if prefix_ids.ndim != 2 or prefix_ids.size(0) != 1:
+        raise ValueError("prefix_ids must have shape [1, sequence_length]")
+
+    cache = None
+    total_tokens = prefix_ids.size(1)
+    chunks = 0
+    for start in range(0, total_tokens, chunk_tokens):
+        end = min(start + chunk_tokens, total_tokens)
+        current_ids = prefix_ids[:, start:end]
+        outputs = model(
+            input_ids=current_ids,
+            attention_mask=torch.ones((1, end), device=prefix_ids.device, dtype=torch.long),
+            past_key_values=cache,
+            use_cache=True,
+            return_dict=True,
+        )
+        cache = outputs.past_key_values
+        chunks += 1
+    if cache is None:
+        raise RuntimeError("Cannot prefill an empty prefix")
+    return cache, chunks
+
+
+@torch.inference_mode()
 def generate_after_prefix_cache(
     model,
     tokenizer,

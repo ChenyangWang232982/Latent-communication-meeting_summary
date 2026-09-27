@@ -93,6 +93,11 @@ normal chat prompt first, finds their exact common prefix, and caches only that
 shared prefix. It is not ProphetKV's selective recomputation, and it does not
 attempt unsafe concatenation of independently created caches.
 
+To construct the same shared cache as chronological updates (`KV1 -> KV1-2 ->
+KV1-2-3`), add `--prefill-chunk-tokens 1024`. Each new 1024-token block is
+forwarded with the previous block's `past_key_values`; separate chunk caches
+are never manually concatenated.
+
 For a real meeting, use all four roles. Keep each role's handoff concise (for
 example `--agent-max-new-tokens 96 --prefix-tokens-per-agent 96`) so that the
 StateBridge aggregator receives the useful facts rather than a long repeated
@@ -110,6 +115,7 @@ python -m prophetkv_statebridge.run_prefix_cache \
   --output prophetkv_statebridge/output/example_prefix_cache_summary.txt \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 8192 \
+  --prefill-chunk-tokens 1024 \
   --roles facts decisions actions risks \
   --agent-max-new-tokens 128 \
   --prefix-tokens-per-agent 128

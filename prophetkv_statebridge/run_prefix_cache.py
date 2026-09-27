@@ -29,24 +29,27 @@ from statebridge_qasper.run import (
     trim_context,
 )
 
-from .prefix_cache import cache_nbytes, generate_after_prefix_cache, prefill_prefix
+from .prefix_cache import cache_nbytes, generate_after_prefix_cache, prefill_prefix, prefill_prefix_streaming
 from .run import ROLE_INSTRUCTIONS
 
 
 MEETING_ROLE_CONTRACTS = {
     "facts": (
         "List only high-confidence context needed for the minutes. Omit introductions, icebreakers, personal "
-        "details, and speculative design ideas. Do not infer a decision, action, owner, or deadline from a job title."
+        "details, meeting-start acknowledgements, and speculative design ideas. Do not infer a decision, action, owner, "
+        "or deadline from a job title."
     ),
     "decisions": (
         "List only decisions explicitly accepted, agreed, chosen, approved, rejected, or committed to in the transcript. "
         "A discussion topic, observation, problem, question, or suggestion is NOT a decision. If no such statement exists, "
-        "output None explicitly stated."
+        "output None explicitly stated. The supporting quote must itself contain a commitment cue such as 'decided', "
+        "'agreed', 'approved', 'chosen', 'we will', or 'we are going to'."
     ),
     "actions": (
         "List only explicit commitments or assigned follow-ups. An action needs an explicit task and a commitment or assignment "
         "such as 'will', 'assigned', 'responsible', 'need to', or a stated deadline. Include an owner or deadline only when the "
-        "transcript explicitly states one. Do not infer work from a person's role."
+        "transcript explicitly states one. The supporting quote must contain both the task and its commitment or assignment; "
+        "do not infer work from a person's role or from vague phrases such as 'you know what to do'."
     ),
     "risks": (
         "List only explicitly stated risks, blockers, constraints, uncertainties, disagreements, or unresolved questions. "
@@ -69,6 +72,12 @@ def parse_args() -> argparse.Namespace:
         help="Shared objective used when --transcript is supplied.",
     )
     parser.add_argument("--source-max-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--prefill-chunk-tokens",
+        type=int,
+        default=0,
+        help="Append the shared prefix in chronological chunks; 0 performs one full prefill.",
+    )
     parser.add_argument("--roles", nargs="+", choices=sorted(ROLE_INSTRUCTIONS), default=["facts", "decisions", "actions", "risks"])
     parser.add_argument("--agent-max-new-tokens", type=int, default=256)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
@@ -92,7 +101,7 @@ def specialist_prompt(
     if meeting_mode:
         task = MEETING_ROLE_CONTRACTS[role]
         format_instruction = (
-            " Return at most four short bullets. Every bullet must use exactly this format: "
+            " Return at most three short bullets. Every bullet must use exactly this format: "
             "- [timestamp] \"verbatim transcript quotation\" -> claim. The quotation must be sufficient on its own to support "
             "the claim. A timestamp alone is not evidence. If no supported item exists, output exactly: None explicitly stated."
         )
@@ -205,8 +214,9 @@ def main() -> None:
     with jsonl_path.open("w", encoding="utf-8") as jsonl, args.output.open("w", encoding="utf-8") as report:
         run_kind = "Meeting" if meeting_mode else "QASPER"
         report.write(f"Cross-agent Prefix KV Cache + StateBridge {run_kind} run: {datetime.now().isoformat(timespec='seconds')}\n")
+        prefill_mode = "single prefill" if args.prefill_chunk_tokens == 0 else f"streaming chunks of {args.prefill_chunk_tokens} tokens"
         report.write(f"model={args.model}, source_max_tokens={args.source_max_tokens}, roles={','.join(args.roles)}\n")
-        report.write("Each source prefix is prefetched once and reused by cloned per-agent KV caches.\n\n")
+        report.write(f"Each source prefix is prefetched once ({prefill_mode}) and reused by cloned per-agent KV caches.\n\n")
         for index, record in enumerate(records, start=1):
             source = trim_context(tokenizer, record["context"], args.source_max_tokens)
             role_inputs = [
@@ -238,7 +248,13 @@ def main() -> None:
                 raise RuntimeError("Specialist prompts do not have a usable shared prefix and suffix.")
             encoded_prefix = role_inputs[0][:, :common_length]
             started = time.perf_counter()
-            prefix_cache = prefill_prefix(model, encoded_prefix)
+            if args.prefill_chunk_tokens:
+                prefix_cache, prefill_chunks = prefill_prefix_streaming(
+                    model, encoded_prefix, chunk_tokens=args.prefill_chunk_tokens
+                )
+            else:
+                prefix_cache = prefill_prefix(model, encoded_prefix)
+                prefill_chunks = 1
             if args.device.startswith("cuda"):
                 torch.cuda.synchronize()
             prefill_seconds = time.perf_counter() - started
@@ -273,6 +289,7 @@ def main() -> None:
                 "prefix_tokens": int(encoded_prefix.size(1)),
                 "prefix_cache_bytes": prefix_bytes,
                 "prefix_prefill_seconds": prefill_seconds,
+                "prefix_prefill_chunks": prefill_chunks,
                 "statebridge_tokens": int(states.size(0)),
                 "specialists": specialists,
                 "answers": answers,
@@ -280,7 +297,10 @@ def main() -> None:
             jsonl.write(json.dumps(result, ensure_ascii=False) + "\n")
             jsonl.flush()
             report.write("=" * 80 + f"\nSample {index}\nId: {record['id']}\n\nQuestion:\n{record['question']}\n\n")
-            report.write(f"Shared prefix: {result['prefix_tokens']} tokens; KV cache: {prefix_bytes / 2**20:.1f} MiB; prefill: {prefill_seconds:.2f}s\n")
+            report.write(
+                f"Shared prefix: {result['prefix_tokens']} tokens in {prefill_chunks} chronological cache updates; "
+                f"KV cache: {prefix_bytes / 2**20:.1f} MiB; prefill: {prefill_seconds:.2f}s\n"
+            )
             report.write(f"StateBridge specialist prefix: {states.size(0)} tokens\n\n")
             for item in specialists:
                 report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
