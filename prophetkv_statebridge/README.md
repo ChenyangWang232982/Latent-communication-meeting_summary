@@ -82,11 +82,18 @@ python -m prophetkv_statebridge.run_prefix_cache \
   --num-samples 1 \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 4096 \
-  --roles facts decisions actions risks \
-  --prefix-tokens-per-agent 64
+  --roles facts \
+  --agent-max-new-tokens 256 \
+  --prefix-tokens-per-agent 256
 ```
 
 The report includes the shared-prefix token count, one-time prefill time, and
-KV-cache size. It is an **exact prefix-reuse** baseline: the source prefix is
-identical for every specialist. It is not ProphetKV's selective recomputation,
-and it does not attempt unsafe concatenation of independently created caches.
+KV-cache size. It is an **exact prefix-reuse** baseline: it tokenizes every
+normal chat prompt first, finds their exact common prefix, and caches only that
+shared prefix. It is not ProphetKV's selective recomputation, and it does not
+attempt unsafe concatenation of independently created caches.
+
+For a real meeting, use all four roles. Keep each role's handoff concise (for
+example `--agent-max-new-tokens 96 --prefix-tokens-per-agent 96`) so that the
+StateBridge aggregator receives the useful facts rather than a long repeated
+transcript.

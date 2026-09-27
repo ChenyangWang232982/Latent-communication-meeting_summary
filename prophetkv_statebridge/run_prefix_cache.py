@@ -54,31 +54,42 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def shared_prefix(context: str) -> str:
-    return (
-        "You are a careful meeting and research-document analyst. Use only the source transcript below.\n\n"
-        f"Source transcript:\n{context}\n\n"
-    )
-
-
-def role_suffix(record: dict[str, Any], role: str) -> str:
-    return (
-        f"Question: {record['question']}\n\n"
+def specialist_prompt(tokenizer, source: str, record: dict[str, Any], role: str, enable_thinking: bool) -> str:
+    """Build a normal Qwen chat prompt; cache only its token-identical prefix."""
+    user = (
+        f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
         f"Task: {ROLE_INSTRUCTIONS[role]} Give a concise factual handoff for another agent. "
-        "Only use the transcript. Include specific facts and state missing information rather than guessing.\n\n"
-        "Handoff:"
+        "Only use the transcript. Include specific facts and state missing information rather than guessing."
     )
+    return chat_prompt(
+        tokenizer,
+        "You are a careful meeting and research-document analyst.",
+        user,
+        enable_thinking,
+    )
+
+
+def common_prefix_length(token_batches: list[torch.Tensor]) -> int:
+    """Find the token-identical prefix shared by every specialist prompt."""
+    if not token_batches:
+        raise ValueError("At least one specialist prompt is required")
+    sequences = [tokens[0] for tokens in token_batches]
+    limit = min(sequence.numel() for sequence in sequences)
+    for index in range(limit):
+        value = sequences[0][index]
+        if any(sequence[index] != value for sequence in sequences[1:]):
+            return index
+    return limit
 
 
 @torch.inference_mode()
-def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, record: dict[str, Any], role: str, args):
-    encoded = tokenizer(role_suffix(record, role), return_tensors="pt", add_special_tokens=False).to(args.device)
+def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_ids: torch.Tensor, args):
     message_ids, states = generate_after_prefix_cache(
         model,
         tokenizer,
         prefix_cache,
         prefix_length,
-        encoded.input_ids,
+        suffix_ids,
         max_new_tokens=args.agent_max_new_tokens,
     )
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
@@ -135,9 +146,20 @@ def main() -> None:
         report.write("Each source prefix is prefetched once and reused by cloned per-agent KV caches.\n\n")
         for index, record in enumerate(records, start=1):
             source = trim_context(tokenizer, record["context"], args.source_max_tokens)
-            encoded_prefix = tokenizer(shared_prefix(source), return_tensors="pt", add_special_tokens=False).to(args.device)
+            role_inputs = [
+                tokenizer(
+                    specialist_prompt(tokenizer, source, record, role, args.enable_thinking),
+                    return_tensors="pt",
+                    add_special_tokens=False,
+                ).to(args.device).input_ids
+                for role in args.roles
+            ]
+            common_length = common_prefix_length(role_inputs)
+            if common_length < 2 or any(input_ids.size(1) == common_length for input_ids in role_inputs):
+                raise RuntimeError("Specialist prompts do not have a usable shared prefix and suffix.")
+            encoded_prefix = role_inputs[0][:, :common_length]
             started = time.perf_counter()
-            prefix_cache = prefill_prefix(model, encoded_prefix.input_ids)
+            prefix_cache = prefill_prefix(model, encoded_prefix)
             if args.device.startswith("cuda"):
                 torch.cuda.synchronize()
             prefill_seconds = time.perf_counter() - started
@@ -145,9 +167,14 @@ def main() -> None:
 
             specialists = []
             all_states, all_ids = [], []
-            for role in args.roles:
+            for role, full_prompt_ids in zip(args.roles, role_inputs):
                 message, states, token_ids = specialist_from_cache(
-                    model, tokenizer, prefix_cache, encoded_prefix.input_ids.size(1), record, role, args
+                    model,
+                    tokenizer,
+                    prefix_cache,
+                    encoded_prefix.size(1),
+                    full_prompt_ids[:, common_length:],
+                    args,
                 )
                 specialists.append({"role": role, "message": message})
                 all_states.append(states)
@@ -159,7 +186,7 @@ def main() -> None:
                 "id": record["id"],
                 "question": record["question"],
                 "gold_answer": record.get("answer", ""),
-                "prefix_tokens": int(encoded_prefix.input_ids.size(1)),
+                "prefix_tokens": int(encoded_prefix.size(1)),
                 "prefix_cache_bytes": prefix_bytes,
                 "prefix_prefill_seconds": prefill_seconds,
                 "statebridge_tokens": int(states.size(0)),
