@@ -1,0 +1,383 @@
+AMI Meeting Corpus transcript: ES2002a
+Source: AMI manual annotations v1.6.2 (CC BY 4.0).
+
+[0050.42] Speaker B: Okay
+[0053.56] Speaker B: Right
+[0060.35] Speaker B: Um and um
+[0064.16] Speaker B: this is just what we're gonna be doing over the next twenty five minutes.
+[0067.21] Speaker D: Mm-hmm.
+[0067.55] Speaker B: Um so first of all, just to kind of make sure that we all know each other,
+[0072.79] Speaker B: I'm Laura and I'm the project manager.
+[0074.89] Speaker D: Great.
+[0077.44] Speaker A: Hi, I'm David and I'm supposed to be an industrial designer.
+[0080.81] Speaker B: Okay.
+[0082.08] Speaker D: And I'm Andrew and I'm uh our marketing
+[0085.99] Speaker C: Um I'm Craig and I'm User Interface.
+[0086.07] Speaker D: expert.
+[0089.30] Speaker B: Great.
+[0090.01] Speaker B: Okay. Um
+[0096.34] Speaker B: Oh I have to record who's here actually.
+[0098.57] Speaker B: So that's David, Andrew and Craig, isn't it?
+[0104.89] Speaker B: And you all arrived on time.
+[0108.96] Speaker B: Um yeah so des uh design a new remote control.
+[0111.72] Speaker B: Um, as you can see it's supposed to be original, trendy and user friendly.
+[0116.66] Speaker B: Um so that's kind of our our brief, as it were.
+[0120.98] Speaker B: Um and so there are three different stages to the design.
+[0126.12] Speaker B: Um I'm not really sure what what you guys have already received um in your emails.
+[0131.36] Speaker B: What did you get?
+[0132.57] Speaker A: Um, I just got the project announcement about what the project is.
+[0135.08] Speaker B: Mm-hmm.
+[0136.68] Speaker A: Designing a remote control.
+[0137.12] Speaker D: Mm-hmm.
+[0138.20] Speaker A: That's about it, didn't get anything else.
+[0138.96] Speaker D: Mm-hmm. Yeah, that's that's it.
+[0140.10] Speaker B: Is that what everybody got?
+[0140.47] Speaker C: Yeah.
+[0140.77] Speaker A: Did you get the same thing?
+[0141.53] Speaker B: Okay.
+[0141.80] Speaker D: Yeah.
+[0142.66] Speaker B: Um.
+[0144.43] Speaker B: So we're gonna have like individual work and then a meeting about it.
+[0147.92] Speaker B: And repeat that process three times.
+[0151.79] Speaker B: Um and at this point we get try out the whiteboard over there.
+[0158.41] Speaker B: Um.
+[0165.91] Speaker B: So who would like to go first?
+[0166.67] Speaker D: I will go. That's fine.
+[0181.39] Speaker D: This one here, right?
+[0183.26] Speaker B: Mm-hmm.
+[0183.93] Speaker D: Okay. Very nice.
+[0186.46] Speaker D: Alright.
+[0203.45] Speaker D: A beagle.
+[0211.97] Speaker D: Um
+[0213.16] Speaker D: charac favourite characteristics of it? Is that right?
+[0215.95] Speaker B: Yeah. Yeah.
+[0216.46] Speaker D: Uh, right, well basically um high priority for any animal for me is that they be willing to take a lot of physical affection from their family.
+[0229.16] Speaker D: And, yeah that they have lots of personality
+[0232.72] Speaker D: and uh be fit and in robust good health.
+[0237.96] Speaker D: So this is blue.
+[0239.85] Speaker D: Blue beagle.
+[0241.42] Speaker D: My family's beagle.
+[0243.40] Speaker B: Right.
+[0255.07] Speaker C: Well, my favourite animal would be a monkey.
+[0268.00] Speaker C: Then they're small cute and furry,
+[0270.01] Speaker C: and uh when planet of the apes becomes real, I'm gonna be up there with them.
+[0275.67] Speaker B: Right.
+[0275.83] Speaker A: Cool.
+[0285.96] Speaker B: You can take as long over this as you like,
+[0287.73] Speaker B: because we haven't got an awful lot to discuss.
+[0290.31] Speaker B: Ok oh
+[0290.59] Speaker B: we do we do
+[0291.76] Speaker B: Don't feel like you're in a rush, anyway.
+[0293.26] Speaker A: Okay.
+[0296.02] Speaker D: I coulda told you a whole lot more about beagles.
+[0298.97] Speaker B: We might have to get you up again then.
+[0301.14] Speaker B: I don't know what mine is.
+[0302.11] Speaker B: I'm gonna have to think on the spot now.
+[0307.06] Speaker D: Impressionist.
+[0312.06] Speaker A: Um.
+[0313.09] Speaker A: Yeah.
+[0318.58] Speaker A: Um, well anyway,
+[0321.53] Speaker A: I don't know, it's just the first animal I can think off the top of my head.
+[0324.11] Speaker A: Um. Yes. Big reason is 'cause I'm allergic to most animals.
+[0327.86] Speaker A: Allergic to animal fur,
+[0327.91] Speaker B: Ah.
+[0328.76] Speaker A: so um fish was a natural choice.
+[0332.03] Speaker A: Um, yeah,
+[0333.10] Speaker A: and I kind of like whales.
+[0338.22] Speaker A: And they're quite harmless and mild and interesting.
+[0341.85] Speaker D: Mm.
+[0342.42] Speaker B: Okay.
+[0343.63] Speaker B: God, I still don't know what I'm gonna write about.
+[0346.39] Speaker B: Um.
+[0349.66] Speaker D: Superb sketch, by the way.
+[0354.91] Speaker B: I was gonna choose a dog as well.
+[0357.54] Speaker B: But I'll just draw a different kind of dog.
+[0359.62] Speaker D: Yep.
+[0360.21] Speaker B: M my favourite animal is my own dog at home.
+[0367.01] Speaker B: That doesn't really look like him, actually.
+[0373.30] Speaker B: He looks more like a pig, actually.
+[0375.84] Speaker B: Ah well.
+[0378.46] Speaker D: I see a dog in there.
+[0379.52] Speaker B: Do you?
+[0379.99] Speaker D: Yep.
+[0380.06] Speaker B: Oh that's very good of you.
+[0382.82] Speaker D: Now I see a rooster.
+[0388.27] Speaker B: Uh.
+[0393.42] Speaker D: What kind is it?
+[0394.87] Speaker B: Um he's a mixture of uh various things.
+[0403.23] Speaker B: That's just to suggest that his tail wags.
+[0405.71] Speaker B: Um he's very friendly and cheery and always pleased to see you,
+[0409.20] Speaker B: and very kind of affectionate
+[0415.00] Speaker B: uh
+[0415.12] Speaker B: and he's quite quite wee as well so you know he can doesn't take up too much space.
+[0421.48] Speaker B: Um
+[0425.56] Speaker B: and uh And he does a funny thing where he chases his tail as well,
+[0431.27] Speaker D: Is he aware that th it's his own cha tail he's chasing?
+[0433.83] Speaker B: It is. I think it is.
+[0434.67] Speaker B: He only does it after he's had his dinner
+[0436.84] Speaker B: and um he'll just all of a sudden just get up and start chasing his tail 'round the living room.
+[0440.33] Speaker D: Hmm.
+[0443.59] Speaker B: Yeah,
+[0444.05] Speaker D: Probably when he was little he got lots of attention for doing it and has forever been conditioned.
+[0447.15] Speaker B: Yeah,
+[0447.47] Speaker B: maybe.
+[0449.00] Speaker B: Maybe.
+[0452.30] Speaker B: Just down here? Yeah.
+[0455.51] Speaker B: Okay.
+[0465.51] Speaker B: Okay, uh we now need to discuss the project finance.
+[0470.01] Speaker B: Um so according to the brief um we're gonna be selling this remote control for twenty five Euro,
+[0476.53] Speaker B: um and we're aiming to make fifty million Euro.
+[0482.77] Speaker B: Um so we're gonna be selling this on an international scale.
+[0487.21] Speaker B: And uh we don't want it to cost any more than uh twelve fifty Euros, so fifty percent of the selling price.
+[0488.56] Speaker D: 'Kay.
+[0496.02] Speaker D: Um, can we just go over that again?
+[0497.99] Speaker B: Sure.
+[0499.16] Speaker D: Uh, so bas at twel
+[0502.11] Speaker D: Alright, yeah. Okay.
+[0505.28] Speaker D: So cost like production cost is twelve fifty,
+[0508.17] Speaker B: All together.
+[0509.26] Speaker D: but selling price is is that wholesale or retail?
+[0513.06] Speaker D: Like on the shelf.
+[0515.16] Speaker B: Um I dunno.
+[0517.97] Speaker B: That's a good question.
+[0518.31] Speaker D: Our sale our sale anyway.
+[0519.67] Speaker B: I imagine it probably is our sale actually
+[0520.65] Speaker D: Yeah, okay okay.
+[0521.58] Speaker B: because it's probably up to the the um the retailer to uh sell it for whatever price they want. Um.
+[0526.79] Speaker D: Okay.
+[0528.90] Speaker D: Mm-hmm.
+[0531.58] Speaker D: Alright.
+[0531.83] Speaker B: But I I don't know,
+[0532.46] Speaker B: I mean do you think the fact that it's going to be sold internationally will have a bearing on how we design it at all?
+[0539.31] Speaker B: Think it will?
+[0540.69] Speaker D: Mm-hmm.
+[0541.17] Speaker B: Um.
+[0543.86] Speaker D: Mm-hmm.
+[0548.28] Speaker D: Well right away I'm wondering if there's um th th uh, like with D_V_D_ players, if there are zones.
+[0553.78] Speaker B: Oh yeah,
+[0554.28] Speaker D: Um f frequencies or something
+[0554.46] Speaker B: regions and stuff, yeah.
+[0556.62] Speaker B: Yeah.
+[0557.41] Speaker D: um as well as uh characters,
+[0557.56] Speaker B: Okay.
+[0561.17] Speaker D: um different uh keypad styles and s symbols.
+[0565.05] Speaker A: Hmm.
+[0565.13] Speaker B: Yeah.
+[0566.17] Speaker D: Um.
+[0568.30] Speaker B: I suppose it's depends on how complicated our remote control is.
+[0568.46] Speaker D: I don't know.
+[0571.22] Speaker D: Yeah.
+[0571.74] Speaker A: It does make sense from maybe the design point of view
+[0574.91] Speaker A: 'cause you have more complicated characters like European languages, then you need more buttons.
+[0580.42] Speaker B: Yeah, yeah.
+[0580.66] Speaker D: Yeah.
+[0581.30] Speaker A: So, possibly.
+[0582.33] Speaker D: Yeah.
+[0583.04] Speaker B: Okay.
+[0583.50] Speaker D: And then a and then al the other thing international is on top of the price.
+[0597.79] Speaker B: What, just like in terms of like the wealth of the country?
+[0600.43] Speaker B: Like how much money people have to spend on things like?
+[0602.87] Speaker D: Or just like, basic product podi positioning,
+[0606.29] Speaker D: the twenty five Euro remote control might be a big hit in London,
+[0611.16] Speaker D: might not be such a big hit in Greece,
+[0615.20] Speaker D: who knows,
+[0615.74] Speaker B: Aye, I see what you mean, yeah.
+[0615.98] Speaker D: something like that, yeah.
+[0619.01] Speaker B: Marketing.
+[0620.06] Speaker B: Good marketing thoughts.
+[0620.48] Speaker D: Yep.
+[0621.09] Speaker B: Oh gosh,
+[0621.49] Speaker B: I should be writing all this down. Um.
+[0655.45] Speaker D: Right away I'm making some kind of assumptions about what what information we're given here,
+[0660.70] Speaker B: Mm.
+[0660.71] Speaker D: thinking, 'kay trendy probably means something other than just basic,
+[0665.36] Speaker B: Yeah.
+[0665.64] Speaker D: something other than just standard. Um
+[0670.31] Speaker D: so I'm wondering right away,
+[0677.15] Speaker B: Yeah, yeah.
+[0677.66] Speaker B: Like how much does, you know, a remote control cost.
+[0680.52] Speaker D: Uh-huh.
+[0681.66] Speaker B: Well twenty five Euro, I mean that's um that's about like eighteen pounds or something,
+[0687.09] Speaker B: isn't it?
+[0687.72] Speaker D: Mm-hmm.
+[0687.81] Speaker B: Or no,
+[0688.04] Speaker B: is it as much as that?
+[0689.70] Speaker B: Sixteen seventeen eighteen pounds.
+[0689.77] Speaker D: Yep.
+[0691.16] Speaker D: Yeah,
+[0691.33] Speaker D: I'd say so,
+[0691.82] Speaker D: yeah.
+[0692.42] Speaker B: Um, I dunno,
+[0694.16] Speaker B: I've never bought a remote control,
+[0695.53] Speaker B: so I don't know how how good a remote control that would get you. Um.
+[0696.23] Speaker D: No.
+[0697.98] Speaker D: Yeah,
+[0702.02] Speaker B: But yeah, I suppose it has to look kind of cool and gimmicky.
+[0704.03] Speaker D: Mm-hmm.
+[0707.10] Speaker B: Um right, okay.
+[0711.43] Speaker B: Let me just scoot on ahead here.
+[0713.81] Speaker B: Okay.
+[0714.96] Speaker B: Um well d Does anybody have anything to add to uh to the finance issue at all?
+[0722.77] Speaker D: Do we have any other background information on like how that compares to other
+[0722.81] Speaker B: Thin
+[0727.65] Speaker B: No, actually.
+[0728.32] Speaker B: That would be useful, though,
+[0729.45] Speaker B: wouldn't it,
+[0729.81] Speaker B: if you knew like what your money would get you now.
+[0730.73] Speaker D: Yeah.
+[0732.32] Speaker A: Hmm.
+[0734.73] Speaker D: Mm-hmm.
+[0735.11] Speaker B: Mm-hmm.
+[0753.67] Speaker D: Yeah, interesting thing about discussing um production of a remote control for me is that l
+[0759.58] Speaker D: as you point out,
+[0760.59] Speaker D: I just don't think of remote controls as somethin something people consciously assess in their purchasing habits.
+[0767.69] Speaker B: Yeah, yeah.
+[0767.74] Speaker D: It's just like getting shoelaces with shoes or something.
+[0772.01] Speaker B: Oh.
+[0772.49] Speaker D: It just comes along.
+[0772.80] Speaker B: Five minutes to end of meeting.
+[0774.17] Speaker B: Oh, okay.
+[0775.33] Speaker B: We're a bit behind.
+[0776.12] Speaker D: Do you know what I mean?
+[0777.67] Speaker D: Like so sort of like how do you
+[0777.70] Speaker A: Yeah.
+[0779.25] Speaker D: I I mean one one way of looking at it would be, well the people producing television sets, maybe they have to buy remote controls.
+[0786.49] Speaker D: Or another way is maybe people who have T_V_ sets are really fed up with their remote control and they really want a better one or something.
+[0794.52] Speaker C: My parents went out and bought um remote controls because um they got fed up of having four or five different remote controls for each things the house.
+[0799.88] Speaker D: Right. Right.
+[0801.38] Speaker C: So um for them it was just how many devices control.
+[0804.47] Speaker D: Right,
+[0806.46] Speaker B: Yeah.
+[0811.51] Speaker B: Right, so do you think that should be like a main design aim of our remote control d you know,
+[0814.98] Speaker D: I think so.
+[0815.56] Speaker B: do your your satellite and your regular telly and your V_C_R_ and everything?
+[0815.81] Speaker D: Yeah, yeah.
+[0818.45] Speaker D: Yeah.
+[0819.79] Speaker D: Well like um,
+[0821.05] Speaker D: maybe what we could use is a sort of like a example of a successful other piece technology is palm palm pilots.
+[0828.28] Speaker D: They're gone from being just like little sort of scribble boards to cameras, M_P_ three players, telephones,
+[0832.76] Speaker B: Mm-hmm.
+[0835.22] Speaker D: everything, agenda.
+[0836.31] Speaker D: So, like, I wonder if we might add something new to the to the remote control market,
+[0843.99] Speaker B: Or even like, you know, notes about um what you wanna watch.
+[0847.62] Speaker B: Like you might put in there oh I want to watch such and such and look a
+[0849.08] Speaker D: Yeah,
+[0849.78] Speaker D: yeah.
+[0850.33] Speaker B: Oh that's a good idea.
+[0851.06] Speaker D: An
+[0851.55] Speaker B: So extra functionalities.
+[0852.79] Speaker D: Yeah.
+[0853.54] Speaker D: Like, p personally for me, at home I've I've combined the um the audio video of my television set and my D_V_D_ player and my C_D_ player.
+[0862.90] Speaker D: So they w all work actually function together
+[0864.62] Speaker D: but I have different remote controls for each of them.
+[0866.59] Speaker B: Mm-hmm.
+[0866.91] Speaker D: So it's sort of ironic that that then they're in there
+[0872.03] Speaker D: um
+[0874.02] Speaker D: you know, the sound and everything it's just one system.
+[0876.45] Speaker D: But each one's got its own little
+[0876.88] Speaker B: Hmm.
+[0878.95] Speaker D: part.
+[0883.05] Speaker B: Um okay,
+[0885.66] Speaker B: uh I'd wel
+[0886.62] Speaker B: we're gonna have to wrap up pretty quickly in the next couple of minutes.
+[0889.88] Speaker B: Um I'll just check we've nothing else
+[0891.96] Speaker B: . Okay.
+[0892.58] Speaker B: Um so anything else anybody wants to add about what they don't like about remote controls they've used,
+[0898.27] Speaker B: what they would really like to be part of this new one at all?
+[0903.08] Speaker A: And you keep losing them.
+[0904.60] Speaker B: You keep losing them.
+[0904.75] Speaker D: Mm.
+[0905.58] Speaker B: Okay.
+[0906.45] Speaker A: Finding them is really a pain, you know.
+[0907.47] Speaker D: Mm. Mm.
+[0908.59] Speaker A: I mean it's usually quite small,
+[0910.62] Speaker A: or when you want it right, it slipped behind the couch
+[0911.10] Speaker D: Mm-hmm. Mm-hmm.
+[0912.90] Speaker A: or it's kicked under the table.
+[0913.17] Speaker B: Yeah.
+[0913.22] Speaker D: Yeah.
+[0914.71] Speaker B: W You get those ones where you can, if you like, whistle or make a really high pitched noise they beep.
+[0914.77] Speaker D: Yeah.
+[0915.45] Speaker A: You know.
+[0916.12] Speaker D: That's just really good id
+[0919.28] Speaker D: Yep.
+[0920.50] Speaker B: I mean is that something we'd want to include, do you think?
+[0925.37] Speaker B: Dunno.
+[0927.64] Speaker D: I remember when the first remote control my my family had was on a cable.
+[0932.01] Speaker D: Actually had a cable between it and the T_V_
+[0933.48] Speaker D: and big like buttons that sort of like, like on a blender or something.
+[0937.00] Speaker B: My goodness.
+[0937.36] Speaker D: And um, you know,
+[0938.40] Speaker D: when I think about what they are now, it's better,
+[0940.72] Speaker D: but actually it's still kind of, I dunno, like a massive junky thing on the table.
+[0946.26] Speaker B: Still feels quite primitive.
+[0946.40] Speaker D: Maybe we could think about how, could be more, you know, streamlined. S
+[0951.41] Speaker B: Maybe like a touch screen or something?
+[0953.06] Speaker D: Something like that, yeah.
+[0954.09] Speaker B: Okay.
+[0954.20] Speaker D: Or whatever would be technologically reasonable.
+[0956.36] Speaker B: Uh-huh, okay.
+[0957.42] Speaker B: Well I guess that's up to our industrial designer.
+[0957.54] Speaker D: 'Cause it could b it could it could be that f
+[0959.24] Speaker D: it could be that functionally that doesn't make it any better,
+[0962.22] Speaker B: It looks better.
+[0963.91] Speaker D: You know, these days there's a r pe things in people's homes are becoming more and more like chic, you know.
+[0969.00] Speaker B: Yeah.
+[0969.56] Speaker D: Um, nicer materials
+[0971.36] Speaker D: and might be
+[0971.85] Speaker B: Okay.
+[0975.24] Speaker B: Okay.
+[0975.57] Speaker D: be worth exploring anyway.
+[0976.66] Speaker C: Uh.
+[0977.17] Speaker B: Right, well um
+[0978.62] Speaker B: so just to wrap up
+[0979.73] Speaker B: the next meeting's gonna be in thirty minutes.
+[0981.67] Speaker B: So that's about um about ten to twelve by my watch.
+[0985.49] Speaker B: Um so inbetween now and then, um as the industrial designer, you're gonna be working on you know the actual working design of it
+[0993.88] Speaker A: Yep.
+[0994.81] Speaker B: so y you know what you're doing there.
+[0996.69] Speaker B: Um for user interface, technical functions,
+[1000.99] Speaker B: I guess that's you know like what we've been talking about,
+[1003.16] Speaker B: what it'll actually do.
+[1004.08] Speaker B: Um and uh marketing executive,
+[1010.02] Speaker B: you'll be just thinking about what it actually what, you know, what requirements it has to has to fulfil
+[1016.48] Speaker B: and you'll all get instructions emailed to you, I guess.
+[1019.67] Speaker D: Okay.
+[1021.55] Speaker B: Um.
+[1028.05] Speaker B: Yeah, so it's th the functional design stage is next, I guess.
+[1034.47] Speaker B: And uh
+[1036.47] Speaker B: and that's the end of the meeting.
+[1047.17] Speaker D: Before we wrap up, just to make sure we're all on the same page here,
+[1049.54] Speaker B: Mm-hmm.
+[1052.89] Speaker D: We were given sort of an example of a coffee machine or something,
+[1056.30] Speaker B: Uh-huh, yeah.
+[1056.51] Speaker D: right?
+[1056.93] Speaker A: Mm-hmm.
+[1057.14] Speaker D: Well,
+[1058.61] Speaker D: um
+[1060.99] Speaker D: are we at ma right now on the assumption that our television remote control may have features which go beyond the television?
+[1067.54] Speaker D: Or are we keeping sort of like a a design commitment to television features?
+[1068.76] Speaker B: Th
+[1073.56] Speaker B: Okay,
+[1073.79] Speaker D: I I don't know.
+[1073.97] Speaker B: well just very quickly
+[1075.12] Speaker B: 'cause this we're supposed to finish now.
+[1076.56] Speaker D: Yep.
+[1076.64] Speaker B: Um I guess that's up to us,
+[1077.45] Speaker D: Yeah, sure.
+[1079.10] Speaker B: I mean you probably want some kind of unique selling point of it,
+[1081.99] Speaker D: Okay.
+[1084.36] Speaker A: I think one factor would be production cost.
+[1086.96] Speaker D: Okay, yeah.
+[1087.57] Speaker A: Because there's a cap there,
+[1087.59] Speaker B: Yeah.
+[1088.74] Speaker A: so um depends on how much you can cram into that price. Um.
+[1089.89] Speaker D: Okay.
+[1093.82] Speaker B: Mm-hmm.
+[1093.83] Speaker D: Okay.
+[1095.78] Speaker B: Yeah.
+[1096.03] Speaker A: I think that that's the main factor.
+[1098.51] Speaker B: Okay.
+[1098.52] Speaker D: Okay.
+[1099.43] Speaker B: Right, okay, we'll that's that's the end of the meeting, then. Um
+[1104.58] Speaker B: So, uh

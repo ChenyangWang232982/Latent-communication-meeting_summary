@@ -1,0 +1,61 @@
+Product Launch Readiness Meeting
+Date: 2026-09-28
+
+Maya (Product): Thanks, everyone. The purpose of this meeting is to decide whether
+we can keep the October 18 launch date for the customer portal. We need a clear
+decision on the payment migration, the onboarding flow, and the release risks.
+
+Leo (Engineering): The portal frontend is feature complete. The remaining work is
+the payment-provider migration and the audit-log export endpoint. The migration
+passed staging with Visa and Mastercard, but we have not completed tests for
+American Express refunds. I estimate two more engineering days for the refund
+path and one day for regression testing.
+
+Maya (Product): Can we launch without American Express refunds?
+
+Leo (Engineering): We can accept American Express payments, but refund requests
+would need to be handled manually by support until the automated path is ready.
+
+Priya (Support): Support can handle manual refunds for a short period, but we need
+an internal runbook and a clear escalation process. We should not advertise
+instant refunds until the automated flow is available.
+
+Maya (Product): Decision: keep the October 18 launch date. We will launch with
+manual American Express refunds as a temporary exception. The product page must
+not promise instant refunds for American Express.
+
+Leo (Engineering): I will finish the automated American Express refund path by
+October 25. I will also add a dashboard alert for failed payment events before
+launch. The alert work is due October 16.
+
+Priya (Support): I will write the manual-refund runbook, including the escalation
+path to Finance, by October 14. I need Finance to confirm who can approve refunds
+above 500 dollars.
+
+Omar (Finance): I will provide the approval policy and name the Finance on-call
+contact by October 13. Refunds above 500 dollars require Finance approval; lower
+amounts can be approved by Support.
+
+Nina (Security): The security review found one medium-severity issue: audit-log
+exports can contain customer email addresses. Engineering must restrict export
+access to administrators and record every export event. This is a launch blocker
+unless the access control change is deployed and verified.
+
+Leo (Engineering): I can add administrator-only access and export-event logging
+by October 15. Nina, please verify it on October 16.
+
+Nina (Security): Agreed. I will perform the verification on October 16. If the
+verification fails, my recommendation is to delay the launch rather than disable
+audit logs.
+
+Maya (Product): We also need final copy approval for the onboarding emails.
+
+Chen (Marketing): The draft is ready. I will send final copy to Maya by October
+12. Maya will approve or request changes by October 13.
+
+Maya (Product): Recap: launch remains October 18, subject to the security export
+control passing verification. Leo owns payment refund automation and export
+controls. Priya owns the support runbook. Omar owns the Finance approval policy.
+Chen owns final onboarding copy. The unresolved item is whether Finance can staff
+the on-call escalation path during the first launch weekend; Omar will confirm
+that in the policy update.
