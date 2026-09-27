@@ -56,42 +56,6 @@ The decisive comparison is `statebridge` versus `text`, `raw_hidden`,
 non-semantic prefix controls and produces answers that carry Sender-specific
 information.
 
-## LaTER Sender + StateBridge transfer
-
-`run_later_sender` is a combined *ablation*, not a claim that LaTER was
-evaluated on QASPER by its authors.  It uses the official LaTER training-free
-latent/explcit switching routine inside the Sender.  The Sender's final
-**explicit** handoff is then transferred to the Receiver through StateBridge;
-the Receiver never receives that handoff as text in the `statebridge` variant.
-
-First obtain the official implementation and install its dependencies in the
-same environment:
-
-```bash
-git clone https://github.com/TioeAre/LaTER.git external/LaTER
-pip install -r external/LaTER/requirements.txt
-```
-
-Then use one sample first.  `text` is the same LaTER-produced handoff sent as
-ordinary text, while `no_comm` tests the Receiver without it.
-
-```bash
-python -m statebridge_qasper.run_later_sender \
-  --data data/qasper_latent/validation.jsonl \
-  --output statebridge_qasper/output/later_statebridge_smoke.txt \
-  --later-root external/LaTER \
-  --model Qwen/Qwen3-4B \
-  --num-samples 1 \
-  --source-max-tokens 8192 \
-  --prefix-tokens 64 \
-  --variants statebridge text no_comm
-```
-
-The JSONL report records the number of explicit LaTER tokens and the actual
-StateBridge prefix length.  Do not compare a failed factual handoff only at the
-Receiver: compare the `LaTER explicit handoff` with the gold answer first.  If
-that handoff is wrong, StateBridge cannot recover the missing fact.
-
 ## One sample, multiple K values
 
 The following command generates the Sender message once for the selected
