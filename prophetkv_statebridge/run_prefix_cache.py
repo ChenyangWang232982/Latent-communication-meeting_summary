@@ -154,7 +154,19 @@ def main() -> None:
                 ).to(args.device).input_ids
                 for role in args.roles
             ]
-            common_length = common_prefix_length(role_inputs)
+            # A one-role quality check still needs a boundary before the
+            # role-specific instruction. Add an unused alternate prompt only
+            # to locate that exact common boundary.
+            prefix_inputs = role_inputs
+            if len(role_inputs) == 1:
+                alternate_role = next(role for role in ROLE_INSTRUCTIONS if role not in args.roles)
+                alternate_input = tokenizer(
+                    specialist_prompt(tokenizer, source, record, alternate_role, args.enable_thinking),
+                    return_tensors="pt",
+                    add_special_tokens=False,
+                ).to(args.device).input_ids
+                prefix_inputs = [role_inputs[0], alternate_input]
+            common_length = common_prefix_length(prefix_inputs)
             if common_length < 2 or any(input_ids.size(1) == common_length for input_ids in role_inputs):
                 raise RuntimeError("Specialist prompts do not have a usable shared prefix and suffix.")
             encoded_prefix = role_inputs[0][:, :common_length]
