@@ -1,0 +1,11 @@
+diff --git a/later/scripts/data/precompute_teacher_sft.sh b/later/scripts/data/precompute_teacher_sft.sh
+--- a/later/scripts/data/precompute_teacher_sft.sh
++++ b/later/scripts/data/precompute_teacher_sft.sh
+@@ -109,6 +109,7 @@ int_overrides = {
+     "teacher_precompute_num_workers": os.environ.get("TEACHER_PRECOMPUTE_NUM_WORKERS"),
+     "teacher_precompute_rows_per_shard": os.environ.get("TEACHER_PRECOMPUTE_ROWS_PER_SHARD"),
+     "precomputed_teacher_topk": os.environ.get("PRECOMPUTED_TEACHER_TOPK"),
++    "max_train_samples": os.environ.get("MAX_TRAIN_SAMPLES"),
+ }
+ for key, value in int_overrides.items():
+     if value is not None and value != "":
