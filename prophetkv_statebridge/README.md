@@ -114,6 +114,9 @@ full natural-language handoff passed to the text receiver; `latent_state_tokens`
 is the number of StateBridge states passed to the latent receiver. The reported
 `latent-text` delta uses `latent - text`: a negative value means latent saved
 token-equivalent communication units, while a positive value means it used more.
+Add `--communication-metrics-only` to skip final-answer generation and omit
+all handoff text from the report; this is the preferred mode for a pure
+communication-cost sweep.
 
 To construct the same shared cache as chronological updates (`KV1 -> KV1-2 ->
 KV1-2-3`), add `--prefill-chunk-tokens 1024`. Each new 1024-token block is

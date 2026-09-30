@@ -129,6 +129,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regularization", type=float, default=1e-3)
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
     parser.add_argument("--enable-thinking", action="store_true")
+    parser.add_argument(
+        "--communication-metrics-only",
+        action="store_true",
+        help="Generate specialist handoffs for a real communication count, but write only token/state metrics and skip final answers.",
+    )
     parser.add_argument("--variants", nargs="+", choices=["statebridge", "text", "no_comm"], default=["statebridge", "text", "no_comm"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=7)
@@ -422,12 +427,14 @@ def main() -> None:
             communication_percent = 0.0 if text_handoff_tokens == 0 else communication_delta * 100.0 / text_handoff_tokens
             communication_totals["text_tokens"] += text_handoff_tokens
             communication_totals["latent_states"] += latent_states
-            answers = {
-                variant: answer_variant(
-                    model, tokenizer, bridge, record, reports, states, token_ids, variant, args, meeting_mode=meeting_mode
-                )
-                for variant in args.variants
-            }
+            answers = {}
+            if not args.communication_metrics_only:
+                answers = {
+                    variant: answer_variant(
+                        model, tokenizer, bridge, record, reports, states, token_ids, variant, args, meeting_mode=meeting_mode
+                    )
+                    for variant in args.variants
+                }
             result = {
                 "id": record["id"],
                 "question": record["question"],
@@ -443,7 +450,7 @@ def main() -> None:
                     "latent_minus_text_tokens": communication_delta,
                     "latent_minus_text_percent": communication_percent,
                 },
-                "specialists": specialists,
+                "specialists": [] if args.communication_metrics_only else specialists,
                 "backfill_rounds": args.backfill_rounds,
                 "answers": answers,
             }
@@ -461,14 +468,15 @@ def main() -> None:
                 f"latent-text={communication_delta:+d} tokens ({communication_percent:+.1f}%). "
                 "Negative means latent saved communication units; positive means latent used more.\n\n"
             )
-            for item in specialists:
-                report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
-                for review in item["backfill_reviews"]:
-                    report.write(f"{item['role']} fixed backfill pass {review['round']} evidence:\n{review['packet']}\n\n")
-            for variant, answer in answers.items():
-                report.write(f"{variant} answer:\n{answer}\n\n")
-            if not meeting_mode:
-                report.write(f"Gold answer:\n{record.get('answer', '')}\n\n")
+            if not args.communication_metrics_only:
+                for item in specialists:
+                    report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
+                    for review in item["backfill_reviews"]:
+                        report.write(f"{item['role']} fixed backfill pass {review['round']} evidence:\n{review['packet']}\n\n")
+                for variant, answer in answers.items():
+                    report.write(f"{variant} answer:\n{answer}\n\n")
+                if not meeting_mode:
+                    report.write(f"Gold answer:\n{record.get('answer', '')}\n\n")
             report.flush()
             print(f"completed {index}/{len(records)}: {record['id']}", flush=True)
         total_text = communication_totals["text_tokens"]
