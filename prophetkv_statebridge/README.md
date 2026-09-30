@@ -118,6 +118,12 @@ Add `--communication-metrics-only` to skip final-answer generation and omit
 all handoff text from the report; this is the preferred mode for a pure
 communication-cost sweep.
 
+For a dedicated communication-only test entry point, use
+`python -m prophetkv_statebridge.communication_benchmark` with the same
+arguments as `run_prefix_cache.py`. It always suppresses handoff, review, and
+answer content in its report, but it still executes any requested backfill
+rounds before measuring the final specialist-to-receiver communication.
+
 To construct the same shared cache as chronological updates (`KV1 -> KV1-2 ->
 KV1-2-3`), add `--prefill-chunk-tokens 1024`. Each new 1024-token block is
 forwarded with the previous block's `past_key_values`; separate chunk caches
