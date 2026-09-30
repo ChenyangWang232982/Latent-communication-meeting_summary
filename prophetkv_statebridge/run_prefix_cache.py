@@ -315,6 +315,7 @@ def main() -> None:
     jsonl_path = args.output.with_suffix(".jsonl")
     with jsonl_path.open("w", encoding="utf-8") as jsonl, args.output.open("w", encoding="utf-8") as report:
         run_kind = "Meeting" if meeting_mode else "QASPER"
+        communication_totals = {"text_tokens": 0, "latent_states": 0}
         report.write(f"Cross-agent Prefix KV Cache + StateBridge {run_kind} run: {datetime.now().isoformat(timespec='seconds')}\n")
         prefill_mode = "single prefill" if args.prefill_chunk_tokens == 0 else f"streaming chunks of {args.prefill_chunk_tokens} tokens"
         report.write(f"model={args.model}, source_max_tokens={args.source_max_tokens}, roles={','.join(args.roles)}\n")
@@ -415,6 +416,12 @@ def main() -> None:
                 all_ids.append(token_ids)
             reports = "\n\n".join(f"[{item['role']}]\n{item['message']}" for item in specialists)
             states, token_ids = torch.cat(all_states), torch.cat(all_ids)
+            text_handoff_tokens = len(tokenizer(reports, add_special_tokens=False).input_ids)
+            latent_states = int(states.size(0))
+            communication_delta = latent_states - text_handoff_tokens
+            communication_percent = 0.0 if text_handoff_tokens == 0 else communication_delta * 100.0 / text_handoff_tokens
+            communication_totals["text_tokens"] += text_handoff_tokens
+            communication_totals["latent_states"] += latent_states
             answers = {
                 variant: answer_variant(
                     model, tokenizer, bridge, record, reports, states, token_ids, variant, args, meeting_mode=meeting_mode
@@ -429,7 +436,13 @@ def main() -> None:
                 "prefix_cache_bytes": prefix_bytes,
                 "prefix_prefill_seconds": prefill_seconds,
                 "prefix_prefill_chunks": prefill_chunks,
-                "statebridge_tokens": int(states.size(0)),
+                "statebridge_tokens": latent_states,
+                "communication": {
+                    "text_handoff_tokens": text_handoff_tokens,
+                    "latent_state_tokens": latent_states,
+                    "latent_minus_text_tokens": communication_delta,
+                    "latent_minus_text_percent": communication_percent,
+                },
                 "specialists": specialists,
                 "backfill_rounds": args.backfill_rounds,
                 "answers": answers,
@@ -442,6 +455,12 @@ def main() -> None:
                 f"KV cache: {prefix_bytes / 2**20:.1f} MiB; prefill: {prefill_seconds:.2f}s\n"
             )
             report.write(f"StateBridge specialist prefix: {states.size(0)} tokens\n\n")
+            report.write(
+                "Communication cost (specialists -> receiver): "
+                f"text={text_handoff_tokens} tokens; latent={latent_states} states; "
+                f"latent-text={communication_delta:+d} tokens ({communication_percent:+.1f}%). "
+                "Negative means latent saved communication units; positive means latent used more.\n\n"
+            )
             for item in specialists:
                 report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
                 for review in item["backfill_reviews"]:
@@ -452,6 +471,16 @@ def main() -> None:
                 report.write(f"Gold answer:\n{record.get('answer', '')}\n\n")
             report.flush()
             print(f"completed {index}/{len(records)}: {record['id']}", flush=True)
+        total_text = communication_totals["text_tokens"]
+        total_latent = communication_totals["latent_states"]
+        total_delta = total_latent - total_text
+        total_percent = 0.0 if total_text == 0 else total_delta * 100.0 / total_text
+        report.write("=" * 80 + "\nCommunication summary\n")
+        report.write(
+            f"samples={len(records)}; text={total_text} tokens; latent={total_latent} states; "
+            f"latent-text={total_delta:+d} tokens ({total_percent:+.1f}%). "
+            "Negative means latent saved communication units; positive means latent used more.\n"
+        )
 
 
 if __name__ == "__main__":

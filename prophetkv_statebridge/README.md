@@ -108,6 +108,13 @@ normal chat prompt first, finds their exact common prefix, and caches only that
 shared prefix. It is not ProphetKV's selective recomputation, and it does not
 attempt unsafe concatenation of independently created caches.
 
+Every `run_prefix_cache.py` report also records a specialist-to-receiver
+communication comparison. `text_handoff_tokens` is the tokenizer count of the
+full natural-language handoff passed to the text receiver; `latent_state_tokens`
+is the number of StateBridge states passed to the latent receiver. The reported
+`latent-text` delta uses `latent - text`: a negative value means latent saved
+token-equivalent communication units, while a positive value means it used more.
+
 To construct the same shared cache as chronological updates (`KV1 -> KV1-2 ->
 KV1-2-3`), add `--prefill-chunk-tokens 1024`. Each new 1024-token block is
 forwarded with the previous block's `past_key_values`; separate chunk caches
