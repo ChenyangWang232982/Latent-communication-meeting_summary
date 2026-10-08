@@ -148,7 +148,7 @@ meeting-summary sections above for each communication condition.
 
 ```bash
 python -m prophetkv_statebridge.run_prefix_cache \
-  --transcript meeting_latent_workflow/input/example.txt \
+  --transcript prophetkv_statebridge/input/ami_ES2002a.txt \
   --output prophetkv_statebridge/output/example_prefix_cache_summary.txt \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 8192 \

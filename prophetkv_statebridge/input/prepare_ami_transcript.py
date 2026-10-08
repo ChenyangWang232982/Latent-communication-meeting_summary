@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 AMI_MANUAL_URL = "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip"
 ID_PATTERN = re.compile(r"id\(([^)]+)\)")
 
@@ -79,7 +79,7 @@ def ensure_archive(path: Path, download: bool) -> None:
 def main() -> None:
     args = parse_args()
     ensure_archive(args.archive, args.download)
-    output = args.output or (PROJECT_ROOT / "meeting_latent_workflow" / "input" / f"ami_{args.meeting_id}.txt")
+    output = args.output or (Path(__file__).resolve().parent / f"ami_{args.meeting_id}.txt")
     with zipfile.ZipFile(args.archive) as archive:
         speakers = sorted({name.split(".")[1] for name in archive.namelist() if name.startswith(f"dialogueActs/{args.meeting_id}.") and name.endswith(".dialog-act.xml")})
         if not speakers:

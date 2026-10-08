@@ -423,11 +423,11 @@ Step 5: SpeechKV-style KV communication
 Because your current priority is embedding, the immediate order is:
 
 ```text
-1. Keep current CIPHER toy code as proof of concept.
-2. Build speech-to-summary embedding communication.
-3. Compare with transcript prompt baseline.
+1. Use Prefix-KV reuse for long-context specialist access.
+2. Use StateBridge hidden-state communication from specialists to the final summarizer.
+3. Compare latent handoffs with a transcript-derived text handoff baseline.
 4. Add random and shuffled latent baselines.
-5. Move to hidden state and KV only after embedding is stable.
+5. Evaluate communication length, quality, latency, and memory usage together.
 ```
 
 ## 7. Immediate TODO: Embedding Method
@@ -503,4 +503,3 @@ A clean thesis claim:
 For the first implemented method:
 
 > The embedding-level method transmits compressed speech information as soft prompt embeddings to the summarization model, replacing the transcript prompt communication channel.
-
