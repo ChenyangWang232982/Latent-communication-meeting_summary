@@ -61,3 +61,9 @@ external/
 meeting_latent_workflow/model/
 output/
 statebridge_qasper/output/
+
+# Timestamped meeting-evaluation reports and locally downloaded benchmarks.
+meeting_evaluation/input/*
+!meeting_evaluation/input/.gitkeep
+meeting_evaluation/output/*
+!meeting_evaluation/output/.gitkeep
