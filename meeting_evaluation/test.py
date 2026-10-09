@@ -39,10 +39,10 @@ def main() -> None:
     args = parse_args()
     paths = RunPaths(args.input, args.output_dir, args.reference)
     if args.enable_asr:
-        transcript = transcribe(paths.input, ASRConfig(enabled=True, model=args.asr_model))
-        records = [MeetingRecord(paths.input.stem, transcript, DEFAULT_MEETING_QUESTION)]
+        transcript = transcribe(paths.input_path, ASRConfig(enabled=True, model=args.asr_model))
+        records = [MeetingRecord(paths.input_path.stem, transcript, DEFAULT_MEETING_QUESTION)]
     else:
-        records = load_records(args.benchmark, paths.input, paths.reference)
+        records = load_records(args.benchmark, paths.input_path, paths.reference_path)
     config = WorkflowConfig(
         model=args.model,
         source_max_tokens=args.source_max_tokens,
@@ -66,4 +66,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
