@@ -300,7 +300,7 @@ def main() -> None:
     meeting_mode = args.transcript is not None or args.meeting_data is not None
     if args.roles is None:
         args.roles = MEETING_DEFAULT_ROLES if meeting_mode else QASPER_DEFAULT_ROLES
-    if meeting_mode:
+    if args.transcript is not None:
         if not args.transcript.is_file():
             raise FileNotFoundError(f"Transcript not found: {args.transcript}")
         transcript = args.transcript.read_text(encoding="utf-8").strip()
