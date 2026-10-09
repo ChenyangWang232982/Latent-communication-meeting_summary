@@ -66,6 +66,31 @@ python -m meeting_evaluation.test \
   --asr-model small
 ```
 
+## Run All Benchmarks
+
+After placing the standard inputs at `input/qmsum_test.jsonl` and
+`input/meetingbank_test.jsonl`, run all three benchmark workflows in sequence:
+
+```bash
+python -m meeting_evaluation.run_all --num-samples 8
+```
+
+This runs QMSum, MeetingBank, and the bundled AMI transcript. Each run includes
+the `statebridge`, `text`, and `no_comm` controls, communication/KV metrics,
+and the MESA-style source-overlap proxy. It writes only final metrics to:
+
+```text
+meeting_evaluation/output/YYYYMMDD/qmsum.txt
+meeting_evaluation/output/YYYYMMDD/meetingbank.txt
+meeting_evaluation/output/YYYYMMDD/ami.txt
+```
+
+To run the inputs you currently have while skipping unavailable benchmarks:
+
+```bash
+python -m meeting_evaluation.run_all --num-samples 8 --skip-missing
+```
+
 ## Metrics
 
 Each report has only final metrics:
