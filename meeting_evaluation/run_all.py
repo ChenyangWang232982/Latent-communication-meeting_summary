@@ -8,8 +8,10 @@ and communication metrics are included by ``meeting_evaluation.test``.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -66,6 +68,10 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace, ref
 
 def main() -> None:
     args = parse_args()
+    # One invocation gets one minute-level directory even if benchmark runs
+    # themselves extend past the boundary into the next minute.
+    run_environment = os.environ.copy()
+    run_environment["MEETING_EVAL_RUN_ID"] = datetime.now().strftime("%Y%m%d_%H%M")
     jobs = [
         ("qmsum", args.qmsum, None),
         ("meetingbank", args.meetingbank, None),
@@ -84,14 +90,13 @@ def main() -> None:
             print(f"Skipping {benchmark}: input not found: {input_path}", flush=True)
             continue
         print(f"\n=== Running {benchmark} ===", flush=True)
-        subprocess.run(test_command(benchmark, input_path, args, reference), check=True)
+        subprocess.run(test_command(benchmark, input_path, args, reference), check=True, env=run_environment)
         completed.append(benchmark)
     if not completed:
         raise RuntimeError("No benchmark was run.")
     print(f"\nCompleted: {', '.join(completed)}")
-    print(f"Reports: {args.output_dir}/YYYYMMDD/<tool>.txt")
+    print(f"Reports: {args.output_dir}/{run_environment['MEETING_EVAL_RUN_ID']}/<tool>.txt")
 
 
 if __name__ == "__main__":
     main()
-

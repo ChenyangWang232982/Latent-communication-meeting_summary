@@ -8,10 +8,10 @@ input -> optional ASR -> benchmark adapter -> Prefix-KV + StateBridge workflow
 ```
 
 `input/` holds local benchmark files. Results are written as
-`output/YYYYMMDD/<tool>.txt` and `output/YYYYMMDD/<tool>.json`, for example
-`output/20261009/qmsum.txt`. Re-running the same tool on the same day replaces
-that tool's report. Both folders are ignored by Git except for their `.gitkeep`
-files.
+`output/YYYYMMDD_HHMM/<tool>.txt` and `output/YYYYMMDD_HHMM/<tool>.json`, for
+example `output/20261009_1437/qmsum.txt`. Re-running the same tool in the same
+minute replaces that tool's report. Both folders are ignored by Git except for
+their `.gitkeep` files.
 
 ## Supported Inputs
 
@@ -80,9 +80,9 @@ the `statebridge`, `text`, and `no_comm` controls, communication/KV metrics,
 and the MESA-style source-overlap proxy. It writes only final metrics to:
 
 ```text
-meeting_evaluation/output/YYYYMMDD/qmsum.txt
-meeting_evaluation/output/YYYYMMDD/meetingbank.txt
-meeting_evaluation/output/YYYYMMDD/ami.txt
+meeting_evaluation/output/YYYYMMDD_HHMM/qmsum.txt
+meeting_evaluation/output/YYYYMMDD_HHMM/meetingbank.txt
+meeting_evaluation/output/YYYYMMDD_HHMM/ami.txt
 ```
 
 To run the inputs you currently have while skipping unavailable benchmarks:

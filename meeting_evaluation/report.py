@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
 def write_reports(output_dir: Path, benchmark: str, metrics: dict[str, Any], configuration: dict[str, Any]) -> tuple[Path, Path]:
-    # Keep results comparable and easy to browse: one dated run folder with
-    # stable benchmark names, e.g. output/20261009/qmsum.txt.
-    dated_output_dir = output_dir / datetime.now().strftime("%Y%m%d")
+    # Keep results comparable and easy to browse: one minute-precise run
+    # folder with stable benchmark names, e.g. output/20261009_1437/qmsum.txt.
+    run_id = os.environ.get("MEETING_EVAL_RUN_ID") or datetime.now().strftime("%Y%m%d_%H%M")
+    dated_output_dir = output_dir / run_id
     dated_output_dir.mkdir(parents=True, exist_ok=True)
     json_path = dated_output_dir / f"{benchmark}.json"
     text_path = dated_output_dir / f"{benchmark}.txt"
