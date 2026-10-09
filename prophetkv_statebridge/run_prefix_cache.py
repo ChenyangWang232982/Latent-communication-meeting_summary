@@ -86,6 +86,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     input_source = parser.add_mutually_exclusive_group(required=True)
     input_source.add_argument("--data", type=Path, help="QASPER-style JSONL input")
+    input_source.add_argument(
+        "--meeting-data",
+        type=Path,
+        help="Meeting JSONL input with context, question, and optional reference answer; enables meeting roles and receiver.",
+    )
     input_source.add_argument("--transcript", type=Path, help="One UTF-8 meeting transcript")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
@@ -292,7 +297,7 @@ def main() -> None:
     if args.backfill_neighbor_chunks < 0:
         raise ValueError("--backfill-neighbor-chunks cannot be negative")
     torch.manual_seed(args.seed)
-    meeting_mode = args.transcript is not None
+    meeting_mode = args.transcript is not None or args.meeting_data is not None
     if args.roles is None:
         args.roles = MEETING_DEFAULT_ROLES if meeting_mode else QASPER_DEFAULT_ROLES
     if meeting_mode:
@@ -308,7 +313,9 @@ def main() -> None:
             "answer": "",
         }]
     else:
-        records = load_records(args.data, args.num_samples)
+        data_path = args.meeting_data or args.data
+        assert data_path is not None
+        records = load_records(data_path, args.num_samples)
     dtype = torch.bfloat16 if args.device.startswith("cuda") and torch.cuda.is_bf16_supported() else torch.float16
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:

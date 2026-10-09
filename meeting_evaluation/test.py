@@ -54,7 +54,9 @@ def main() -> None:
         device=args.device,
         num_samples=args.num_samples,
     )
-    results = run_statebridge(records, config)
+    # QMSum is query-based meeting QA. MeetingBank and AMI require the
+    # seven-role meeting-minutes contracts and the meeting-summary receiver.
+    results = run_statebridge(records, config, meeting_mode=args.benchmark in {"meetingbank", "ami"})
     source_by_id = {record.id: record.context for record in records[: config.num_samples] if config.num_samples}
     if not source_by_id:
         source_by_id = {record.id: record.context for record in records}

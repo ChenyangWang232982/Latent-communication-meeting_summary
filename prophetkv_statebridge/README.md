@@ -146,6 +146,16 @@ summaries. The final receiver outputs the same seven stable sections.
 The same runner accepts one UTF-8 transcript directly. It produces the seven
 meeting-summary sections above for each communication condition.
 
+For multiple meeting records in JSONL (each containing `id`, `context`,
+`question`, and optional `answer`), use `--meeting-data` instead of `--data`.
+This preserves reference answers while enabling the meeting roles and receiver:
+
+```bash
+python -m prophetkv_statebridge.run_prefix_cache \
+  --meeting-data meeting_evaluation/input/meetingbank_test.jsonl \
+  --output prophetkv_statebridge/output/meetingbank.txt
+```
+
 ```bash
 python -m prophetkv_statebridge.run_prefix_cache \
   --transcript prophetkv_statebridge/input/ami_ES2002a.txt \

@@ -12,7 +12,7 @@ from .config import WorkflowConfig
 from .records import MeetingRecord
 
 
-def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig) -> list[dict]:
+def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig, *, meeting_mode: bool) -> list[dict]:
     """Run all communication controls and return machine-readable runner results."""
     selected = records[: config.num_samples] if config.num_samples else records
     if not selected:
@@ -27,7 +27,7 @@ def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig) -> lis
 
         command = [
             sys.executable, "-m", "prophetkv_statebridge.run_prefix_cache",
-            "--data", str(data_path), "--output", str(raw_output),
+            "--meeting-data" if meeting_mode else "--data", str(data_path), "--output", str(raw_output),
             "--model", config.model,
             # Records have already been limited above. The underlying runner
             # defaults to one record, so explicitly request all of this set.
