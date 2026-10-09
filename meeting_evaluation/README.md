@@ -7,7 +7,11 @@ input -> optional ASR -> benchmark adapter -> Prefix-KV + StateBridge workflow
       -> quality / factuality-proxy / communication / KV metrics -> timestamped output
 ```
 
-`input/` holds local benchmark files and `output/` receives only timestamped metric reports. Both are ignored by Git except for their `.gitkeep` files.
+`input/` holds local benchmark files. Results are written as
+`output/YYYYMMDD/<tool>.txt` and `output/YYYYMMDD/<tool>.json`, for example
+`output/20261009/qmsum.txt`. Re-running the same tool on the same day replaces
+that tool's report. Both folders are ignored by Git except for their `.gitkeep`
+files.
 
 ## Supported Inputs
 
@@ -72,4 +76,3 @@ Each report has only final metrics:
 - shared Prefix-KV prefill time and cache size.
 
 For a publication result, use the source-support proxy for debugging and add MESA or human annotation as a separate factuality study.
-

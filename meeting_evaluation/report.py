@@ -9,11 +9,12 @@ from typing import Any
 
 
 def write_reports(output_dir: Path, benchmark: str, metrics: dict[str, Any], configuration: dict[str, Any]) -> tuple[Path, Path]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stem = f"{timestamp}_{benchmark}_metrics"
-    json_path = output_dir / f"{stem}.json"
-    text_path = output_dir / f"{stem}.txt"
+    # Keep results comparable and easy to browse: one dated run folder with
+    # stable benchmark names, e.g. output/20261009/qmsum.txt.
+    dated_output_dir = output_dir / datetime.now().strftime("%Y%m%d")
+    dated_output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = dated_output_dir / f"{benchmark}.json"
+    text_path = dated_output_dir / f"{benchmark}.txt"
     payload = {"benchmark": benchmark, "configuration": configuration, "metrics": metrics}
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -47,4 +48,3 @@ def write_reports(output_dir: Path, benchmark: str, metrics: dict[str, Any], con
     ]
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return text_path, json_path
-
