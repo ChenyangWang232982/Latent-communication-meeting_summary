@@ -247,7 +247,7 @@ def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_
     )
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
     count = min(args.prefix_tokens_per_agent, message_ids.size(1))
-    return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:]
+    return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:], int(message_ids.size(1))
 
 
 def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None, *, meeting_mode: bool = False) -> str:
@@ -382,9 +382,10 @@ def main() -> None:
             prefix_bytes = cache_nbytes(prefix_cache)
 
             specialists = []
+            specialist_token_metrics = []
             all_states, all_ids = [], []
             for role, full_prompt_ids in zip(args.roles, role_inputs):
-                message, states, token_ids = specialist_from_cache(
+                message, states, token_ids, handoff_tokens = specialist_from_cache(
                     model,
                     tokenizer,
                     prefix_cache,
@@ -392,6 +393,7 @@ def main() -> None:
                     full_prompt_ids[:, common_length:],
                     args,
                 )
+                generation_tokens_total = handoff_tokens
                 reviews = []
                 ranking_query = f"{record['question']} {MEETING_ROLE_CONTRACTS.get(role, ROLE_INSTRUCTIONS[role])}"
                 ranked = rank_chunks(source_chunks, ranking_query)
@@ -414,7 +416,7 @@ def main() -> None:
                     ).to(args.device).input_ids
                     if not torch.equal(review_ids[:, :common_length], encoded_prefix):
                         raise RuntimeError("Review prompt no longer shares the cached transcript prefix.")
-                    message, states, token_ids = specialist_from_cache(
+                    message, states, token_ids, handoff_tokens = specialist_from_cache(
                         model,
                         tokenizer,
                         prefix_cache,
@@ -422,8 +424,15 @@ def main() -> None:
                         review_ids[:, common_length:],
                         args,
                     )
+                    generation_tokens_total += handoff_tokens
                     reviews.append({"round": review_round + 1, "packet": packet})
                 specialists.append({"role": role, "message": message, "backfill_reviews": reviews})
+                specialist_token_metrics.append({
+                    "role": role,
+                    "handoff_tokens": handoff_tokens,
+                    "generation_tokens_total": generation_tokens_total,
+                    "selected_states": int(states.size(0)),
+                })
                 all_states.append(states)
                 all_ids.append(token_ids)
             reports = "\n\n".join(f"[{item['role']}]\n{item['message']}" for item in specialists)
@@ -457,6 +466,7 @@ def main() -> None:
                     "latent_minus_text_tokens": communication_delta,
                     "latent_minus_text_percent": communication_percent,
                 },
+                "specialist_token_metrics": specialist_token_metrics,
                 "specialists": [] if args.communication_metrics_only else specialists,
                 "backfill_rounds": args.backfill_rounds,
                 "answers": answers,
