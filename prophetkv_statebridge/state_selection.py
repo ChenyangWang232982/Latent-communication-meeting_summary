@@ -8,9 +8,10 @@ STATE_SELECTION_STRATEGIES = ("tail", "stratified")
 def state_selection_indices(length: int, budget: int, strategy: str) -> list[int]:
     """Return ``budget`` chronological positions from a generated handoff.
 
-    ``stratified`` preserves early framing, uniformly covers the middle, and
-    preserves final conclusions. With K=64 it selects 16 head, 32 middle, and
-    16 tail positions. Chronological order is retained for receiver prefixes.
+    ``stratified`` samples later middle states and preserves a contiguous tail,
+    avoiding early states before the handoff's facts and conclusions have been
+    established. With K=64 it selects 32 later-middle and 32 tail positions.
+    Chronological order is retained for receiver prefixes.
     """
     if length < 1:
         raise ValueError("Cannot select states from an empty handoff.")
@@ -23,18 +24,19 @@ def state_selection_indices(length: int, budget: int, strategy: str) -> list[int
     if strategy == "tail":
         return list(range(length - budget, length))
 
-    head_count = budget // 4
-    tail_count = budget // 4
-    middle_count = budget - head_count - tail_count
-    middle_start = head_count
+    tail_count = budget // 2
+    middle_count = budget - tail_count
     middle_end = length - tail_count - 1
+    # Prefer to discard the first quarter of a long handoff, but contract the
+    # exclusion when the handoff is only slightly larger than the fixed budget.
+    middle_start = min(length // 4, middle_end - middle_count + 1)
 
     if middle_count == 1:
         middle = [(middle_start + middle_end) // 2]
     else:
         span = middle_end - middle_start
         middle = [middle_start + (span * index) // (middle_count - 1) for index in range(middle_count)]
-    indices = list(range(head_count)) + middle + list(range(length - tail_count, length))
+    indices = middle + list(range(length - tail_count, length))
     if len(indices) != budget or len(set(indices)) != budget:
         raise RuntimeError("Stratified state selection did not produce a unique fixed-size prefix.")
     return indices

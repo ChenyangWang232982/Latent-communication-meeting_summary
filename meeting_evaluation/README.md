@@ -107,9 +107,9 @@ For a publication result, use the source-support proxy for debugging and add MES
 The fixed latent budget may be selected in two ways:
 
 - `tail` (default): use the final K generated handoff states, matching the original baseline.
-- `stratified`: preserve the first quarter, uniformly sample the middle half,
-  and preserve the final quarter. With `K=64`, this is 16 head, 32 middle,
-  and 16 tail states.
+- `stratified`: uniformly sample a later-middle region and preserve the final
+  half as a contiguous span. With `K=64`, this is 32 later-middle and 32 tail
+  states; the earliest states are not forced into the prefix.
 
 Run a fixed-bandwidth ablation with:
 
