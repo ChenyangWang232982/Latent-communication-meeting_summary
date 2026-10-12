@@ -96,6 +96,11 @@ def write_comparison(output_dir: Path, configurations: dict[str, WorkflowConfig]
 def main() -> None:
     args = parse_args()
     records = load_meetingbank(args.input)
+    if args.num_samples and len(records) < args.num_samples:
+        raise ValueError(
+            f"Requested {args.num_samples} MeetingBank samples, but {args.input} contains only {len(records)}. "
+            "Export a larger input file before running this ablation."
+        )
     selected = records[: args.num_samples] if args.num_samples else records
     if not selected:
         raise ValueError("No MeetingBank records selected.")
@@ -124,4 +129,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
