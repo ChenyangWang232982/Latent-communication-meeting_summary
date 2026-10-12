@@ -1,4 +1,4 @@
-"""Measure how specialist handoff lengths fit fixed StateBridge K budgets."""
+"""Compare fixed StateBridge K budgets on MeetingBank quality and communication cost."""
 
 from __future__ import annotations
 
@@ -13,7 +13,10 @@ from datetime import datetime
 from pathlib import Path
 from statistics import mean, median
 
+from .config import WorkflowConfig
+from .metrics import score_results
 from .records import load_meetingbank
+from .workflow import run_statebridge
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prefill-chunk-tokens", type=int, default=1024)
     parser.add_argument("--backfill-rounds", type=int, default=0)
     parser.add_argument("--agent-max-new-tokens", type=int, default=256)
+    parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
     parser.add_argument("--device")
     return parser.parse_args()
 
@@ -181,10 +185,30 @@ def main() -> None:
         "by_role": role_summary,
         "per_expert": rows,
         "note": (
-            "This is a handoff-length probe, not a quality evaluation. A larger K is only justified by a later "
-            "quality comparison; truncation rate alone does not prove that additional states improve summaries."
+            "Handoff length explains the compression pressure. Quality and communication metrics below determine "
+            "whether a larger K is worthwhile."
         ),
     }
+
+    source_by_id = {record.id: record.context for record in selected}
+    quality_by_budget = {}
+    for budget in budgets:
+        print(f"=== MeetingBank K={budget}: quality and communication ===")
+        config = WorkflowConfig(
+            model=args.model,
+            source_max_tokens=args.source_max_tokens,
+            prefill_chunk_tokens=args.prefill_chunk_tokens,
+            backfill_rounds=args.backfill_rounds,
+            agent_max_new_tokens=args.agent_max_new_tokens,
+            receiver_max_new_tokens=args.receiver_max_new_tokens,
+            prefix_tokens_per_agent=budget,
+            device=args.device,
+            num_samples=len(selected),
+        )
+        quality_by_budget[str(budget)] = score_results(
+            run_statebridge(selected, config, meeting_mode=True), source_by_id
+        )
+    payload["quality_by_budget"] = quality_by_budget
 
     directory = run_directory(args.output_dir)
     text_path = directory / "meetingbank_specialist_k_budget.txt"
@@ -194,7 +218,7 @@ def main() -> None:
     headers = ["role", "experts", "mean", "median", "p90", "cap-hit", "suggested K"]
     headers.extend(f"K={budget} retained/truncated" for budget in budgets)
     lines = [
-        "MeetingBank Specialist Handoff Length vs K",
+        "MeetingBank StateBridge K Ablation",
         f"Samples: {len(results)}",
         f"Agent generation cap: {args.agent_max_new_tokens} tokens",
         f"Coverage target for suggested K: {args.coverage_target:.0%}",
@@ -235,6 +259,29 @@ def main() -> None:
     lines += [
         "",
         "Legend: K column is retained states; * means the handoff was longer than that K and was truncated.",
+        "",
+        "K Quality And Communication Comparison (mean)",
+        "K | StateBridge ROUGE-L | StateBridge source-support | text ROUGE-L | latent states | text handoff tokens | latent-text | saving vs text",
+    ]
+    for budget in budgets:
+        metrics = quality_by_budget[str(budget)]
+        quality = metrics["quality"]
+        efficiency = metrics["efficiency"]
+        rouge = quality["statebridge"]["rouge_l_f1"]
+        text_rouge = quality["text"]["rouge_l_f1"]
+        lines.append(
+            f"{budget} | "
+            f"{'N/A' if rouge is None else f'{rouge:.4f}'} | "
+            f"{quality['statebridge']['supported_claim_rate']:.4f} | "
+            f"{'N/A' if text_rouge is None else f'{text_rouge:.4f}'} | "
+            f"{efficiency['latent_state_tokens']} | {efficiency['text_handoff_tokens']} | "
+            f"{efficiency['latent_minus_text_tokens']:+d} | "
+            f"{'N/A' if efficiency['latent_minus_text_percent'] is None else f'{-efficiency['latent_minus_text_percent']:+.1f}%'}"
+        )
+    lines += [
+        "",
+        "Saving vs text is positive when StateBridge uses fewer token-equivalent communication units.",
+        "ROUGE-L and source-support are evaluated on final summaries; source-support is a lexical proxy, not an LLM or human MESA score.",
         payload["note"],
     ]
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
