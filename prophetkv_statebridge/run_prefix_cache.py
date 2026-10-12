@@ -176,16 +176,17 @@ def specialist_user(
             )
         else:
             format_instruction = (
-                " Inside each priority marker, use an evidence-backed bullet in the format "
+                " After each priority label, use an evidence-backed bullet in the format "
                 "- [timestamp] fact -> claim, preserving names, numbers, negation, uncertainty, owners, and deadlines. "
-                "If no supported item exists, mark exactly: <P2>None explicitly stated.</P2>"
+                "If no supported item exists, write exactly: [P2] None explicitly stated."
             )
     compact_instruction = ""
     if compact_token_budget is not None:
         compact_instruction = (
-            " Produce a detailed candidate handoff and assign every item exactly one inline priority marker: "
-            "<P2>essential explicit fact</P2>, <P1>useful supporting detail</P1>, or "
-            "<P0>redundant, speculative, or outside this role</P0>. Do not place factual content outside these markers. "
+            " Produce a detailed candidate handoff. Begin every item on a new line with exactly one label: "
+            "[P2] for an essential explicit fact, [P1] for a useful supporting detail, or "
+            "[P0] for redundant, speculative, or outside-role content. Do not use closing tags and do not place factual "
+            "content outside labeled items. "
             f"The communication layer will retain at most {compact_token_budget} marked content states, preferring P2, "
             "then P1, then P0."
         )
@@ -348,38 +349,50 @@ def marker_patterns(tokenizer, marker: str) -> list[list[int]]:
     ]
 
 
-def priority_spans(tokenizer, sequence: list[int], priority: int) -> list[tuple[int, int]]:
-    """Locate content spans enclosed by one priority marker."""
-    opening_patterns = marker_patterns(tokenizer, f"<P{priority}>")
-    closing_patterns = marker_patterns(tokenizer, f"</P{priority}>")
-    spans = []
-    cursor = 0
-    while cursor < len(sequence):
-        opening = find_token_marker(sequence, opening_patterns, start=cursor)
-        if opening is None:
-            break
-        content_start = opening[0] + opening[1]
-        closing = find_token_marker(sequence, closing_patterns, start=content_start)
-        if closing is None:
-            break
-        content_end = closing[0]
+def priority_spans(tokenizer, sequence: list[int]) -> dict[int, list[tuple[int, int]]]:
+    """Locate start-labeled items, while remaining compatible with paired tags."""
+    openings = []
+    for priority in (2, 1, 0):
+        patterns = marker_patterns(tokenizer, f"[P{priority}]") + marker_patterns(tokenizer, f"<P{priority}>")
+        cursor = 0
+        while cursor < len(sequence):
+            opening = find_token_marker(sequence, patterns, start=cursor)
+            if opening is None:
+                break
+            openings.append((opening[0], opening[1], priority))
+            cursor = opening[0] + opening[1]
+
+    # Different whitespace variants can identify the same logical marker.
+    deduplicated = {}
+    for index, length, priority in openings:
+        key = (index + length, priority)
+        if key not in deduplicated or index < deduplicated[key][0]:
+            deduplicated[key] = (index, length, priority)
+    ordered = sorted(deduplicated.values())
+    spans = {2: [], 1: [], 0: []}
+    for position, (marker_start, marker_length, priority) in enumerate(ordered):
+        content_start = marker_start + marker_length
+        content_end = ordered[position + 1][0] if position + 1 < len(ordered) else len(sequence)
+        legacy_closing = find_token_marker(
+            sequence,
+            marker_patterns(tokenizer, f"</P{priority}>"),
+            start=content_start,
+        )
+        if legacy_closing is not None and legacy_closing[0] < content_end:
+            content_end = legacy_closing[0]
         while content_start < content_end and not tokenizer.decode([sequence[content_start]]).strip():
             content_start += 1
         while content_end > content_start and not tokenizer.decode([sequence[content_end - 1]]).strip():
             content_end -= 1
         if content_end > content_start:
-            spans.append((content_start, content_end))
-        cursor = closing[0] + closing[1]
+            spans[priority].append((content_start, content_end))
     return spans
 
 
 def extract_prioritized_handoff(tokenizer, states, token_ids, budget: int):
     """Select up to K original generated states using model-emitted priorities."""
     sequence = token_ids.tolist()
-    spans_by_priority = {
-        priority: priority_spans(tokenizer, sequence, priority)
-        for priority in (2, 1, 0)
-    }
+    spans_by_priority = priority_spans(tokenizer, sequence)
     selected_indices = []
     selected_counts = {"P2": 0, "P1": 0, "P0": 0}
     for priority in (2, 1, 0):

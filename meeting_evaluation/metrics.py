@@ -59,11 +59,16 @@ def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -
         name: {"rouge_l_f1": [], "supported_claim_rate": []} for name in variants
     }
     communication = {"text_handoff_tokens": 0, "latent_state_tokens": 0, "prefix_prefill_seconds": [], "prefix_cache_bytes": []}
+    selection_modes: Counter[str] = Counter()
     for result in results:
         communication["text_handoff_tokens"] += result["communication"]["text_handoff_tokens"]
         communication["latent_state_tokens"] += result["communication"]["latent_state_tokens"]
         communication["prefix_prefill_seconds"].append(result["prefix_prefill_seconds"])
         communication["prefix_cache_bytes"].append(result["prefix_cache_bytes"])
+        for specialist in result.get("specialists", []):
+            mode = specialist.get("state_selection", {}).get("mode")
+            if mode:
+                selection_modes[mode] += 1
         for variant in variants:
             answer = result.get("answers", {}).get(variant, "")
             per_variant[variant]["rouge_l_f1"].append(rouge_l_f1(answer, result.get("gold_answer", "")))
@@ -73,6 +78,7 @@ def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -
     text_tokens = communication["text_handoff_tokens"]
     latent_states = communication["latent_state_tokens"]
     delta = latent_states - text_tokens
+    dynamic_total = selection_modes["priority_markers"] + selection_modes["tail_fallback"]
     return {
         "samples": len(results),
         "quality": {
@@ -80,6 +86,10 @@ def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -
             for variant, metrics in per_variant.items()
         },
         "factuality_note": "supported_claim_rate is a lexical source-overlap proxy inspired by MESA-style source checking; it is not an LLM or human MESA score.",
+        "state_selection": {
+            "mode_counts": dict(selection_modes),
+            "dynamic_marker_success_rate": None if not dynamic_total else selection_modes["priority_markers"] / dynamic_total,
+        },
         "efficiency": {
             "text_handoff_tokens": text_tokens,
             "latent_state_tokens": latent_states,
@@ -89,4 +99,3 @@ def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -
             "mean_prefix_cache_mib": _average([value / 2**20 for value in communication["prefix_cache_bytes"]]),
         },
     }
-

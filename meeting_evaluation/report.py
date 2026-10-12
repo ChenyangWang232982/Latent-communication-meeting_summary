@@ -35,6 +35,17 @@ def write_reports(output_dir: Path, benchmark: str, metrics: dict[str, Any], con
         support = quality[variant]["supported_claim_rate"]
         rouge_text = "N/A" if rouge is None else f"{rouge:.4f}"
         lines.append(f"{variant:<13} {rouge_text:<13} {support:.4f}")
+    selection = metrics.get("state_selection", {})
+    marker_success = selection.get("dynamic_marker_success_rate")
+    if marker_success is not None:
+        mode_counts = selection["mode_counts"]
+        lines += [
+            "",
+            "Dynamic selection",
+            f"priority markers: {mode_counts.get('priority_markers', 0)}",
+            f"tail fallbacks:   {mode_counts.get('tail_fallback', 0)}",
+            f"marker success:   {marker_success:.1%}",
+        ]
     lines += [
         "",
         "Efficiency",

@@ -68,13 +68,15 @@ def write_comparison(output_dir: Path, configurations: dict[str, WorkflowConfig]
         rouge = quality["statebridge"]["rouge_l_f1"]
         text_rouge = quality["text"]["rouge_l_f1"]
         support = quality["statebridge"]["supported_claim_rate"]
+        marker_success = result.get("state_selection", {}).get("dynamic_marker_success_rate")
         return (
             f"{strategy:<17} "
             f"{('N/A' if rouge is None else f'{rouge:.4f}'):<13} "
             f"{('N/A' if text_rouge is None else f'{text_rouge:.4f}'):<11} "
             f"{support:.4f}     "
             f"{efficiency['latent_state_tokens']:<13} "
-            f"{efficiency['latent_minus_text_percent']:+.1f}%"
+            f"{efficiency['latent_minus_text_percent']:+.1f}%       "
+            f"{'N/A' if marker_success is None else f'{marker_success:.1%}'}"
         )
 
     lines = [
@@ -83,7 +85,7 @@ def write_comparison(output_dir: Path, configurations: dict[str, WorkflowConfig]
         f"Fixed state budget per specialist: {configurations['tail'].prefix_tokens_per_agent}",
         "",
         "Results",
-        "strategy          latent ROUGE  text ROUGE  source-support  latent states  latent/text",
+        "strategy          latent ROUGE  text ROUGE  source-support  latent states  latent/text  marker success",
         metric_row("tail"),
         metric_row("stratified"),
         metric_row("dynamic_compact"),
