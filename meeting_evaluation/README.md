@@ -117,3 +117,20 @@ Run a fixed-bandwidth ablation with:
 python -m meeting_evaluation.run_all --num-samples 8 \
   --state-selection-strategy stratified
 ```
+
+For a dedicated, single-report MeetingBank comparison of `tail` versus
+`stratified`, run:
+
+```bash
+python -m meeting_evaluation.compare_state_selection \
+  --input meeting_evaluation/input/meetingbank_test.jsonl \
+  --num-samples 8 \
+  --model Qwen/Qwen3-4B \
+  --source-max-tokens 8192 \
+  --prefill-chunk-tokens 1024 \
+  --prefix-tokens-per-agent 64
+```
+
+The result is written to
+`output/YYYYMMDD_HHMM/meetingbank_state_selection.txt` and includes only
+final metrics for both policies plus `stratified - tail` ROUGE-L.
