@@ -110,6 +110,12 @@ The fixed latent budget may be selected in two ways:
 - `stratified`: uniformly sample a later-middle region and preserve the final
   half as a contiguous span. With `K=64`, this is 32 later-middle and 32 tail
   states; the earliest states are not forced into the prefix.
+- `dynamic_compact`: generate a private candidate handoff, rank its items as
+  essential/supporting/redundant, and rewrite the selected facts into one
+  continuous handoff of at most K tokens. Both text and latent controls receive
+  this same compact handoff; the private candidate is never reported. This
+  strategy adds one Sender generation pass per specialist, so compare quality
+  and communication separately from end-to-end latency.
 
 Run a fixed-bandwidth ablation with:
 
@@ -118,8 +124,8 @@ python -m meeting_evaluation.run_all --num-samples 8 \
   --state-selection-strategy stratified
 ```
 
-For a dedicated, single-report MeetingBank comparison of `tail` versus
-`stratified`, run:
+For a dedicated, single-report MeetingBank comparison of `tail`, `stratified`,
+and `dynamic_compact`, run:
 
 ```bash
 python -m meeting_evaluation.compare_state_selection \

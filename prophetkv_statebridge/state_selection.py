@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-STATE_SELECTION_STRATEGIES = ("tail", "stratified")
+POSITIONAL_STATE_SELECTION_STRATEGIES = ("tail", "stratified")
+STATE_SELECTION_STRATEGIES = POSITIONAL_STATE_SELECTION_STRATEGIES + ("dynamic_compact",)
 
 
 def state_selection_indices(length: int, budget: int, strategy: str) -> list[int]:
@@ -17,7 +18,7 @@ def state_selection_indices(length: int, budget: int, strategy: str) -> list[int
         raise ValueError("Cannot select states from an empty handoff.")
     if budget < 1:
         raise ValueError("State-selection budget must be positive.")
-    if strategy not in STATE_SELECTION_STRATEGIES:
+    if strategy not in POSITIONAL_STATE_SELECTION_STRATEGIES:
         raise ValueError(f"Unsupported state-selection strategy: {strategy}")
     if budget >= length:
         return list(range(length))

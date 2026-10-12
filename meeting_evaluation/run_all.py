@@ -35,7 +35,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-max-new-tokens", type=int, default=128)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
-    parser.add_argument("--state-selection-strategy", "--strategy", choices=["tail", "stratified"], default="tail")
+    parser.add_argument(
+        "--state-selection-strategy",
+        "--strategy",
+        choices=["tail", "stratified", "dynamic_compact"],
+        default="tail",
+    )
     parser.add_argument("--device")
     parser.add_argument(
         "--skip-missing",

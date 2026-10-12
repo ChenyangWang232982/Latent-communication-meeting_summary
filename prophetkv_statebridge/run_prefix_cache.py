@@ -216,6 +216,39 @@ def specialist_prompt(
     )
 
 
+def compact_specialist_prompt(
+    tokenizer,
+    source: str,
+    record: dict[str, Any],
+    role: str,
+    candidate_handoff: str,
+    enable_thinking: bool,
+    *,
+    meeting_mode: bool,
+    token_budget: int,
+) -> str:
+    """Ask the sender to turn a candidate into one continuous latent message."""
+    task = MEETING_ROLE_CONTRACTS[role] if meeting_mode else ROLE_INSTRUCTIONS[role]
+    user = (
+        f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
+        f"Task: {task} Dynamic compact pass. Internally rank every candidate item as: "
+        "P2 = essential explicit fact for this role, P1 = useful supporting detail, "
+        "P0 = redundant, speculative, or outside this role. Rewrite only P2 items, then "
+        "P1 items if space remains. Preserve names, numbers, negation, uncertainty, owners, "
+        "deadlines, and evidence wording when present. The source may only be used to verify the "
+        "candidate; do not introduce an item absent from the candidate. Do not output priority "
+        "labels or analysis. "
+        f"Return one concise continuous handoff of at most {token_budget} tokens.\n\n"
+        f"Candidate handoff:\n{candidate_handoff}"
+    )
+    return chat_prompt(
+        tokenizer,
+        "You are a careful meeting and research-document analyst.",
+        user,
+        enable_thinking,
+    )
+
+
 def common_prefix_length(token_batches: list[torch.Tensor]) -> int:
     """Find the token-identical prefix shared by every specialist prompt."""
     if not token_batches:
@@ -244,23 +277,88 @@ def review_packet(ranked_chunks, round_index: int, neighbors: int) -> str:
 
 
 @torch.inference_mode()
-def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_ids: torch.Tensor, args):
+def generate_specialist_from_cache(
+    model,
+    tokenizer,
+    prefix_cache,
+    prefix_length,
+    suffix_ids: torch.Tensor,
+    *,
+    max_new_tokens: int,
+):
     message_ids, states = generate_after_prefix_cache(
         model,
         tokenizer,
         prefix_cache,
         prefix_length,
         suffix_ids,
-        max_new_tokens=args.agent_max_new_tokens,
+        max_new_tokens=max_new_tokens,
     )
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
+    return decode(tokenizer, message_ids), states, message_ids[0]
+
+
+@torch.inference_mode()
+def specialist_from_cache(
+    model,
+    tokenizer,
+    prefix_cache,
+    encoded_prefix: torch.Tensor,
+    full_prompt_ids: torch.Tensor,
+    args,
+    *,
+    source: str,
+    record: dict[str, Any],
+    role: str,
+    meeting_mode: bool,
+):
+    prefix_length = encoded_prefix.size(1)
+    message, states, message_ids = generate_specialist_from_cache(
+        model,
+        tokenizer,
+        prefix_cache,
+        prefix_length,
+        full_prompt_ids[:, prefix_length:],
+        max_new_tokens=args.agent_max_new_tokens,
+    )
+    if args.state_selection_strategy == "dynamic_compact":
+        compact_ids = tokenizer(
+            compact_specialist_prompt(
+                tokenizer,
+                source,
+                record,
+                role,
+                message,
+                args.enable_thinking,
+                meeting_mode=meeting_mode,
+                token_budget=args.prefix_tokens_per_agent,
+            ),
+            return_tensors="pt",
+            add_special_tokens=False,
+        ).to(args.device).input_ids
+        if not torch.equal(compact_ids[:, :prefix_length], encoded_prefix):
+            raise RuntimeError("Dynamic compact prompt no longer shares the cached transcript prefix.")
+        compact_message, compact_states, compact_token_ids = generate_specialist_from_cache(
+            model,
+            tokenizer,
+            prefix_cache,
+            prefix_length,
+            compact_ids[:, prefix_length:],
+            max_new_tokens=args.prefix_tokens_per_agent,
+        )
+        if compact_states.size(0) == 0:
+            raise RuntimeError("Dynamic compact selection produced no usable handoff states.")
+        if compact_states.size(0) > args.prefix_tokens_per_agent:
+            raise RuntimeError("Dynamic compact selection exceeded the configured state budget.")
+        return compact_message, compact_states, compact_token_ids
+
     selected_states, selected_ids = select_state_tokens(
         states,
-        message_ids[0],
+        message_ids,
         args.prefix_tokens_per_agent,
         args.state_selection_strategy,
     )
-    return decode(tokenizer, message_ids), selected_states, selected_ids
+    return message, selected_states, selected_ids
 
 
 def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None, *, meeting_mode: bool = False) -> str:
@@ -404,9 +502,13 @@ def main() -> None:
                     model,
                     tokenizer,
                     prefix_cache,
-                    encoded_prefix.size(1),
-                    full_prompt_ids[:, common_length:],
+                    encoded_prefix,
+                    full_prompt_ids,
                     args,
+                    source=source,
+                    record=record,
+                    role=role,
+                    meeting_mode=meeting_mode,
                 )
                 reviews = []
                 ranking_query = f"{record['question']} {MEETING_ROLE_CONTRACTS.get(role, ROLE_INSTRUCTIONS[role])}"
@@ -434,9 +536,13 @@ def main() -> None:
                         model,
                         tokenizer,
                         prefix_cache,
-                        encoded_prefix.size(1),
-                        review_ids[:, common_length:],
+                        encoded_prefix,
+                        review_ids,
                         args,
+                        source=source,
+                        record=record,
+                        role=role,
+                        meeting_mode=meeting_mode,
                     )
                     reviews.append({"round": review_round + 1, "packet": packet})
                 specialists.append({"role": role, "message": message, "backfill_reviews": reviews})

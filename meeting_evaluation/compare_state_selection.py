@@ -1,4 +1,4 @@
-"""Fixed-bandwidth MeetingBank ablation: tail versus stratified StateBridge states."""
+"""Fixed-bandwidth MeetingBank ablation for StateBridge handoff strategies."""
 
 from __future__ import annotations
 
@@ -46,15 +46,18 @@ def write_comparison(output_dir: Path, configurations: dict[str, WorkflowConfig]
     directory = run_directory(output_dir)
     text_path = directory / "meetingbank_state_selection.txt"
     json_path = directory / "meetingbank_state_selection.json"
-    tail, stratified = metrics["tail"], metrics["stratified"]
+    tail = metrics["tail"]
     tail_rouge = value(metrics, "tail", "rouge_l_f1")
     stratified_rouge = value(metrics, "stratified", "rouge_l_f1")
+    compact_rouge = value(metrics, "dynamic_compact", "rouge_l_f1")
     rouge_delta = None if tail_rouge is None or stratified_rouge is None else stratified_rouge - tail_rouge
+    compact_delta = None if tail_rouge is None or compact_rouge is None else compact_rouge - tail_rouge
     payload = {
         "benchmark": "meetingbank_state_selection",
         "configurations": {name: asdict(config) for name, config in configurations.items()},
         "metrics": metrics,
         "stratified_minus_tail_statebridge_rouge_l_f1": rouge_delta,
+        "dynamic_compact_minus_tail_statebridge_rouge_l_f1": compact_delta,
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -63,10 +66,12 @@ def write_comparison(output_dir: Path, configurations: dict[str, WorkflowConfig]
         quality = result["quality"]
         efficiency = result["efficiency"]
         rouge = quality["statebridge"]["rouge_l_f1"]
+        text_rouge = quality["text"]["rouge_l_f1"]
         support = quality["statebridge"]["supported_claim_rate"]
         return (
-            f"{strategy:<12} "
+            f"{strategy:<17} "
             f"{('N/A' if rouge is None else f'{rouge:.4f}'):<13} "
+            f"{('N/A' if text_rouge is None else f'{text_rouge:.4f}'):<11} "
             f"{support:.4f}     "
             f"{efficiency['latent_state_tokens']:<13} "
             f"{efficiency['latent_minus_text_percent']:+.1f}%"
@@ -77,13 +82,15 @@ def write_comparison(output_dir: Path, configurations: dict[str, WorkflowConfig]
         f"Samples: {tail['samples']}",
         f"Fixed state budget per specialist: {configurations['tail'].prefix_tokens_per_agent}",
         "",
-        "StateBridge only",
-        "strategy     ROUGE-L F1    source-support  latent states  latent/text",
+        "Results",
+        "strategy          latent ROUGE  text ROUGE  source-support  latent states  latent/text",
         metric_row("tail"),
         metric_row("stratified"),
+        metric_row("dynamic_compact"),
         "",
         "Comparison",
         "stratified - tail ROUGE-L: " + ("N/A" if rouge_delta is None else f"{rouge_delta:+.4f}"),
+        "dynamic_compact - tail ROUGE-L: " + ("N/A" if compact_delta is None else f"{compact_delta:+.4f}"),
         "",
         "Controls",
         "Each strategy is run with the same MeetingBank records and generates text/no_comm controls independently.",
@@ -116,7 +123,10 @@ def main() -> None:
         device=args.device,
         num_samples=args.num_samples,
     )
-    configurations = {strategy: replace(base, state_selection_strategy=strategy) for strategy in ("tail", "stratified")}
+    configurations = {
+        strategy: replace(base, state_selection_strategy=strategy)
+        for strategy in ("tail", "stratified", "dynamic_compact")
+    }
     metrics = {}
     for strategy, config in configurations.items():
         print(f"\n=== MeetingBank state selection: {strategy} ===", flush=True)

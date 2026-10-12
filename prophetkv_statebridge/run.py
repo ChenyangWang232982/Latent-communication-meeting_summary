@@ -28,7 +28,7 @@ from statebridge_qasper.run import (
 )
 
 from .selection import Chunk, chunk_document, select_chunks
-from .state_selection import STATE_SELECTION_STRATEGIES, select_state_tokens
+from .state_selection import POSITIONAL_STATE_SELECTION_STRATEGIES, select_state_tokens
 
 
 ROLE_INSTRUCTIONS = {
@@ -55,7 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-max-new-tokens", type=int, default=160)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=128)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=16)
-    parser.add_argument("--state-selection-strategy", "--strategy", choices=STATE_SELECTION_STRATEGIES, default="tail")
+    parser.add_argument(
+        "--state-selection-strategy",
+        "--strategy",
+        choices=POSITIONAL_STATE_SELECTION_STRATEGIES,
+        default="tail",
+    )
     parser.add_argument("--snap-ratio", type=float, default=0.3)
     parser.add_argument("--regularization", type=float, default=1e-3)
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
