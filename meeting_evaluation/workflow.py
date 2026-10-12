@@ -38,6 +38,7 @@ def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig, *, mee
             "--agent-max-new-tokens", str(config.agent_max_new_tokens),
             "--receiver-max-new-tokens", str(config.receiver_max_new_tokens),
             "--prefix-tokens-per-agent", str(config.prefix_tokens_per_agent),
+            "--state-selection-strategy", config.state_selection_strategy,
             "--variants", "statebridge", "text", "no_comm",
         ]
         if config.device:

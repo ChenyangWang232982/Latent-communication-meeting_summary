@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-max-new-tokens", type=int, default=128)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
+    parser.add_argument("--state-selection-strategy", "--strategy", choices=["tail", "stratified"], default="tail")
     parser.add_argument("--device")
     parser.add_argument(
         "--skip-missing",
@@ -58,6 +59,7 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace, ref
         "--agent-max-new-tokens", str(args.agent_max_new_tokens),
         "--receiver-max-new-tokens", str(args.receiver_max_new_tokens),
         "--prefix-tokens-per-agent", str(args.prefix_tokens_per_agent),
+        "--state-selection-strategy", args.state_selection_strategy,
     ]
     if reference:
         command.extend(["--reference", str(reference)])

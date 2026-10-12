@@ -28,6 +28,7 @@ from statebridge_qasper.run import (
 )
 
 from .selection import Chunk, chunk_document, select_chunks
+from .state_selection import STATE_SELECTION_STRATEGIES, select_state_tokens
 
 
 ROLE_INSTRUCTIONS = {
@@ -54,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-max-new-tokens", type=int, default=160)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=128)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=16)
+    parser.add_argument("--state-selection-strategy", "--strategy", choices=STATE_SELECTION_STRATEGIES, default="tail")
     parser.add_argument("--snap-ratio", type=float, default=0.3)
     parser.add_argument("--regularization", type=float, default=1e-3)
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
@@ -103,8 +105,10 @@ def specialist_message(model, tokenizer, record: dict[str, Any], role: str, sele
     outputs = model(input_ids=full_ids, attention_mask=torch.ones_like(full_ids), output_hidden_states=True)
     states = outputs.hidden_states[-1][:, -message_ids.size(1) :, :][0]
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
-    count = min(args.prefix_tokens_per_agent, message_ids.size(1))
-    return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:]
+    selected_states, selected_ids = select_state_tokens(
+        states, message_ids[0], args.prefix_tokens_per_agent, args.state_selection_strategy
+    )
+    return decode(tokenizer, message_ids), selected_states, selected_ids
 
 
 def receiver_prompt(tokenizer, question: str, enable_thinking: bool, handoffs: str | None = None) -> str:
@@ -155,7 +159,10 @@ def main() -> None:
     jsonl_path = args.output.with_suffix(".jsonl")
     with jsonl_path.open("w", encoding="utf-8") as jsonl, args.output.open("w", encoding="utf-8") as report:
         report.write(f"Query-aware StateBridge run: {datetime.now().isoformat(timespec='seconds')}\n")
-        report.write(f"model={args.model}, chunk_tokens={args.chunk_tokens}, top_chunks={args.top_chunks}, roles={','.join(args.roles)}\n")
+        report.write(
+            f"model={args.model}, chunk_tokens={args.chunk_tokens}, top_chunks={args.top_chunks}, "
+            f"roles={','.join(args.roles)}, state_selection_strategy={args.state_selection_strategy}\n"
+        )
         report.write("Note: query-aware selection baseline; not paper-exact ProphetKV KV fusion.\n\n")
         for index, record in enumerate(records, start=1):
             chunks = chunk_document(tokenizer, record["context"], chunk_tokens=args.chunk_tokens, overlap_tokens=args.chunk_overlap_tokens)

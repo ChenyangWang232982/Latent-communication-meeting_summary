@@ -15,6 +15,7 @@ class WorkflowConfig:
     agent_max_new_tokens: int = 128
     receiver_max_new_tokens: int = 192
     prefix_tokens_per_agent: int = 64
+    state_selection_strategy: str = "tail"
     device: str | None = None
     num_samples: int = 0
 
@@ -32,4 +33,3 @@ class RunPaths:
     input_path: Path
     output_dir: Path
     reference_path: Path | None = None
-

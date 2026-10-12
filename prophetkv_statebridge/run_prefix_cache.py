@@ -32,6 +32,7 @@ from statebridge_qasper.run import (
 from .prefix_cache import cache_nbytes, generate_after_prefix_cache, prefill_prefix, prefill_prefix_streaming
 from .run import ROLE_INSTRUCTIONS
 from .selection import chunk_document, rank_chunks
+from .state_selection import STATE_SELECTION_STRATEGIES, select_state_tokens
 
 
 MEETING_ROLE_CONTRACTS = {
@@ -130,6 +131,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-max-new-tokens", type=int, default=256)
     parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
+    parser.add_argument(
+        "--state-selection-strategy",
+        "--strategy",
+        choices=STATE_SELECTION_STRATEGIES,
+        default="tail",
+        help="Choose which generated handoff states occupy each fixed-size StateBridge prefix.",
+    )
     parser.add_argument("--snap-ratio", type=float, default=0.3)
     parser.add_argument("--regularization", type=float, default=1e-3)
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
@@ -246,8 +254,13 @@ def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_
         max_new_tokens=args.agent_max_new_tokens,
     )
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
-    count = min(args.prefix_tokens_per_agent, message_ids.size(1))
-    return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:]
+    selected_states, selected_ids = select_state_tokens(
+        states,
+        message_ids[0],
+        args.prefix_tokens_per_agent,
+        args.state_selection_strategy,
+    )
+    return decode(tokenizer, message_ids), selected_states, selected_ids
 
 
 def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None, *, meeting_mode: bool = False) -> str:
@@ -330,7 +343,10 @@ def main() -> None:
         communication_totals = {"text_tokens": 0, "latent_states": 0}
         report.write(f"Cross-agent Prefix KV Cache + StateBridge {run_kind} run: {datetime.now().isoformat(timespec='seconds')}\n")
         prefill_mode = "single prefill" if args.prefill_chunk_tokens == 0 else f"streaming chunks of {args.prefill_chunk_tokens} tokens"
-        report.write(f"model={args.model}, source_max_tokens={args.source_max_tokens}, roles={','.join(args.roles)}\n")
+        report.write(
+            f"model={args.model}, source_max_tokens={args.source_max_tokens}, roles={','.join(args.roles)}, "
+            f"state_selection_strategy={args.state_selection_strategy}\n"
+        )
         report.write(f"Each source prefix is prefetched once ({prefill_mode}) and reused by cloned per-agent KV caches.\n\n")
         for index, record in enumerate(records, start=1):
             source = trim_context(tokenizer, record["context"], args.source_max_tokens)
@@ -451,6 +467,7 @@ def main() -> None:
                 "prefix_prefill_seconds": prefill_seconds,
                 "prefix_prefill_chunks": prefill_chunks,
                 "statebridge_tokens": latent_states,
+                "state_selection_strategy": args.state_selection_strategy,
                 "communication": {
                     "text_handoff_tokens": text_handoff_tokens,
                     "latent_state_tokens": latent_states,
