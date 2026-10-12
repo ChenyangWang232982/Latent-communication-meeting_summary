@@ -104,18 +104,22 @@ For a publication result, use the source-support proxy for debugging and add MES
 
 ## State Selection
 
-The fixed latent budget may be selected in two ways:
+The fixed latent budget may be selected in four ways:
 
 - `tail` (default): use the final K generated handoff states, matching the original baseline.
 - `stratified`: uniformly sample a later-middle region and preserve the final
   half as a contiguous span. With `K=64`, this is 32 later-middle and 32 tail
   states; the earliest states are not forced into the prefix.
-- `dynamic_compact`: generate a private candidate handoff, rank its items as
-  essential/supporting/redundant, and rewrite the selected facts into one
-  continuous handoff of at most K tokens. Both text and latent controls receive
-  this same compact handoff; the private candidate is never reported. This
-  strategy adds one Sender generation pass per specialist, so compare quality
-  and communication separately from end-to-end latency.
+- `dynamic_compact`: in one longer Sender generation, produce a detailed
+  candidate whose items are marked P2/P1/P0. The communication layer admits
+  original generated states in priority order (P2, then P1, then P0), preserves
+  their chronological order, and sends at most K states. This remains one
+  generation per specialist; use `--agent-max-new-tokens` greater than K (128
+  generated tokens with K=64 is the default evaluation setting).
+- `dynamic_compact_two_pass`: generate a private candidate, then use a second
+  Sender generation to rank and rewrite it into at most K tokens. The candidate
+  is never reported. This may improve selection but doubles specialist
+  generation passes.
 
 Run a fixed-bandwidth ablation with:
 
@@ -138,5 +142,5 @@ python -m meeting_evaluation.compare_state_selection \
 ```
 
 The result is written to
-`output/YYYYMMDD_HHMM/meetingbank_state_selection.txt` and includes only
-final metrics for both policies plus `stratified - tail` ROUGE-L.
+`output/YYYYMMDD_HHMM/meetingbank_state_selection.txt` and includes only final
+metrics for `tail`, `stratified`, and the one-pass `dynamic_compact` strategy.

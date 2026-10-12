@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 POSITIONAL_STATE_SELECTION_STRATEGIES = ("tail", "stratified")
-STATE_SELECTION_STRATEGIES = POSITIONAL_STATE_SELECTION_STRATEGIES + ("dynamic_compact",)
+STATE_SELECTION_STRATEGIES = POSITIONAL_STATE_SELECTION_STRATEGIES + (
+    "dynamic_compact",
+    "dynamic_compact_two_pass",
+)
 
 
 def state_selection_indices(length: int, budget: int, strategy: str) -> list[int]:

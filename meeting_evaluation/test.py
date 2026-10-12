@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--state-selection-strategy",
         "--strategy",
-        choices=["tail", "stratified", "dynamic_compact"],
+        choices=["tail", "stratified", "dynamic_compact", "dynamic_compact_two_pass"],
         default="tail",
     )
     parser.add_argument("--device")

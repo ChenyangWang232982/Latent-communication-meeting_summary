@@ -162,20 +162,38 @@ def specialist_user(
     previous_handoff: str | None = None,
     review_packet: str | None = None,
     review_round: int | None = None,
+    compact_token_budget: int | None = None,
 ) -> str:
     task = ROLE_INSTRUCTIONS[role]
     format_instruction = ""
     if meeting_mode:
         task = MEETING_ROLE_CONTRACTS[role]
-        format_instruction = (
-            " Return at most three short bullets. Every bullet must use exactly this format: "
-            "- [timestamp] \"verbatim transcript quotation\" -> claim. The quotation must be sufficient on its own to support "
-            "the claim. A timestamp alone is not evidence. If no supported item exists, output exactly: None explicitly stated."
+        if compact_token_budget is None:
+            format_instruction = (
+                " Return at most three short bullets. Every bullet must use exactly this format: "
+                "- [timestamp] \"verbatim transcript quotation\" -> claim. The quotation must be sufficient on its own to support "
+                "the claim. A timestamp alone is not evidence. If no supported item exists, output exactly: None explicitly stated."
+            )
+        else:
+            format_instruction = (
+                " Inside each priority marker, use an evidence-backed bullet in the format "
+                "- [timestamp] fact -> claim, preserving names, numbers, negation, uncertainty, owners, and deadlines. "
+                "If no supported item exists, mark exactly: <P2>None explicitly stated.</P2>"
+            )
+    compact_instruction = ""
+    if compact_token_budget is not None:
+        compact_instruction = (
+            " Produce a detailed candidate handoff and assign every item exactly one inline priority marker: "
+            "<P2>essential explicit fact</P2>, <P1>useful supporting detail</P1>, or "
+            "<P0>redundant, speculative, or outside this role</P0>. Do not place factual content outside these markers. "
+            f"The communication layer will retain at most {compact_token_budget} marked content states, preferring P2, "
+            "then P1, then P0."
         )
     user = (
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
         f"Task: {task} Give a concise factual handoff for another agent. "
-        f"Only use the transcript. Include specific facts and state missing information rather than guessing.{format_instruction}"
+        "Only use the transcript. Include specific facts and state missing information rather than guessing."
+        f"{compact_instruction}{format_instruction}"
     )
     if review_packet is not None and previous_handoff is not None and review_round is not None:
         user += (
@@ -197,6 +215,7 @@ def specialist_prompt(
     previous_handoff: str | None = None,
     review_packet: str | None = None,
     review_round: int | None = None,
+    compact_token_budget: int | None = None,
 ) -> str:
     """Build a normal Qwen chat prompt; cache only its token-identical prefix."""
     user = specialist_user(
@@ -207,6 +226,7 @@ def specialist_prompt(
         previous_handoff=previous_handoff,
         review_packet=review_packet,
         review_round=review_round,
+        compact_token_budget=compact_token_budget,
     )
     return chat_prompt(
         tokenizer,
@@ -298,6 +318,103 @@ def generate_specialist_from_cache(
     return decode(tokenizer, message_ids), states, message_ids[0]
 
 
+def find_token_marker(
+    sequence: list[int],
+    patterns: list[list[int]],
+    start: int = 0,
+    *,
+    last: bool = False,
+) -> tuple[int, int] | None:
+    """Return a matching marker position and token length."""
+    matches = []
+    for pattern in patterns:
+        if not pattern:
+            continue
+        for index in range(start, len(sequence) - len(pattern) + 1):
+            if sequence[index : index + len(pattern)] == pattern:
+                matches.append((index, len(pattern)))
+                if not last:
+                    break
+    if not matches:
+        return None
+    return max(matches) if last else min(matches)
+
+
+def marker_patterns(tokenizer, marker: str) -> list[list[int]]:
+    """Cover the whitespace contexts commonly emitted before an exact marker."""
+    return [
+        tokenizer.encode(text, add_special_tokens=False)
+        for text in (marker, f"\n{marker}", f" {marker}")
+    ]
+
+
+def priority_spans(tokenizer, sequence: list[int], priority: int) -> list[tuple[int, int]]:
+    """Locate content spans enclosed by one priority marker."""
+    opening_patterns = marker_patterns(tokenizer, f"<P{priority}>")
+    closing_patterns = marker_patterns(tokenizer, f"</P{priority}>")
+    spans = []
+    cursor = 0
+    while cursor < len(sequence):
+        opening = find_token_marker(sequence, opening_patterns, start=cursor)
+        if opening is None:
+            break
+        content_start = opening[0] + opening[1]
+        closing = find_token_marker(sequence, closing_patterns, start=content_start)
+        if closing is None:
+            break
+        content_end = closing[0]
+        while content_start < content_end and not tokenizer.decode([sequence[content_start]]).strip():
+            content_start += 1
+        while content_end > content_start and not tokenizer.decode([sequence[content_end - 1]]).strip():
+            content_end -= 1
+        if content_end > content_start:
+            spans.append((content_start, content_end))
+        cursor = closing[0] + closing[1]
+    return spans
+
+
+def extract_prioritized_handoff(tokenizer, states, token_ids, budget: int):
+    """Select up to K original generated states using model-emitted priorities."""
+    sequence = token_ids.tolist()
+    spans_by_priority = {
+        priority: priority_spans(tokenizer, sequence, priority)
+        for priority in (2, 1, 0)
+    }
+    selected_indices = []
+    selected_counts = {"P2": 0, "P1": 0, "P0": 0}
+    for priority in (2, 1, 0):
+        for start, end in spans_by_priority[priority]:
+            remaining = budget - len(selected_indices)
+            if remaining <= 0:
+                break
+            chosen = list(range(start, min(end, start + remaining)))
+            selected_indices.extend(chosen)
+            selected_counts[f"P{priority}"] += len(chosen)
+        if len(selected_indices) >= budget:
+            break
+
+    if not selected_indices:
+        selected_states, selected_ids = select_state_tokens(states, token_ids, budget, "tail")
+        return decode(tokenizer, selected_ids.unsqueeze(0)), selected_states, selected_ids, False, selected_counts
+
+    # Priority determines admission; chronological ordering remains intact for the receiver.
+    selected_indices = sorted(selected_indices)
+    index_groups = [[selected_indices[0]]]
+    for index in selected_indices[1:]:
+        if index == index_groups[-1][-1] + 1:
+            index_groups[-1].append(index)
+        else:
+            index_groups.append([index])
+    selected_message = "\n".join(
+        tokenizer.decode([sequence[index] for index in group], skip_special_tokens=True).strip()
+        for group in index_groups
+    ).strip()
+    index_tensor = torch.tensor(selected_indices, device=states.device, dtype=torch.long)
+    selected_states = states.index_select(0, index_tensor)
+    selected_ids = token_ids.index_select(0, index_tensor)
+    return selected_message, selected_states, selected_ids, True, selected_counts
+
+
 @torch.inference_mode()
 def specialist_from_cache(
     model,
@@ -313,6 +430,7 @@ def specialist_from_cache(
     meeting_mode: bool,
 ):
     prefix_length = encoded_prefix.size(1)
+    single_pass_compact = args.state_selection_strategy == "dynamic_compact"
     message, states, message_ids = generate_specialist_from_cache(
         model,
         tokenizer,
@@ -321,7 +439,23 @@ def specialist_from_cache(
         full_prompt_ids[:, prefix_length:],
         max_new_tokens=args.agent_max_new_tokens,
     )
-    if args.state_selection_strategy == "dynamic_compact":
+    if single_pass_compact:
+        selected_message, selected_states, selected_ids, marker_found, priority_counts = extract_prioritized_handoff(
+            tokenizer,
+            states,
+            message_ids,
+            args.prefix_tokens_per_agent,
+        )
+        if not marker_found:
+            print(f"warning: {role} did not produce usable priority markers; using tail fallback.", flush=True)
+        return selected_message, selected_states, selected_ids, {
+            "mode": "priority_markers" if marker_found else "tail_fallback",
+            "generated_tokens": int(message_ids.size(0)),
+            "selected_states": int(selected_states.size(0)),
+            "priority_state_counts": priority_counts,
+        }
+
+    if args.state_selection_strategy == "dynamic_compact_two_pass":
         compact_ids = tokenizer(
             compact_specialist_prompt(
                 tokenizer,
@@ -347,10 +481,14 @@ def specialist_from_cache(
             max_new_tokens=args.prefix_tokens_per_agent,
         )
         if compact_states.size(0) == 0:
-            raise RuntimeError("Dynamic compact selection produced no usable handoff states.")
+            raise RuntimeError("Two-pass dynamic compact selection produced no usable handoff states.")
         if compact_states.size(0) > args.prefix_tokens_per_agent:
-            raise RuntimeError("Dynamic compact selection exceeded the configured state budget.")
-        return compact_message, compact_states, compact_token_ids
+            raise RuntimeError("Two-pass dynamic compact selection exceeded the configured state budget.")
+        return compact_message, compact_states, compact_token_ids, {
+            "mode": "two_pass_compact",
+            "generated_tokens": int(message_ids.size(0) + compact_token_ids.size(0)),
+            "selected_states": int(compact_states.size(0)),
+        }
 
     selected_states, selected_ids = select_state_tokens(
         states,
@@ -358,7 +496,11 @@ def specialist_from_cache(
         args.prefix_tokens_per_agent,
         args.state_selection_strategy,
     )
-    return message, selected_states, selected_ids
+    return message, selected_states, selected_ids, {
+        "mode": args.state_selection_strategy,
+        "generated_tokens": int(message_ids.size(0)),
+        "selected_states": int(selected_states.size(0)),
+    }
 
 
 def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None, *, meeting_mode: bool = False) -> str:
@@ -403,6 +545,14 @@ def main() -> None:
     args = parse_args()
     if args.prefix_tokens_per_agent < 2:
         raise ValueError("--prefix-tokens-per-agent must be at least 2")
+    if (
+        args.state_selection_strategy == "dynamic_compact"
+        and args.agent_max_new_tokens <= args.prefix_tokens_per_agent
+    ):
+        raise ValueError(
+            "Single-pass dynamic selection needs --agent-max-new-tokens greater than "
+            "--prefix-tokens-per-agent so it can generate a long candidate before the marked handoff."
+        )
     if args.backfill_rounds < 0:
         raise ValueError("--backfill-rounds cannot be negative")
     if args.backfill_neighbor_chunks < 0:
@@ -445,6 +595,8 @@ def main() -> None:
             f"model={args.model}, source_max_tokens={args.source_max_tokens}, roles={','.join(args.roles)}, "
             f"state_selection_strategy={args.state_selection_strategy}\n"
         )
+        sender_passes = 2 if args.state_selection_strategy == "dynamic_compact_two_pass" else 1
+        report.write(f"Sender generation passes per specialist round: {sender_passes}.\n")
         report.write(f"Each source prefix is prefetched once ({prefill_mode}) and reused by cloned per-agent KV caches.\n\n")
         for index, record in enumerate(records, start=1):
             source = trim_context(tokenizer, record["context"], args.source_max_tokens)
@@ -454,10 +606,19 @@ def main() -> None:
                 chunk_tokens=args.backfill_chunk_tokens,
                 overlap_tokens=0,
             )
+            compact_token_budget = (
+                args.prefix_tokens_per_agent if args.state_selection_strategy == "dynamic_compact" else None
+            )
             role_inputs = [
                 tokenizer(
                     specialist_prompt(
-                        tokenizer, source, record, role, args.enable_thinking, meeting_mode=meeting_mode
+                        tokenizer,
+                        source,
+                        record,
+                        role,
+                        args.enable_thinking,
+                        meeting_mode=meeting_mode,
+                        compact_token_budget=compact_token_budget,
                     ),
                     return_tensors="pt",
                     add_special_tokens=False,
@@ -472,7 +633,13 @@ def main() -> None:
                 alternate_role = next(role for role in ROLE_INSTRUCTIONS if role not in args.roles)
                 alternate_input = tokenizer(
                     specialist_prompt(
-                        tokenizer, source, record, alternate_role, args.enable_thinking, meeting_mode=meeting_mode
+                        tokenizer,
+                        source,
+                        record,
+                        alternate_role,
+                        args.enable_thinking,
+                        meeting_mode=meeting_mode,
+                        compact_token_budget=compact_token_budget,
                     ),
                     return_tensors="pt",
                     add_special_tokens=False,
@@ -498,7 +665,7 @@ def main() -> None:
             specialists = []
             all_states, all_ids = [], []
             for role, full_prompt_ids in zip(args.roles, role_inputs):
-                message, states, token_ids = specialist_from_cache(
+                message, states, token_ids, selection = specialist_from_cache(
                     model,
                     tokenizer,
                     prefix_cache,
@@ -526,13 +693,14 @@ def main() -> None:
                             previous_handoff=message,
                             review_packet=packet,
                             review_round=review_round + 1,
+                            compact_token_budget=compact_token_budget,
                         ),
                         return_tensors="pt",
                         add_special_tokens=False,
                     ).to(args.device).input_ids
                     if not torch.equal(review_ids[:, :common_length], encoded_prefix):
                         raise RuntimeError("Review prompt no longer shares the cached transcript prefix.")
-                    message, states, token_ids = specialist_from_cache(
+                    message, states, token_ids, selection = specialist_from_cache(
                         model,
                         tokenizer,
                         prefix_cache,
@@ -545,7 +713,12 @@ def main() -> None:
                         meeting_mode=meeting_mode,
                     )
                     reviews.append({"round": review_round + 1, "packet": packet})
-                specialists.append({"role": role, "message": message, "backfill_reviews": reviews})
+                specialists.append({
+                    "role": role,
+                    "message": message,
+                    "state_selection": selection,
+                    "backfill_reviews": reviews,
+                })
                 all_states.append(states)
                 all_ids.append(token_ids)
             reports = "\n\n".join(f"[{item['role']}]\n{item['message']}" for item in specialists)
@@ -574,6 +747,7 @@ def main() -> None:
                 "prefix_prefill_chunks": prefill_chunks,
                 "statebridge_tokens": latent_states,
                 "state_selection_strategy": args.state_selection_strategy,
+                "sender_generation_passes_per_specialist_round": sender_passes,
                 "communication": {
                     "text_handoff_tokens": text_handoff_tokens,
                     "latent_state_tokens": latent_states,
@@ -600,6 +774,18 @@ def main() -> None:
             )
             if not args.communication_metrics_only:
                 for item in specialists:
+                    selection = item["state_selection"]
+                    report.write(
+                        f"{item['role']} selection: {selection['mode']}; "
+                        f"generated={selection['generated_tokens']} tokens; "
+                        f"selected={selection['selected_states']} states\n"
+                    )
+                    if "priority_state_counts" in selection:
+                        counts = selection["priority_state_counts"]
+                        report.write(
+                            f"{item['role']} selected priorities: "
+                            f"P2={counts['P2']}, P1={counts['P1']}, P0={counts['P0']}\n"
+                        )
                     report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
                     for review in item["backfill_reviews"]:
                         report.write(f"{item['role']} fixed backfill pass {review['round']} evidence:\n{review['packet']}\n\n")
