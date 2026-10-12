@@ -1,22 +1,23 @@
-"""Compare fixed StateBridge K budgets on MeetingBank quality and communication cost."""
+"""Run a one-specialist-to-one-receiver StateBridge K ablation on MeetingBank."""
 
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import subprocess
 import sys
 import tempfile
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from statistics import mean, median
 
-from .config import WorkflowConfig
-from .metrics import score_results
+from .metrics import rouge_l_f1, score_results
 from .records import load_meetingbank
-from .workflow import run_statebridge
+
+
+DEFAULT_SPECIALIST_ROLE = "facts"
+MEETING_ROLES = ("facts", "decisions", "actions", "discussion", "risks", "questions", "next_steps")
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,8 +25,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, required=True, help="MeetingBank JSON or JSONL input.")
     parser.add_argument("--output-dir", type=Path, default=Path("meeting_evaluation/output"))
     parser.add_argument("--num-samples", type=int, default=8)
-    parser.add_argument("--budgets", nargs="+", type=int, default=[64, 96, 128])
-    parser.add_argument("--coverage-target", type=float, default=0.90)
+    parser.add_argument("--role", choices=MEETING_ROLES, default=DEFAULT_SPECIALIST_ROLE)
+    parser.add_argument("--budgets", nargs="+", type=int, default=[48, 52, 56, 60, 64, 68, 72, 76])
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--source-max-tokens", type=int, default=8192)
     parser.add_argument("--prefill-chunk-tokens", type=int, default=1024)
@@ -36,28 +37,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def percentile(values: list[int], fraction: float) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, round((len(ordered) - 1) * fraction))
-    return float(ordered[index])
-
-
-def suggested_budget(lengths: list[int], budgets: list[int], coverage_target: float) -> str:
-    for budget in budgets:
-        if sum(length <= budget for length in lengths) / len(lengths) >= coverage_target:
-            return str(budget)
-    return f">{budgets[-1]}"
-
-
-def suggested_budget_for_length(length: int, budgets: list[int]) -> str:
-    for budget in budgets:
-        if length <= budget:
-            return str(budget)
-    return f">{budgets[-1]}"
-
-
 def run_directory(output_dir: Path) -> Path:
     run_id = os.environ.get("MEETING_EVAL_RUN_ID") or datetime.now().strftime("%Y%m%d_%H%M")
     directory = output_dir / run_id
@@ -65,17 +44,139 @@ def run_directory(output_dir: Path) -> Path:
     return directory
 
 
+def run_budget(records_path: Path, output_path: Path, args: argparse.Namespace, budget: int) -> list[dict]:
+    command = [
+        sys.executable,
+        "-m",
+        "prophetkv_statebridge.run_prefix_cache",
+        "--meeting-data",
+        str(records_path),
+        "--output",
+        str(output_path),
+        "--model",
+        args.model,
+        "--num-samples",
+        "0",
+        "--source-max-tokens",
+        str(args.source_max_tokens),
+        "--prefill-chunk-tokens",
+        str(args.prefill_chunk_tokens),
+        "--backfill-rounds",
+        str(args.backfill_rounds),
+        "--agent-max-new-tokens",
+        str(args.agent_max_new_tokens),
+        "--receiver-max-new-tokens",
+        str(args.receiver_max_new_tokens),
+        "--prefix-tokens-per-agent",
+        str(budget),
+        "--roles",
+        args.role,
+        "--variants",
+        "statebridge",
+        "text",
+        "no_comm",
+    ]
+    if args.device:
+        command.extend(["--device", args.device])
+    subprocess.run(command, check=True)
+    return [
+        json.loads(line)
+        for line in output_path.with_suffix(".jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def metric_text(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.4f}"
+
+
+def write_line_chart(path: Path, budgets: list[int], results_by_budget: dict[str, list[dict]]) -> None:
+    """Write accuracy and savings curves against the text-token communication baseline."""
+    colors = ("#2563eb", "#d97706", "#059669", "#dc2626", "#7c3aed", "#0891b2", "#65a30d", "#be185d")
+    accuracy_series: dict[str, list[tuple[float, float]]] = {}
+    savings_series: dict[str, list[tuple[float, float]]] = {}
+    for budget in budgets:
+        accuracy_points = []
+        savings_points = []
+        for result in results_by_budget[str(budget)]:
+            text_tokens = float(result["communication"]["text_handoff_tokens"])
+            rouge = rouge_l_f1(result["answers"]["statebridge"], result.get("gold_answer", ""))
+            if rouge is not None:
+                accuracy_points.append((text_tokens, rouge))
+            savings = -float(result["communication"]["latent_minus_text_percent"])
+            savings_points.append((text_tokens, savings))
+        accuracy_series[f"K={budget}"] = sorted(accuracy_points)
+        savings_series[f"K={budget}"] = sorted(savings_points)
+
+    all_x = [x for series in savings_series.values() for x, _ in series]
+    x_min, x_max = min(all_x), max(all_x)
+    if x_min == x_max:
+        x_min, x_max = max(0.0, x_min - 1.0), x_max + 1.0
+    all_savings = [value for series in savings_series.values() for _, value in series]
+    saving_min, saving_max = min(all_savings), max(all_savings)
+    padding = max(1.0, (saving_max - saving_min) * 0.1)
+    saving_min, saving_max = saving_min - padding, saving_max + padding
+
+    width, height = 1200, 900
+    left, right, chart_width = 100, 70, 1030
+
+    def panel_svg(y_top: int, title: str, series: dict[str, list[tuple[float, float]]], y_min: float, y_max: float) -> list[str]:
+        panel_height = 250
+        parts = [
+            f'<text x="{left}" y="{y_top - 24}" class="panel-title">{html.escape(title)}</text>',
+            f'<line x1="{left}" y1="{y_top}" x2="{left}" y2="{y_top + panel_height}" class="axis"/>',
+            f'<line x1="{left}" y1="{y_top + panel_height}" x2="{left + chart_width}" y2="{y_top + panel_height}" class="axis"/>',
+        ]
+        for tick in range(5):
+            value = y_min + (y_max - y_min) * tick / 4
+            y = y_top + panel_height - panel_height * tick / 4
+            parts.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + chart_width}" y2="{y:.1f}" class="grid"/>')
+            parts.append(f'<text x="{left - 12}" y="{y + 5:.1f}" text-anchor="end" class="tick">{value:.2f}</text>')
+        for tick in range(5):
+            value = x_min + (x_max - x_min) * tick / 4
+            x = left + chart_width * tick / 4
+            parts.append(f'<line x1="{x:.1f}" y1="{y_top + panel_height}" x2="{x:.1f}" y2="{y_top + panel_height + 6}" class="axis"/>')
+            parts.append(f'<text x="{x:.1f}" y="{y_top + panel_height + 27}" text-anchor="middle" class="tick">{value:.0f}</text>')
+        for index, (label, points) in enumerate(series.items()):
+            color = colors[index % len(colors)]
+            rendered = [
+                (
+                    left + (x - x_min) * chart_width / (x_max - x_min),
+                    y_top + panel_height - (y - y_min) * panel_height / max(1e-9, y_max - y_min),
+                )
+                for x, y in points
+            ]
+            if len(rendered) >= 2:
+                point_string = " ".join(f"{x:.1f},{y:.1f}" for x, y in rendered)
+                parts.append(f'<polyline points="{point_string}" fill="none" stroke="{color}" stroke-width="2.5"/>')
+            for x, y in rendered:
+                parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{color}"/>')
+            legend_x = left + (index % 4) * 240
+            legend_y = y_top - 54 + (index // 4) * 22
+            parts.append(f'<line x1="{legend_x}" y1="{legend_y}" x2="{legend_x + 24}" y2="{legend_y}" stroke="{color}" stroke-width="3"/>')
+            parts.append(f'<text x="{legend_x + 32}" y="{legend_y + 5}" class="legend">{html.escape(label)}</text>')
+        return parts
+
+    svg = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        "<style>.title{font:700 25px Arial,sans-serif;fill:#172033}.panel-title{font:700 18px Arial,sans-serif;fill:#172033}.tick{font:13px Arial,sans-serif;fill:#4b5563}.legend{font:14px Arial,sans-serif;fill:#172033}.axis{stroke:#64748b;stroke-width:1}.grid{stroke:#dbe3ef;stroke-width:1}</style>",
+        '<rect width="100%" height="100%" fill="#ffffff"/>',
+        '<text x="100" y="42" class="title">MeetingBank: One Specialist to One Receiver K Ablation</text>',
+        '<text x="100" y="848" class="tick">Natural-language handoff token baseline per sample</text>',
+        '<text x="100" y="874" class="tick">Each colored curve is one fixed K. Upper: StateBridge ROUGE-L. Lower: token saving versus text handoff.</text>',
+    ]
+    svg.extend(panel_svg(110, "Final-summary accuracy (ROUGE-L)", accuracy_series, 0.0, 1.0))
+    svg.extend(panel_svg(550, "Communication saving versus text handoff (%)", savings_series, saving_min, saving_max))
+    svg.append("</svg>")
+    path.write_text("\n".join(svg) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     args = parse_args()
     budgets = sorted(set(args.budgets))
     if not budgets or budgets[0] < 2:
-        raise ValueError("--budgets must contain positive K values of at least 2.")
-    if not 0 < args.coverage_target <= 1:
-        raise ValueError("--coverage-target must be in (0, 1].")
-    if args.agent_max_new_tokens <= budgets[-1]:
-        raise ValueError(
-            "--agent-max-new-tokens must exceed the largest K, otherwise this probe cannot observe longer handoffs."
-        )
+        raise ValueError("--budgets must contain K values of at least 2.")
 
     records = load_meetingbank(args.input)
     if args.num_samples and len(records) < args.num_samples:
@@ -83,200 +184,73 @@ def main() -> None:
     selected = records[: args.num_samples] if args.num_samples else records
     if not selected:
         raise ValueError("No MeetingBank records selected.")
+    source_by_id = {record.id: record.context for record in selected}
 
-    with tempfile.TemporaryDirectory(prefix="meeting_k_budget_") as temp_dir:
+    metrics_by_budget: dict[str, dict] = {}
+    results_by_budget: dict[str, list[dict]] = {}
+    with tempfile.TemporaryDirectory(prefix="meeting_single_agent_k_") as temp_dir:
         temp = Path(temp_dir)
         normalized_input = temp / "records.jsonl"
-        raw_output = temp / "runner.txt"
         with normalized_input.open("w", encoding="utf-8") as handle:
             for record in selected:
                 handle.write(json.dumps(record.as_dict(), ensure_ascii=False) + "\n")
 
-        command = [
-            sys.executable,
-            "-m",
-            "prophetkv_statebridge.run_prefix_cache",
-            "--meeting-data",
-            str(normalized_input),
-            "--output",
-            str(raw_output),
-            "--model",
-            args.model,
-            "--num-samples",
-            "0",
-            "--source-max-tokens",
-            str(args.source_max_tokens),
-            "--prefill-chunk-tokens",
-            str(args.prefill_chunk_tokens),
-            "--backfill-rounds",
-            str(args.backfill_rounds),
-            "--agent-max-new-tokens",
-            str(args.agent_max_new_tokens),
-            "--prefix-tokens-per-agent",
-            str(budgets[-1]),
-            "--communication-metrics-only",
-        ]
-        if args.device:
-            command.extend(["--device", args.device])
-        subprocess.run(command, check=True)
-        results = [
-            json.loads(line)
-            for line in raw_output.with_suffix(".jsonl").read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        for budget in budgets:
+            print(f"=== MeetingBank one-agent K={budget} ===", flush=True)
+            results = run_budget(normalized_input, temp / f"k{budget}.txt", args, budget)
+            results_by_budget[str(budget)] = results
+            metrics_by_budget[str(budget)] = score_results(results, source_by_id)
 
-    rows = []
-    by_role: dict[str, list[dict]] = defaultdict(list)
-    for result in results:
-        for specialist in result["specialist_token_metrics"]:
-            handoff_tokens = specialist["handoff_tokens"]
-            row = {
-                "sample_id": result["id"],
-                "role": specialist["role"],
-                "handoff_tokens": handoff_tokens,
-                "generation_tokens_total": specialist["generation_tokens_total"],
-                "at_generation_cap": handoff_tokens >= args.agent_max_new_tokens,
-                "suggested_k": suggested_budget_for_length(handoff_tokens, budgets),
-                "retained_states": {str(budget): min(handoff_tokens, budget) for budget in budgets},
-                "truncated": {str(budget): handoff_tokens > budget for budget in budgets},
-            }
-            rows.append(row)
-            by_role[row["role"]].append(row)
-
-    role_summary = {}
-    for role, role_rows in sorted(by_role.items()):
-        lengths = [row["handoff_tokens"] for row in role_rows]
-        role_summary[role] = {
-            "experts": len(role_rows),
-            "mean_handoff_tokens": mean(lengths),
-            "median_handoff_tokens": median(lengths),
-            "p90_handoff_tokens": percentile(lengths, 0.90),
-            "generation_cap_rate": sum(row["at_generation_cap"] for row in role_rows) / len(role_rows),
-            "suggested_k_at_coverage_target": suggested_budget(lengths, budgets, args.coverage_target),
-            "budgets": {
-                str(budget): {
-                    "mean_retained_states": mean(row["retained_states"][str(budget)] for row in role_rows),
-                    "truncation_rate": sum(row["truncated"][str(budget)] for row in role_rows) / len(role_rows),
-                }
-                for budget in budgets
-            },
-        }
-
-    overall_lengths = [row["handoff_tokens"] for row in rows]
     payload = {
-        "benchmark": "meetingbank_specialist_k_budget",
-        "samples": len(results),
+        "benchmark": "meetingbank_single_specialist_k_ablation",
+        "samples": len(selected),
         "configuration": {
             "model": args.model,
+            "single_specialist_role": args.role,
             "source_max_tokens": args.source_max_tokens,
             "prefill_chunk_tokens": args.prefill_chunk_tokens,
             "backfill_rounds": args.backfill_rounds,
             "agent_max_new_tokens": args.agent_max_new_tokens,
+            "receiver_max_new_tokens": args.receiver_max_new_tokens,
             "budgets": budgets,
-            "coverage_target": args.coverage_target,
         },
-        "overall": {
-            "experts": len(rows),
-            "mean_handoff_tokens": mean(overall_lengths),
-            "median_handoff_tokens": median(overall_lengths),
-            "p90_handoff_tokens": percentile(overall_lengths, 0.90),
-            "generation_cap_rate": sum(row["at_generation_cap"] for row in rows) / len(rows),
-        },
-        "by_role": role_summary,
-        "per_expert": rows,
+        "metrics_by_budget": metrics_by_budget,
         "note": (
-            "Handoff length explains the compression pressure. Quality and communication metrics below determine "
-            "whether a larger K is worthwhile."
+            "This is a controlled one-specialist-to-one-receiver experiment. The selected specialist is the only sender; "
+            "K is its full StateBridge state budget. Text and no-communication are controls generated under the same setup."
         ),
     }
 
-    source_by_id = {record.id: record.context for record in selected}
-    quality_by_budget = {}
-    for budget in budgets:
-        print(f"=== MeetingBank K={budget}: quality and communication ===")
-        config = WorkflowConfig(
-            model=args.model,
-            source_max_tokens=args.source_max_tokens,
-            prefill_chunk_tokens=args.prefill_chunk_tokens,
-            backfill_rounds=args.backfill_rounds,
-            agent_max_new_tokens=args.agent_max_new_tokens,
-            receiver_max_new_tokens=args.receiver_max_new_tokens,
-            prefix_tokens_per_agent=budget,
-            device=args.device,
-            num_samples=len(selected),
-        )
-        quality_by_budget[str(budget)] = score_results(
-            run_statebridge(selected, config, meeting_mode=True), source_by_id
-        )
-    payload["quality_by_budget"] = quality_by_budget
-
     directory = run_directory(args.output_dir)
-    text_path = directory / "meetingbank_specialist_k_budget.txt"
-    json_path = directory / "meetingbank_specialist_k_budget.json"
+    text_path = directory / "meetingbank_single_agent_k_ablation.txt"
+    json_path = directory / "meetingbank_single_agent_k_ablation.json"
+    chart_path = directory / "meetingbank_single_agent_k_ablation.svg"
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_line_chart(chart_path, budgets, results_by_budget)
 
-    headers = ["role", "experts", "mean", "median", "p90", "cap-hit", "suggested K"]
-    headers.extend(f"K={budget} retained/truncated" for budget in budgets)
     lines = [
-        "MeetingBank StateBridge K Ablation",
-        f"Samples: {len(results)}",
-        f"Agent generation cap: {args.agent_max_new_tokens} tokens",
-        f"Coverage target for suggested K: {args.coverage_target:.0%}",
+        "MeetingBank Single-Agent StateBridge K Ablation",
+        f"Samples: {len(selected)}",
+        f"Sender: {args.role} specialist",
+        "Topology: one specialist -> one receiver",
         "",
-        " | ".join(headers),
-    ]
-    for role, summary in role_summary.items():
-        values = [
-            role,
-            str(summary["experts"]),
-            f"{summary['mean_handoff_tokens']:.1f}",
-            f"{summary['median_handoff_tokens']:.1f}",
-            f"{summary['p90_handoff_tokens']:.0f}",
-            f"{summary['generation_cap_rate']:.1%}",
-            summary["suggested_k_at_coverage_target"],
-        ]
-        for budget in budgets:
-            budget_metrics = summary["budgets"][str(budget)]
-            values.append(f"{budget_metrics['mean_retained_states']:.1f}/{budget_metrics['truncation_rate']:.1%}")
-        lines.append(" | ".join(values))
-
-    lines += [
-        "",
-        "Per-expert token records",
-        "sample_id | role | handoff tokens | total generated | cap-hit | suggested K | "
-        + " | ".join(f"K={budget}" for budget in budgets),
-    ]
-    for row in rows:
-        retained = [
-            f"{row['retained_states'][str(budget)]}{'*' if row['truncated'][str(budget)] else ''}"
-            for budget in budgets
-        ]
-        lines.append(
-            f"{row['sample_id']} | {row['role']} | {row['handoff_tokens']} | "
-            f"{row['generation_tokens_total']} | {str(row['at_generation_cap']).lower()} | {row['suggested_k']} | "
-            + " | ".join(retained)
-        )
-    lines += [
-        "",
-        "Legend: K column is retained states; * means the handoff was longer than that K and was truncated.",
-        "",
-        "K Quality And Communication Comparison (mean)",
-        "K | StateBridge ROUGE-L | StateBridge source-support | text ROUGE-L | latent states | text handoff tokens | latent-text | saving vs text",
+        "K | StateBridge ROUGE-L | StateBridge source-support | text ROUGE-L | no_comm ROUGE-L | latent states | text handoff tokens | latent-text | saving vs text",
     ]
     for budget in budgets:
-        metrics = quality_by_budget[str(budget)]
+        metrics = metrics_by_budget[str(budget)]
         quality = metrics["quality"]
         efficiency = metrics["efficiency"]
-        rouge = quality["statebridge"]["rouge_l_f1"]
-        text_rouge = quality["text"]["rouge_l_f1"]
+        saving = efficiency["latent_minus_text_percent"]
         lines.append(
             f"{budget} | "
-            f"{'N/A' if rouge is None else f'{rouge:.4f}'} | "
+            f"{metric_text(quality['statebridge']['rouge_l_f1'])} | "
             f"{quality['statebridge']['supported_claim_rate']:.4f} | "
-            f"{'N/A' if text_rouge is None else f'{text_rouge:.4f}'} | "
-            f"{efficiency['latent_state_tokens']} | {efficiency['text_handoff_tokens']} | "
+            f"{metric_text(quality['text']['rouge_l_f1'])} | "
+            f"{metric_text(quality['no_comm']['rouge_l_f1'])} | "
+            f"{efficiency['latent_state_tokens']} | "
+            f"{efficiency['text_handoff_tokens']} | "
             f"{efficiency['latent_minus_text_tokens']:+d} | "
-            f"{'N/A' if efficiency['latent_minus_text_percent'] is None else f'{-efficiency['latent_minus_text_percent']:+.1f}%'}"
+            f"{'N/A' if saving is None else f'{-saving:+.1f}%'}"
         )
     lines += [
         "",
@@ -285,8 +259,9 @@ def main() -> None:
         payload["note"],
     ]
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"K-budget report: {text_path}")
-    print(f"Machine-readable K-budget data: {json_path}")
+    print(f"K-ablation report: {text_path}")
+    print(f"Machine-readable K-ablation metrics: {json_path}")
+    print(f"Line chart: {chart_path}")
 
 
 if __name__ == "__main__":
