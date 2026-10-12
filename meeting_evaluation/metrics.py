@@ -53,6 +53,15 @@ def _average(values: list[float | None]) -> float | None:
     return mean(valid) if valid else None
 
 
+def _best_rouge_l(prediction: str, result: dict[str, Any]) -> float | None:
+    references = result.get("gold_answers")
+    if not isinstance(references, list):
+        references = [result.get("gold_answer", "")]
+    scores = [rouge_l_f1(prediction, str(reference)) for reference in references]
+    valid = [score for score in scores if score is not None]
+    return max(valid) if valid else None
+
+
 def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -> dict[str, Any]:
     variants = ("statebridge", "text", "no_comm")
     per_variant: dict[str, dict[str, list[float | None]]] = {
@@ -66,7 +75,7 @@ def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -
         communication["prefix_cache_bytes"].append(result["prefix_cache_bytes"])
         for variant in variants:
             answer = result.get("answers", {}).get(variant, "")
-            per_variant[variant]["rouge_l_f1"].append(rouge_l_f1(answer, result.get("gold_answer", "")))
+            per_variant[variant]["rouge_l_f1"].append(_best_rouge_l(answer, result))
             per_variant[variant]["supported_claim_rate"].append(
                 source_overlap_support(answer, source_by_id[result["id"]])["supported_claim_rate"]
             )

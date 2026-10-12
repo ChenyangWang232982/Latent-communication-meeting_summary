@@ -455,6 +455,7 @@ def main() -> None:
                 "id": record["id"],
                 "question": record["question"],
                 "gold_answer": record.get("answer", ""),
+                "gold_answers": record.get("answers") or [record.get("answer", "")],
                 "prefix_tokens": int(encoded_prefix.size(1)),
                 "prefix_cache_bytes": prefix_bytes,
                 "prefix_prefill_seconds": prefill_seconds,
