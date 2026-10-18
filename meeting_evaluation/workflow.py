@@ -40,6 +40,11 @@ def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig, *, mee
             "--prefix-tokens-per-agent", str(config.prefix_tokens_per_agent),
             "--variants", "statebridge", "text", "no_comm",
         ]
+        if config.document_chunk_tokens:
+            command.extend([
+                "--document-chunk-tokens", str(config.document_chunk_tokens),
+                "--document-chunk-overlap-tokens", str(config.document_chunk_overlap_tokens),
+            ])
         if config.device:
             command.extend(["--device", config.device])
         subprocess.run(command, check=True)

@@ -129,6 +129,22 @@ KV1-2-3`), add `--prefill-chunk-tokens 1024`. Each new 1024-token block is
 forwarded with the previous block's `past_key_values`; separate chunk caches
 are never manually concatenated.
 
+For a transcript longer than one model context, use document blocks instead of
+raising `--source-max-tokens`. Each document block gets its own exact shared
+Prefix KV cache, and the resulting specialist hidden-state handoffs are stacked
+chronologically before the final receiver. Independent KV caches are never
+concatenated. For example:
+
+```bash
+python -m prophetkv_statebridge.run_prefix_cache \
+  --transcript input/my_long_meeting.txt \
+  --output output/my_long_meeting.txt \
+  --document-chunk-tokens 8192 \
+  --prefill-chunk-tokens 1024 \
+  --prefix-tokens-per-agent 64 \
+  --variants statebridge
+```
+
 `--backfill-rounds N` adds exactly `N` deterministic review passes for every
 role. Each pass appends a query-ranked local transcript packet to a clone of
 the shared meeting cache and asks the role to revise its previous handoff.

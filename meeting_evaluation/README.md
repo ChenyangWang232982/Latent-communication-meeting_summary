@@ -68,6 +68,22 @@ python -m meeting_evaluation.test \
   --asr-model small
 ```
 
+For an over-window transcript, process every source block rather than
+truncating the meeting to `--source-max-tokens`:
+
+```bash
+python -m meeting_evaluation.test \
+  --benchmark ami \
+  --input input/my_long_meeting.txt \
+  --reference input/my_long_meeting_reference.txt \
+  --document-chunk-tokens 8192 \
+  --prefill-chunk-tokens 1024
+```
+
+Each document block has an independent shared Prefix KV cache. Only the
+specialist handoffs are stacked chronologically for the final receiver; block
+KV caches are not concatenated.
+
 ## Run All Benchmarks
 
 After placing the standard inputs at `input/qmsum_test.jsonl`,

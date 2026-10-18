@@ -31,7 +31,7 @@ from statebridge_qasper.run import (
 
 from .prefix_cache import cache_nbytes, generate_after_prefix_cache, prefill_prefix, prefill_prefix_streaming
 from .run import ROLE_INSTRUCTIONS
-from .selection import chunk_document, rank_chunks
+from .selection import Chunk, chunk_document, rank_chunks
 
 
 MEETING_ROLE_CONTRACTS = {
@@ -100,7 +100,24 @@ def parse_args() -> argparse.Namespace:
         default="Create an evidence-grounded meeting summary covering the most important facts.",
         help="Shared objective used when --transcript is supplied.",
     )
-    parser.add_argument("--source-max-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--source-max-tokens",
+        type=int,
+        default=4096,
+        help="Maximum source tokens in legacy single-prefix mode. Ignored when --document-chunk-tokens is set.",
+    )
+    parser.add_argument(
+        "--document-chunk-tokens",
+        type=int,
+        default=0,
+        help="Process the full source as independent chronological document chunks of this size. 0 keeps legacy truncation.",
+    )
+    parser.add_argument(
+        "--document-chunk-overlap-tokens",
+        type=int,
+        default=0,
+        help="Token overlap between adjacent document chunks in full-document mode.",
+    )
     parser.add_argument(
         "--prefill-chunk-tokens",
         type=int,
@@ -250,6 +267,106 @@ def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_
     return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:], int(message_ids.size(1))
 
 
+@torch.inference_mode()
+def process_source_block(model, tokenizer, record: dict[str, Any], source: str, block: Chunk, args, *, meeting_mode: bool) -> dict[str, Any]:
+    """Analyze one bounded source block using one shared Prefix KV cache.
+
+    A block cache is only reused by specialists reading that exact block.  We
+    deliberately return latent handoffs rather than attempting to concatenate
+    independent KV caches from different blocks.
+    """
+    source_chunks = chunk_document(
+        tokenizer,
+        source,
+        chunk_tokens=args.backfill_chunk_tokens,
+        overlap_tokens=0,
+    )
+    role_inputs = [
+        tokenizer(
+            specialist_prompt(tokenizer, source, record, role, args.enable_thinking, meeting_mode=meeting_mode),
+            return_tensors="pt",
+            add_special_tokens=False,
+        ).to(args.device).input_ids
+        for role in args.roles
+    ]
+    prefix_inputs = role_inputs
+    if len(role_inputs) == 1:
+        alternate_role = next(role for role in ROLE_INSTRUCTIONS if role not in args.roles)
+        alternate_input = tokenizer(
+            specialist_prompt(tokenizer, source, record, alternate_role, args.enable_thinking, meeting_mode=meeting_mode),
+            return_tensors="pt",
+            add_special_tokens=False,
+        ).to(args.device).input_ids
+        prefix_inputs = [role_inputs[0], alternate_input]
+    common_length = common_prefix_length(prefix_inputs)
+    if common_length < 2 or any(input_ids.size(1) == common_length for input_ids in role_inputs):
+        raise RuntimeError("Specialist prompts do not have a usable shared prefix and suffix.")
+
+    encoded_prefix = role_inputs[0][:, :common_length]
+    started = time.perf_counter()
+    if args.prefill_chunk_tokens:
+        prefix_cache, prefill_chunks = prefill_prefix_streaming(
+            model, encoded_prefix, chunk_tokens=args.prefill_chunk_tokens
+        )
+    else:
+        prefix_cache = prefill_prefix(model, encoded_prefix)
+        prefill_chunks = 1
+    if args.device.startswith("cuda"):
+        torch.cuda.synchronize()
+    prefill_seconds = time.perf_counter() - started
+    prefix_bytes = cache_nbytes(prefix_cache)
+
+    specialists, specialist_token_metrics, all_states, all_ids = [], [], [], []
+    for role, full_prompt_ids in zip(args.roles, role_inputs):
+        message, states, token_ids, handoff_tokens = specialist_from_cache(
+            model, tokenizer, prefix_cache, encoded_prefix.size(1), full_prompt_ids[:, common_length:], args
+        )
+        generation_tokens_total = handoff_tokens
+        reviews = []
+        ranking_query = f"{record['question']} {MEETING_ROLE_CONTRACTS.get(role, ROLE_INSTRUCTIONS[role])}"
+        ranked = rank_chunks(source_chunks, ranking_query)
+        for review_round in range(args.backfill_rounds):
+            packet = review_packet(ranked, review_round, args.backfill_neighbor_chunks)
+            review_ids = tokenizer(
+                specialist_prompt(
+                    tokenizer, source, record, role, args.enable_thinking,
+                    meeting_mode=meeting_mode, previous_handoff=message,
+                    review_packet=packet, review_round=review_round + 1,
+                ),
+                return_tensors="pt", add_special_tokens=False,
+            ).to(args.device).input_ids
+            if not torch.equal(review_ids[:, :common_length], encoded_prefix):
+                raise RuntimeError("Review prompt no longer shares the cached transcript prefix.")
+            message, states, token_ids, handoff_tokens = specialist_from_cache(
+                model, tokenizer, prefix_cache, encoded_prefix.size(1), review_ids[:, common_length:], args
+            )
+            generation_tokens_total += handoff_tokens
+            reviews.append({"round": review_round + 1, "packet": packet})
+        specialists.append({"role": role, "message": message, "backfill_reviews": reviews})
+        specialist_token_metrics.append({
+            "block_id": block.chunk_id,
+            "role": role,
+            "handoff_tokens": handoff_tokens,
+            "generation_tokens_total": generation_tokens_total,
+            "selected_states": int(states.size(0)),
+        })
+        all_states.append(states)
+        all_ids.append(token_ids)
+
+    return {
+        "block_id": block.chunk_id,
+        "source_tokens": block.token_count,
+        "prefix_tokens": int(encoded_prefix.size(1)),
+        "prefix_cache_bytes": prefix_bytes,
+        "prefix_prefill_seconds": prefill_seconds,
+        "prefix_prefill_chunks": prefill_chunks,
+        "specialists": specialists,
+        "specialist_token_metrics": specialist_token_metrics,
+        "states": torch.cat(all_states),
+        "token_ids": torch.cat(all_ids),
+    }
+
+
 def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None, *, meeting_mode: bool = False) -> str:
     if meeting_mode:
         user = (
@@ -296,6 +413,12 @@ def main() -> None:
         raise ValueError("--backfill-rounds cannot be negative")
     if args.backfill_neighbor_chunks < 0:
         raise ValueError("--backfill-neighbor-chunks cannot be negative")
+    if args.document_chunk_tokens and args.document_chunk_tokens < 32:
+        raise ValueError("--document-chunk-tokens must be 0 or at least 32")
+    if args.document_chunk_overlap_tokens < 0:
+        raise ValueError("--document-chunk-overlap-tokens cannot be negative")
+    if args.document_chunk_tokens and args.document_chunk_overlap_tokens >= args.document_chunk_tokens:
+        raise ValueError("--document-chunk-overlap-tokens must be smaller than --document-chunk-tokens")
     torch.manual_seed(args.seed)
     meeting_mode = args.transcript is not None or args.meeting_data is not None
     if args.roles is None:
@@ -330,113 +453,57 @@ def main() -> None:
         communication_totals = {"text_tokens": 0, "latent_states": 0}
         report.write(f"Cross-agent Prefix KV Cache + StateBridge {run_kind} run: {datetime.now().isoformat(timespec='seconds')}\n")
         prefill_mode = "single prefill" if args.prefill_chunk_tokens == 0 else f"streaming chunks of {args.prefill_chunk_tokens} tokens"
-        report.write(f"model={args.model}, source_max_tokens={args.source_max_tokens}, roles={','.join(args.roles)}\n")
-        report.write(f"Each source prefix is prefetched once ({prefill_mode}) and reused by cloned per-agent KV caches.\n\n")
+        source_mode = (
+            f"full document in chronological blocks of {args.document_chunk_tokens} tokens"
+            if args.document_chunk_tokens
+            else f"legacy first {args.source_max_tokens} source tokens"
+        )
+        report.write(f"model={args.model}, source_mode={source_mode}, roles={','.join(args.roles)}\n")
+        report.write(
+            f"Each source block is prefetched once ({prefill_mode}) and reused by cloned per-agent KV caches. "
+            "Different blocks exchange stacked specialist handoffs, not concatenated KV caches.\n\n"
+        )
         for index, record in enumerate(records, start=1):
-            source = trim_context(tokenizer, record["context"], args.source_max_tokens)
-            source_chunks = chunk_document(
-                tokenizer,
-                source,
-                chunk_tokens=args.backfill_chunk_tokens,
-                overlap_tokens=0,
-            )
-            role_inputs = [
-                tokenizer(
-                    specialist_prompt(
-                        tokenizer, source, record, role, args.enable_thinking, meeting_mode=meeting_mode
-                    ),
-                    return_tensors="pt",
-                    add_special_tokens=False,
-                ).to(args.device).input_ids
-                for role in args.roles
-            ]
-            # A one-role quality check still needs a boundary before the
-            # role-specific instruction. Add an unused alternate prompt only
-            # to locate that exact common boundary.
-            prefix_inputs = role_inputs
-            if len(role_inputs) == 1:
-                alternate_role = next(role for role in ROLE_INSTRUCTIONS if role not in args.roles)
-                alternate_input = tokenizer(
-                    specialist_prompt(
-                        tokenizer, source, record, alternate_role, args.enable_thinking, meeting_mode=meeting_mode
-                    ),
-                    return_tensors="pt",
-                    add_special_tokens=False,
-                ).to(args.device).input_ids
-                prefix_inputs = [role_inputs[0], alternate_input]
-            common_length = common_prefix_length(prefix_inputs)
-            if common_length < 2 or any(input_ids.size(1) == common_length for input_ids in role_inputs):
-                raise RuntimeError("Specialist prompts do not have a usable shared prefix and suffix.")
-            encoded_prefix = role_inputs[0][:, :common_length]
-            started = time.perf_counter()
-            if args.prefill_chunk_tokens:
-                prefix_cache, prefill_chunks = prefill_prefix_streaming(
-                    model, encoded_prefix, chunk_tokens=args.prefill_chunk_tokens
+            if args.document_chunk_tokens:
+                document_blocks = chunk_document(
+                    tokenizer,
+                    record["context"],
+                    chunk_tokens=args.document_chunk_tokens,
+                    overlap_tokens=args.document_chunk_overlap_tokens,
                 )
             else:
-                prefix_cache = prefill_prefix(model, encoded_prefix)
-                prefill_chunks = 1
-            if args.device.startswith("cuda"):
-                torch.cuda.synchronize()
-            prefill_seconds = time.perf_counter() - started
-            prefix_bytes = cache_nbytes(prefix_cache)
+                source = trim_context(tokenizer, record["context"], args.source_max_tokens)
+                source_tokens = len(tokenizer(source, add_special_tokens=False).input_ids)
+                document_blocks = [Chunk(0, source, source_tokens)]
+            if not document_blocks:
+                raise ValueError(f"Source is empty after tokenization: {record['id']}")
 
-            specialists = []
-            specialist_token_metrics = []
-            all_states, all_ids = [], []
-            for role, full_prompt_ids in zip(args.roles, role_inputs):
-                message, states, token_ids, handoff_tokens = specialist_from_cache(
-                    model,
-                    tokenizer,
-                    prefix_cache,
-                    encoded_prefix.size(1),
-                    full_prompt_ids[:, common_length:],
-                    args,
-                )
-                generation_tokens_total = handoff_tokens
-                reviews = []
-                ranking_query = f"{record['question']} {MEETING_ROLE_CONTRACTS.get(role, ROLE_INSTRUCTIONS[role])}"
-                ranked = rank_chunks(source_chunks, ranking_query)
-                for review_round in range(args.backfill_rounds):
-                    packet = review_packet(ranked, review_round, args.backfill_neighbor_chunks)
-                    review_ids = tokenizer(
-                        specialist_prompt(
-                            tokenizer,
-                            source,
-                            record,
-                            role,
-                            args.enable_thinking,
-                            meeting_mode=meeting_mode,
-                            previous_handoff=message,
-                            review_packet=packet,
-                            review_round=review_round + 1,
-                        ),
-                        return_tensors="pt",
-                        add_special_tokens=False,
-                    ).to(args.device).input_ids
-                    if not torch.equal(review_ids[:, :common_length], encoded_prefix):
-                        raise RuntimeError("Review prompt no longer shares the cached transcript prefix.")
-                    message, states, token_ids, handoff_tokens = specialist_from_cache(
-                        model,
-                        tokenizer,
-                        prefix_cache,
-                        encoded_prefix.size(1),
-                        review_ids[:, common_length:],
-                        args,
-                    )
-                    generation_tokens_total += handoff_tokens
-                    reviews.append({"round": review_round + 1, "packet": packet})
-                specialists.append({"role": role, "message": message, "backfill_reviews": reviews})
-                specialist_token_metrics.append({
-                    "role": role,
-                    "handoff_tokens": handoff_tokens,
-                    "generation_tokens_total": generation_tokens_total,
-                    "selected_states": int(states.size(0)),
-                })
-                all_states.append(states)
-                all_ids.append(token_ids)
-            reports = "\n\n".join(f"[{item['role']}]\n{item['message']}" for item in specialists)
-            states, token_ids = torch.cat(all_states), torch.cat(all_ids)
+            block_results = [
+                process_source_block(model, tokenizer, record, block.text, block, args, meeting_mode=meeting_mode)
+                for block in document_blocks
+            ]
+            specialists = [
+                {
+                    "block_id": block_result["block_id"],
+                    **specialist,
+                }
+                for block_result in block_results
+                for specialist in block_result["specialists"]
+            ]
+            specialist_token_metrics = [
+                item
+                for block_result in block_results
+                for item in block_result["specialist_token_metrics"]
+            ]
+            reports = "\n\n".join(
+                f"[block {item['block_id']} | {item['role']}]\n{item['message']}" for item in specialists
+            )
+            states = torch.cat([block_result["states"] for block_result in block_results])
+            token_ids = torch.cat([block_result["token_ids"] for block_result in block_results])
+            prefix_tokens = sum(block_result["prefix_tokens"] for block_result in block_results)
+            prefix_bytes = max(block_result["prefix_cache_bytes"] for block_result in block_results)
+            prefill_seconds = sum(block_result["prefix_prefill_seconds"] for block_result in block_results)
+            prefill_chunks = sum(block_result["prefix_prefill_chunks"] for block_result in block_results)
             text_handoff_tokens = len(tokenizer(reports, add_special_tokens=False).input_ids)
             latent_states = int(states.size(0))
             communication_delta = latent_states - text_handoff_tokens
@@ -456,10 +523,20 @@ def main() -> None:
                 "question": record["question"],
                 "gold_answer": record.get("answer", ""),
                 "gold_answers": record.get("answers") or [record.get("answer", "")],
-                "prefix_tokens": int(encoded_prefix.size(1)),
+                "prefix_tokens": prefix_tokens,
                 "prefix_cache_bytes": prefix_bytes,
                 "prefix_prefill_seconds": prefill_seconds,
                 "prefix_prefill_chunks": prefill_chunks,
+                "document_blocks": [
+                    {
+                        "block_id": block_result["block_id"],
+                        "source_tokens": block_result["source_tokens"],
+                        "prefix_tokens": block_result["prefix_tokens"],
+                        "prefix_prefill_seconds": block_result["prefix_prefill_seconds"],
+                        "prefix_prefill_chunks": block_result["prefix_prefill_chunks"],
+                    }
+                    for block_result in block_results
+                ],
                 "statebridge_tokens": latent_states,
                 "communication": {
                     "text_handoff_tokens": text_handoff_tokens,
@@ -476,8 +553,9 @@ def main() -> None:
             jsonl.flush()
             report.write("=" * 80 + f"\nSample {index}\nId: {record['id']}\n\nQuestion:\n{record['question']}\n\n")
             report.write(
-                f"Shared prefix: {result['prefix_tokens']} tokens in {prefill_chunks} chronological cache updates; "
-                f"KV cache: {prefix_bytes / 2**20:.1f} MiB; prefill: {prefill_seconds:.2f}s\n"
+                f"Document blocks: {len(block_results)}; combined prefixes: {result['prefix_tokens']} tokens in "
+                f"{prefill_chunks} chronological cache updates; peak block KV cache: {prefix_bytes / 2**20:.1f} MiB; "
+                f"total prefill: {prefill_seconds:.2f}s\n"
             )
             report.write(f"StateBridge specialist prefix: {states.size(0)} tokens\n\n")
             report.write(
@@ -488,7 +566,7 @@ def main() -> None:
             )
             if not args.communication_metrics_only:
                 for item in specialists:
-                    report.write(f"{item['role']} handoff (debug only):\n{item['message']}\n\n")
+                    report.write(f"block {item['block_id']} | {item['role']} handoff (debug only):\n{item['message']}\n\n")
                     for review in item["backfill_reviews"]:
                         report.write(f"{item['role']} fixed backfill pass {review['round']} evidence:\n{review['packet']}\n\n")
                 for variant, answer in answers.items():
