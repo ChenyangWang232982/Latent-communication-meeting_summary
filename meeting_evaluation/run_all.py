@@ -15,9 +15,9 @@ from datetime import datetime
 from pathlib import Path
 
 
-DEFAULT_QMSUM = Path("meeting_evaluation/input/qmsum_test.jsonl")
-DEFAULT_MEETINGBANK = Path("meeting_evaluation/input/meetingbank_test.jsonl")
-DEFAULT_AMI = Path("prophetkv_statebridge/input/ami_ES2002a.txt")
+DEFAULT_QMSUM = Path("input/qmsum_test.jsonl")
+DEFAULT_MEETINGBANK = Path("input/meetingbank_test.jsonl")
+DEFAULT_AMI = Path("input/ami_transcript.txt")
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--meetingbank", type=Path, default=DEFAULT_MEETINGBANK)
     parser.add_argument("--ami", type=Path, default=DEFAULT_AMI)
     parser.add_argument("--ami-reference", type=Path)
-    parser.add_argument("--output-dir", type=Path, default=Path("meeting_evaluation/output"))
+    parser.add_argument("--output-dir", type=Path, default=Path("test_result"))
     parser.add_argument("--num-samples", type=int, default=8)
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--source-max-tokens", type=int, default=8192)

@@ -62,6 +62,15 @@ meeting_latent_workflow/model/
 output/
 statebridge_qasper/output/
 
+# Root-level runtime inputs and reports for the meeting workflow.
+/input/*
+!/input/.gitkeep
+!/output/
+/output/*
+!/output/.gitkeep
+/test_result/*
+!/test_result/.gitkeep
+
 # Timestamped meeting-evaluation reports and locally downloaded benchmarks.
 meeting_evaluation/input/*
 !meeting_evaluation/input/.gitkeep

@@ -25,7 +25,7 @@ is given to that variant. `text` and `no_comm` remain mandatory controls.
 ```bash
 python -m prophetkv_statebridge.run \
   --data data/qasper_latent/validation.jsonl \
-  --output prophetkv_statebridge/output/qasper_smoke.txt \
+  --output output/qasper_smoke.txt \
   --num-samples 1 \
   --model Qwen/Qwen3-4B \
   --chunk-tokens 512 \
@@ -59,7 +59,7 @@ specialist:
 ```bash
 python -m prophetkv_statebridge.run \
   --data data/qasper_latent/validation.jsonl \
-  --output prophetkv_statebridge/output/qasper_facts_only.txt \
+  --output output/qasper_facts_only.txt \
   --num-samples 8 \
   --roles facts \
   --top-chunks 6 \
@@ -93,7 +93,7 @@ cache with only its role-specific instruction appended.
 ```bash
 python -m prophetkv_statebridge.run_prefix_cache \
   --data data/qasper_latent/validation.jsonl \
-  --output prophetkv_statebridge/output/qasper_prefix_cache_smoke.txt \
+  --output output/qasper_prefix_cache_smoke.txt \
   --num-samples 1 \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 4096 \
@@ -152,14 +152,14 @@ This preserves reference answers while enabling the meeting roles and receiver:
 
 ```bash
 python -m prophetkv_statebridge.run_prefix_cache \
-  --meeting-data meeting_evaluation/input/meetingbank_test.jsonl \
-  --output prophetkv_statebridge/output/meetingbank.txt
+  --meeting-data input/meetingbank_test.jsonl \
+  --output output/meetingbank.txt
 ```
 
 ```bash
 python -m prophetkv_statebridge.run_prefix_cache \
-  --transcript prophetkv_statebridge/input/ami_ES2002a.txt \
-  --output prophetkv_statebridge/output/example_prefix_cache_summary.txt \
+  --transcript input/my_meeting.txt \
+  --output output/my_meeting_statebridge.txt \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 8192 \
   --prefill-chunk-tokens 1024 \

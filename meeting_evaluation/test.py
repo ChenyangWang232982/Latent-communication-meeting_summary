@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--benchmark", choices=["qmsum", "meetingbank", "ami", "jsonl"], required=True)
     parser.add_argument("--input", type=Path, required=True, help="Dataset/transcript input, or audio when --enable-asr is set.")
     parser.add_argument("--reference", type=Path, help="Optional AMI reference summary.")
-    parser.add_argument("--output-dir", type=Path, default=Path("meeting_evaluation/output"))
+    parser.add_argument("--output-dir", type=Path, default=Path("test_result"))
     parser.add_argument("--enable-asr", action="store_true", help="Transcribe --input audio before evaluation.")
     parser.add_argument("--asr-model", default="small")
     parser.add_argument("--model", default="Qwen/Qwen3-4B")

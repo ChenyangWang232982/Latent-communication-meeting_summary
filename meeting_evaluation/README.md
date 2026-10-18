@@ -7,11 +7,13 @@ input -> optional ASR -> benchmark adapter -> Prefix-KV + StateBridge workflow
       -> quality / factuality-proxy / communication / KV metrics -> timestamped output
 ```
 
-`input/` holds local benchmark files. Results are written as
-`output/YYYYMMDD_HHMM/<tool>.txt` and `output/YYYYMMDD_HHMM/<tool>.json`, for
-example `output/20261009_1437/qmsum.txt`. Re-running the same tool in the same
-minute replaces that tool's report. Both folders are ignored by Git except for
-their `.gitkeep` files.
+The repository root owns runtime files: `input/` holds transcripts, reference
+summaries, and local benchmark files; `output/` holds generated meeting
+content; and `test_result/` holds evaluation reports. Reports are written as
+`test_result/YYYYMMDD_HHMM/<tool>.txt` and
+`test_result/YYYYMMDD_HHMM/<tool>.json`. Re-running the same tool in the same
+minute replaces that tool's report. Runtime contents are ignored by Git except
+for their `.gitkeep` files.
 
 ## Supported Inputs
 
@@ -29,8 +31,8 @@ QMSum main evaluation:
 ```bash
 python -m meeting_evaluation.test \
   --benchmark qmsum \
-  --input meeting_evaluation/input/qmsum_test.json \
-  --output-dir meeting_evaluation/output \
+  --input input/qmsum_test.jsonl \
+  --output-dir test_result \
   --num-samples 8 \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 8192 \
@@ -43,7 +45,7 @@ MeetingBank generalization evaluation:
 ```bash
 python -m meeting_evaluation.test \
   --benchmark meetingbank \
-  --input meeting_evaluation/input/meetingbank_test.jsonl \
+  --input input/meetingbank_test.jsonl \
   --num-samples 8
 ```
 
@@ -52,8 +54,8 @@ AMI qualitative case with a reference summary:
 ```bash
 python -m meeting_evaluation.test \
   --benchmark ami \
-  --input prophetkv_statebridge/input/ami_ES2002a.txt \
-  --reference meeting_evaluation/input/ami_ES2002a_reference.txt
+  --input input/my_meeting.txt \
+  --reference input/my_meeting_reference.txt
 ```
 
 Audio input:
@@ -62,14 +64,15 @@ Audio input:
 python -m meeting_evaluation.test \
   --benchmark ami \
   --enable-asr \
-  --input meeting_evaluation/input/meeting.wav \
+  --input input/meeting.wav \
   --asr-model small
 ```
 
 ## Run All Benchmarks
 
-After placing the standard inputs at `input/qmsum_test.jsonl` and
-`input/meetingbank_test.jsonl`, run all three benchmark workflows in sequence:
+After placing the standard inputs at `input/qmsum_test.jsonl`,
+`input/meetingbank_test.jsonl`, and `input/ami_transcript.txt`, run all three
+benchmark workflows in sequence:
 
 ```bash
 python -m meeting_evaluation.run_all --num-samples 8
@@ -80,9 +83,9 @@ the `statebridge`, `text`, and `no_comm` controls, communication/KV metrics,
 and the MESA-style source-overlap proxy. It writes only final metrics to:
 
 ```text
-meeting_evaluation/output/YYYYMMDD_HHMM/qmsum.txt
-meeting_evaluation/output/YYYYMMDD_HHMM/meetingbank.txt
-meeting_evaluation/output/YYYYMMDD_HHMM/ami.txt
+test_result/YYYYMMDD_HHMM/qmsum.txt
+test_result/YYYYMMDD_HHMM/meetingbank.txt
+test_result/YYYYMMDD_HHMM/ami.txt
 ```
 
 To run the inputs you currently have while skipping unavailable benchmarks:
