@@ -159,8 +159,8 @@ def specialist_user(
         )
     elif meeting_mode:
         format_instruction = (
-            " Return at most five terse bullets for this role only. Do not write a full meeting summary, repeat another "
-            "role's items, or add headings, quotations, or unsupported details."
+            " Return concise items for this role only. Do not write a full meeting summary, repeat another role's items, "
+            "or add headings, quotations, or unsupported details."
         )
     user = (
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
@@ -238,32 +238,6 @@ def states_for_handoff(model, tokenizer, handoff: str, args) -> tuple[torch.Tens
     return outputs.hidden_states[-1][0, -count:], encoded.input_ids[0, -count:], int(encoded.input_ids.size(1))
 
 
-def role_anchor_text(role: str) -> str:
-    """Return a compact, explicit boundary for one latent specialist message."""
-    return f"\n[{role.upper()}]\n"
-
-
-def role_anchor_token_count(tokenizer, role: str) -> int:
-    return len(tokenizer(role_anchor_text(role), add_special_tokens=False).input_ids)
-
-
-def role_conditioned_prefix(model, tokenizer, bridge, role_segments: list[dict[str, Any]]) -> tuple[torch.Tensor, int]:
-    """Keep specialist categories visible when their messages become latent prefixes."""
-    embedding_layer = model.get_input_embeddings()
-    pieces: list[torch.Tensor] = []
-    anchor_tokens = 0
-    for segment in role_segments:
-        anchor_ids = tokenizer(
-            role_anchor_text(segment["role"]), return_tensors="pt", add_special_tokens=False
-        ).input_ids.to(segment["states"].device)
-        pieces.append(embedding_layer(anchor_ids)[0])
-        pieces.append(bridge.align(segment["states"], segment["token_ids"]))
-        anchor_tokens += int(anchor_ids.size(1))
-    if not pieces:
-        raise ValueError("At least one role segment is required")
-    return torch.cat(pieces, dim=0), anchor_tokens
-
-
 @torch.inference_mode()
 def semantically_supported_claims(model, tokenizer, claims: list[dict[str, Any]], args) -> tuple[list[dict[str, Any]], str]:
     """Use the same model to verify whether each located quote entails its claim."""
@@ -338,7 +312,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
     prefill_seconds = time.perf_counter() - started
     prefix_bytes = cache_nbytes(prefix_cache)
 
-    specialists, specialist_token_metrics, all_states, all_ids, role_segments = [], [], [], [], []
+    specialists, specialist_token_metrics, all_states, all_ids = [], [], [], []
     for role, full_prompt_ids in zip(args.roles, role_inputs):
         raw_message, states, token_ids, generated_tokens = specialist_from_cache(
             model, tokenizer, prefix_cache, encoded_prefix.size(1), full_prompt_ids[:, common_length:], args
@@ -384,7 +358,6 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         })
         all_states.append(states)
         all_ids.append(token_ids)
-        role_segments.append({"role": role, "states": states, "token_ids": token_ids})
 
     return {
         "block_id": block.chunk_id,
@@ -397,7 +370,6 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         "specialist_token_metrics": specialist_token_metrics,
         "states": torch.cat(all_states),
         "token_ids": torch.cat(all_ids),
-        "role_segments": role_segments,
     }
 
 
@@ -460,7 +432,7 @@ def final_merge_prompt(tokenizer, question: str, enable_thinking: bool, reports:
 
 
 @torch.inference_mode()
-def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args, *, meeting_mode: bool, role_segments=None):
+def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args, *, meeting_mode: bool):
     if variant == "text":
         prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, reports, meeting_mode=meeting_mode)
         encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
@@ -477,10 +449,7 @@ def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids,
             available_generation_tokens(args, encoded.input_ids.size(1)),
         )
         return decode(tokenizer, answer_ids)
-    if meeting_mode and role_segments:
-        prefix, _ = role_conditioned_prefix(model, tokenizer, bridge, role_segments)
-    else:
-        prefix = bridge.align(states, token_ids)
+    prefix = bridge.align(states, token_ids)
     return decode(
         tokenizer,
         generate_from_prefix(
@@ -495,9 +464,7 @@ def statebridge_block_summary(model, tokenizer, bridge, record, block_result, ar
     """Turn one block's specialist messages into a local summary and bridge-ready states."""
     prompt = block_receiver_prompt(tokenizer, record["question"], block_result["block_id"], args.enable_thinking)
     encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
-    specialist_prefix, _ = role_conditioned_prefix(
-        model, tokenizer, bridge, block_result["role_segments"]
-    )
+    specialist_prefix = bridge.align(block_result["states"], block_result["token_ids"])
     summary_ids, summary_states = generate_after_embedding_prefix(
         model,
         tokenizer,
@@ -667,22 +634,12 @@ def main() -> None:
             )
             states = torch.cat([block_result["states"] for block_result in block_results])
             token_ids = torch.cat([block_result["token_ids"] for block_result in block_results])
-            role_segments = [
-                segment
-                for block_result in block_results
-                for segment in block_result["role_segments"]
-            ]
             prefix_tokens = sum(block_result["prefix_tokens"] for block_result in block_results)
             prefix_bytes = max(block_result["prefix_cache_bytes"] for block_result in block_results)
             prefill_seconds = sum(block_result["prefix_prefill_seconds"] for block_result in block_results)
             prefill_chunks = sum(block_result["prefix_prefill_chunks"] for block_result in block_results)
             text_handoff_tokens = len(tokenizer(reports, add_special_tokens=False).input_ids)
-            role_anchor_tokens = (
-                sum(role_anchor_token_count(tokenizer, segment["role"]) for segment in role_segments)
-                if meeting_mode
-                else 0
-            )
-            latent_states = int(states.size(0)) + role_anchor_tokens
+            latent_states = int(states.size(0))
             hierarchical_merge = meeting_mode and len(block_results) > 1
             block_summaries = []
             if hierarchical_merge:
@@ -709,7 +666,7 @@ def main() -> None:
                     answers = {
                         variant: answer_variant(
                             model, tokenizer, bridge, record, reports, states, token_ids, variant, args,
-                            meeting_mode=meeting_mode, role_segments=role_segments
+                            meeting_mode=meeting_mode
                         )
                         for variant in args.variants
                     }
@@ -741,7 +698,6 @@ def main() -> None:
                     "specialist_to_block": {
                         "text_handoff_tokens": text_handoff_tokens,
                         "latent_state_tokens": latent_states,
-                        "role_anchor_tokens": role_anchor_tokens,
                     },
                     "block_to_final": {
                         "text_handoff_tokens": block_summary_text_tokens,
@@ -771,8 +727,7 @@ def main() -> None:
                 f"total prefill: {prefill_seconds:.2f}s\n"
             )
             report.write(
-                f"StateBridge specialist prefix: {states.size(0)} latent states + "
-                f"{role_anchor_tokens} role-anchor tokens\n\n"
+                f"StateBridge specialist prefix: {states.size(0)} latent states\n\n"
             )
             if hierarchical_merge:
                 report.write(
