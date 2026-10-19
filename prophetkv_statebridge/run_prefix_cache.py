@@ -380,8 +380,8 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
             f"{MEETING_SECTIONS}\n"
             "Use each item once only: accepted outcomes belong in Confirmed decisions; explicit owner commitments belong in "
             "Action items; unresolved questions, blockers, and uncertainty belong in Open issues and risks; everything else "
-            "important belongs in Key context and discussion. Under each section, write 'None explicitly stated.' when the "
-            "specialist findings provide no supported item. Only name an owner or deadline when explicitly supported by the specialist findings."
+            "important belongs in Key context and discussion. Under each section, write 'None explicitly stated.' only when the "
+            "handoff conveys no item for that section. Only name an owner or deadline when the specialist handoff provides it."
         )
     else:
         user = f"Question: {question}\n\nGive a concise factual answer."
@@ -389,9 +389,9 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
         user += f"\n\nSpecialist handoffs:\n{reports}"
     return chat_prompt(
         tokenizer,
-        "You aggregate specialist findings into an evidence-grounded response. Do not invent facts. "
-        "Treat a suggestion or discussion topic as neither a decision nor an action unless the evidence states a commitment. "
-        "Do not repeat an item across sections.",
+        "You aggregate specialist findings into an evidence-grounded response. Use only information conveyed by the specialist "
+        "handoff; do not invent facts. Treat a suggestion or discussion topic as neither a decision nor an action unless the "
+        "handoff states a commitment. Do not repeat an item across sections.",
         user,
         enable_thinking,
     )
@@ -403,8 +403,8 @@ def block_receiver_prompt(tokenizer, question: str, block_id: int, enable_thinki
         f"Objective: {question}\n\n"
         f"You are summarizing chronological meeting block {block_id}. Create a concise block-local summary with exactly these sections:\n"
         f"{MEETING_SECTIONS}\n"
-        "Use only supported specialist findings. Keep proposals and discussions out of Confirmed decisions, and do not repeat "
-        "an item across sections. Do not infer owners, deadlines, or agreement. This is a local block summary, not the final meeting summary."
+        "Use only information conveyed by the specialist handoffs. Keep proposals and discussions out of Confirmed decisions, and "
+        "do not repeat an item across sections. Do not infer owners, deadlines, or agreement. This is a local block summary, not the final meeting summary."
     )
     return chat_prompt(
         tokenizer,
