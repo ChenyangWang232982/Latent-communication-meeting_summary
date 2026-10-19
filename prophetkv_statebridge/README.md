@@ -36,20 +36,18 @@ python -m prophetkv_statebridge.run \
 
 For research-QA input, the default four specialists are `facts`, `decisions`,
 `actions`, and `risks`. For `--transcript` meeting mode, the runner defaults to
-the following stable seven-category schema:
+the following non-overlapping four-category schema:
 
-- `facts`: material background, constraints, and agreed context.
 - `decisions`: explicitly accepted or approved outcomes only.
 - `actions`: explicit assignments, commitments, owners, or deadlines.
-- `discussion`: agenda items, proposals, and brainstorming not yet settled.
-- `risks`: explicit blockers, disagreements, constraints, and uncertainty.
-- `questions`: questions that still require confirmation or investigation.
-- `next_steps`: explicit scheduling, sequencing, or process transitions that
-  are not owned action items.
+- `open_issues`: unresolved questions, risks, blockers, disagreements, and
+  uncertainty.
+- `context`: important background, proposals, and discussion that does not
+  belong to another category.
 
 This separation prevents common meeting-minute errors such as treating "we
-need to discuss finance" as a decision or treating a suggested idea as an
-assigned task.
+need to discuss finance" as a decision, and prevents the same item from being
+repeated as a fact, question, risk, and next step.
 Each uses the question to select its own four excerpts. Their last 16 states
 are concatenated, so the default StateBridge prefix has at most 64 states.
 
@@ -147,22 +145,22 @@ communication hops: specialist-to-block and block-to-final-merger.
 
 ## Fact-Centric Evidence Grounding
 
-For meeting inputs, every specialist must emit a small JSON claim list with a
+With `--evidence-policy strict`, every meeting specialist must emit a small JSON claim list with a
 literal `evidence_quote` from its source block. The runner rejects claims whose
 quotation is absent from the block or whose decision/action evidence lacks the
 required commitment cue. The same model then verifies whether each remaining
 quote explicitly supports its claim. Only `supported` claims are re-encoded as
 the StateBridge handoff; unsupported and uncertain claims do not reach the
-block receiver or final merger. This fact-centric layer is always active for
-meeting inputs and does not add a user-facing switch.
+block receiver or final merger. Use `--evidence-policy off` for the raw-handoff
+ablation; that setting improves recall but is not evidence-verified.
 
-For a real meeting, use the default seven roles. Generation continues until
+For a real meeting, use the default four meeting roles. Generation continues until
 the model emits an end token or reaches the remaining context capacity. The
-final receiver outputs the same seven stable sections.
+final receiver outputs the same four stable sections.
 
 ## Meeting transcript run
 
-The same runner accepts one UTF-8 transcript directly. It produces the seven
+The same runner accepts one UTF-8 transcript directly. It produces the four
 meeting-summary sections above for each communication condition.
 
 For multiple meeting records in JSONL (each containing `id`, `context`,

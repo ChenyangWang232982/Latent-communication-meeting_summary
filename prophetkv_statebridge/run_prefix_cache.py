@@ -41,11 +41,6 @@ from .selection import Chunk, chunk_document
 
 
 MEETING_ROLE_CONTRACTS = {
-    "facts": (
-        "List only high-confidence context needed for the minutes. Omit introductions, icebreakers, personal "
-        "details, meeting-start acknowledgements, and speculative design ideas. Do not infer a decision, action, owner, "
-        "or deadline from a job title."
-    ),
     "decisions": (
         "List only decisions explicitly accepted, agreed, chosen, approved, rejected, or committed to in the transcript. "
         "A discussion topic, observation, problem, question, or suggestion is NOT a decision. If no such statement exists, "
@@ -59,32 +54,21 @@ MEETING_ROLE_CONTRACTS = {
         "transcript explicitly states one. The supporting quote must contain both the task and its commitment or assignment; "
         "do not infer work from a person's role or from vague phrases such as 'you know what to do'."
     ),
-    "risks": (
-        "List only explicitly stated risks, blockers, constraints, uncertainties, disagreements, or unresolved questions. "
-        "A normal feature discussion is not a risk. Do not invent a risk from ordinary project context."
+    "context": (
+        "List only important background, constraints, discussion topics, proposals, and alternatives needed to understand the "
+        "meeting. Exclude accepted decisions, assigned actions, and unresolved questions or risks; those belong to other roles. "
+        "Omit introductions, icebreakers, and personal details."
     ),
-    "discussion": (
-        "List agenda items, proposals, alternatives, brainstorming, and ordinary discussion topics that were raised but not "
-        "settled. Do not call an item a decision merely because the group said it needs discussion. Do not turn a suggestion "
-        "into an action item."
-    ),
-    "questions": (
-        "List only explicit questions that need an answer, confirmation, investigation, or later resolution. Preserve the "
-        "uncertainty in the claim. A rhetorical question or a question already answered in the same quoted exchange is not a "
-        "pending question."
-    ),
-    "next_steps": (
-        "List only explicit meeting logistics, sequencing, stage transitions, or follow-up arrangements, such as when the "
-        "group will reconvene or what process stage comes next. A task with an explicit owner or commitment belongs in actions, "
-        "not next_steps. A vague intention belongs in discussion."
+    "open_issues": (
+        "List only unresolved questions, risks, blockers, constraints, disagreements, or uncertainties that still need a "
+        "decision, answer, or follow-up. Do not include a resolved decision or an assigned action."
     ),
 }
 
 QASPER_DEFAULT_ROLES = ["facts", "decisions", "actions", "risks"]
-MEETING_DEFAULT_ROLES = ["facts", "decisions", "actions", "discussion", "risks", "questions", "next_steps"]
+MEETING_DEFAULT_ROLES = ["decisions", "actions", "open_issues", "context"]
 MEETING_SECTIONS = (
-    "Key facts\nConfirmed decisions\nConfirmed action items\nDiscussion topics\n"
-    "Risks and open questions\nPending questions\nNext steps"
+    "Key context and discussion\nConfirmed decisions\nAction items\nOpen issues and risks"
 )
 
 
@@ -172,6 +156,11 @@ def specialist_user(
             f"{role}'. evidence_quote must copy a contiguous, self-sufficient passage from the source transcript; "
             "do not paraphrase it, omit filler words, or combine distant turns. "
             "Use an empty string for unknown timestamp, owner, or deadline. If no supported item exists, return []."
+        )
+    elif meeting_mode:
+        format_instruction = (
+            " Return at most five terse bullets for this role only. Do not write a full meeting summary, repeat another "
+            "role's items, or add headings, quotations, or unsupported details."
         )
     user = (
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
@@ -389,9 +378,10 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
         user = (
             f"Objective: {question}\n\nCreate a concise meeting summary with exactly these sections:\n"
             f"{MEETING_SECTIONS}\n"
-            "Keep each item in its proper section: agenda items and proposals are not decisions; unassigned process "
-            "arrangements are not action items. Under each section, write 'None explicitly stated.' when the specialist "
-            "findings provide no supported item. Only name an owner or deadline when explicitly supported by the specialist findings."
+            "Use each item once only: accepted outcomes belong in Confirmed decisions; explicit owner commitments belong in "
+            "Action items; unresolved questions, blockers, and uncertainty belong in Open issues and risks; everything else "
+            "important belongs in Key context and discussion. Under each section, write 'None explicitly stated.' when the "
+            "specialist findings provide no supported item. Only name an owner or deadline when explicitly supported by the specialist findings."
         )
     else:
         user = f"Question: {question}\n\nGive a concise factual answer."
@@ -400,7 +390,8 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
     return chat_prompt(
         tokenizer,
         "You aggregate specialist findings into an evidence-grounded response. Do not invent facts. "
-        "Treat a suggestion or discussion topic as neither a decision nor an action unless the quoted evidence states a commitment.",
+        "Treat a suggestion or discussion topic as neither a decision nor an action unless the evidence states a commitment. "
+        "Do not repeat an item across sections.",
         user,
         enable_thinking,
     )
@@ -412,8 +403,8 @@ def block_receiver_prompt(tokenizer, question: str, block_id: int, enable_thinki
         f"Objective: {question}\n\n"
         f"You are summarizing chronological meeting block {block_id}. Create a concise block-local summary with exactly these sections:\n"
         f"{MEETING_SECTIONS}\n"
-        "Use only supported specialist findings. Keep proposals and discussions out of Confirmed decisions. "
-        "Do not infer owners, deadlines, or agreement. This is a local block summary, not the final meeting summary."
+        "Use only supported specialist findings. Keep proposals and discussions out of Confirmed decisions, and do not repeat "
+        "an item across sections. Do not infer owners, deadlines, or agreement. This is a local block summary, not the final meeting summary."
     )
     return chat_prompt(
         tokenizer,

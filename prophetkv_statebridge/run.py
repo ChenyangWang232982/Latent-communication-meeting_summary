@@ -38,6 +38,8 @@ ROLE_INSTRUCTIONS = {
     "risks": "Extract unresolved issues, caveats, and risks relevant to the question.",
     "questions": "Extract explicit questions that still need confirmation, investigation, or an answer.",
     "next_steps": "Extract explicit meeting scheduling, sequencing, and process-transition arrangements that are not assigned action items.",
+    "context": "Extract important meeting context and discussion points that are neither decisions, assigned actions, nor unresolved issues.",
+    "open_issues": "Extract unresolved questions, risks, blockers, disagreements, and uncertainties relevant to the question.",
 }
 
 
