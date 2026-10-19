@@ -11,7 +11,9 @@ def test_grounded_action_requires_literal_quote_and_commitment():
     claims, rejected = parse_grounded_claims(message, role="actions", source=source, block_id=2)
     assert not rejected
     assert claims[0]["block_id"] == 2
-    assert "Alice will send" in verified_handoff("actions", claims)
+    handoff = verified_handoff("actions", claims)
+    assert "Alice will send" in handoff
+    assert handoff.index("Evidence") < handoff.index("Verified claim")
 
 
 def test_ungrounded_or_misclassified_claim_is_rejected():

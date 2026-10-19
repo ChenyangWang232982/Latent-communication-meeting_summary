@@ -220,5 +220,10 @@ def verified_handoff(role: str, claims: list[dict[str, Any]]) -> str:
         if claim["deadline"]:
             metadata.append(f"deadline={claim['deadline']}")
         suffix = f" ({'; '.join(metadata)})" if metadata else ""
-        lines.append(f"- [{role}] {claim['claim']}{suffix}\n  Evidence: \"{claim['evidence_quote']}\"")
+        # StateBridge retains the final K hidden states.  Put the compact claim
+        # after its (often much longer) quotation so it survives compression.
+        lines.append(
+            f"- Evidence [{role}]: \"{claim['evidence_quote']}\"\n"
+            f"  Verified claim: {claim['claim']}{suffix}"
+        )
     return "\n".join(lines)
