@@ -30,9 +30,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-reference-answers", type=int, default=2, help="Require this many distinct human references per question.")
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--source-max-tokens", type=int, default=8192)
-    parser.add_argument("--prefill-chunk-tokens", type=int, default=1024)
-    parser.add_argument("--agent-max-new-tokens", type=int, default=256)
-    parser.add_argument("--receiver-max-new-tokens", type=int, default=64)
     parser.add_argument("--device")
     return parser.parse_args()
 
@@ -136,9 +133,6 @@ def run_budget(records_path: Path, output_path: Path, args: argparse.Namespace, 
         sys.executable, "-m", "prophetkv_statebridge.run_prefix_cache",
         "--data", str(records_path), "--output", str(output_path), "--model", args.model,
         "--num-samples", "0", "--source-max-tokens", str(args.source_max_tokens),
-        "--prefill-chunk-tokens", str(args.prefill_chunk_tokens),
-        "--agent-max-new-tokens", str(args.agent_max_new_tokens),
-        "--receiver-max-new-tokens", str(args.receiver_max_new_tokens),
         "--prefix-tokens-per-agent", str(budget), "--roles", DEFAULT_SPECIALIST_ROLE,
         "--variants", "statebridge", "text", "no_comm",
     ]
@@ -264,8 +258,7 @@ def main() -> None:
         "samples": len(selected),
         "configuration": {
             "model": args.model, "single_specialist_role": DEFAULT_SPECIALIST_ROLE,
-            "source_max_tokens": args.source_max_tokens, "prefill_chunk_tokens": args.prefill_chunk_tokens,
-            "agent_max_new_tokens": args.agent_max_new_tokens, "receiver_max_new_tokens": args.receiver_max_new_tokens,
+            "source_max_tokens": args.source_max_tokens,
             "max_answer_words": args.max_answer_words, "min_reference_answers": args.min_reference_answers, "budgets": budgets,
         },
         "metrics_by_budget": metrics_by_budget,

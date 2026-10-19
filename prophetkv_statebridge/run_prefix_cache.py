@@ -29,9 +29,15 @@ from statebridge_qasper.run import (
     trim_context,
 )
 
-from .prefix_cache import cache_nbytes, generate_after_prefix_cache, prefill_prefix, prefill_prefix_streaming
+from .prefix_cache import (
+    cache_nbytes,
+    generate_after_embedding_prefix,
+    generate_after_prefix_cache,
+    prefill_prefix,
+)
+from .evidence import claim_packet, parse_grounded_claims, parse_verdicts, verified_handoff
 from .run import ROLE_INSTRUCTIONS
-from .selection import Chunk, chunk_document, rank_chunks
+from .selection import Chunk, chunk_document
 
 
 MEETING_ROLE_CONTRACTS = {
@@ -104,38 +110,13 @@ def parse_args() -> argparse.Namespace:
         "--source-max-tokens",
         type=int,
         default=4096,
-        help="Maximum source tokens in legacy single-prefix mode. Ignored when --document-chunk-tokens is set.",
-    )
-    parser.add_argument(
-        "--document-chunk-tokens",
-        type=int,
-        default=0,
-        help="Process the full source as independent chronological document chunks of this size. 0 keeps legacy truncation.",
+        help="Maximum source tokens for the legacy research-QA path. Meeting inputs use automatic context-aware blocks.",
     )
     parser.add_argument(
         "--document-chunk-overlap-tokens",
         type=int,
         default=0,
-        help="Token overlap between adjacent document chunks in full-document mode.",
-    )
-    parser.add_argument(
-        "--prefill-chunk-tokens",
-        type=int,
-        default=0,
-        help="Append the shared prefix in chronological chunks; 0 performs one full prefill.",
-    )
-    parser.add_argument(
-        "--backfill-rounds",
-        type=int,
-        default=0,
-        help="Fixed number of query-aware local evidence review passes per role.",
-    )
-    parser.add_argument("--backfill-chunk-tokens", type=int, default=256)
-    parser.add_argument(
-        "--backfill-neighbor-chunks",
-        type=int,
-        default=1,
-        help="Chronological neighbors included around each deterministically selected review chunk.",
+        help="Token overlap between adjacent automatically sized meeting blocks.",
     )
     parser.add_argument(
         "--roles",
@@ -144,9 +125,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Specialists to run. Defaults to seven meeting roles for --transcript and four research-QA roles for --data.",
     )
-    parser.add_argument("--agent-max-new-tokens", type=int, default=256)
-    parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
+    parser.add_argument(
+        "--block-summary-prefix-tokens",
+        type=int,
+        default=None,
+        help="StateBridge K used when each block summary is sent to the final merger. Defaults to --prefix-tokens-per-agent.",
+    )
     parser.add_argument("--snap-ratio", type=float, default=0.3)
     parser.add_argument("--regularization", type=float, default=1e-3)
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
@@ -168,30 +153,22 @@ def specialist_user(
     role: str,
     *,
     meeting_mode: bool,
-    previous_handoff: str | None = None,
-    review_packet: str | None = None,
-    review_round: int | None = None,
 ) -> str:
     task = ROLE_INSTRUCTIONS[role]
     format_instruction = ""
     if meeting_mode:
         task = MEETING_ROLE_CONTRACTS[role]
         format_instruction = (
-            " Return at most three short bullets. Every bullet must use exactly this format: "
-            "- [timestamp] \"verbatim transcript quotation\" -> claim. The quotation must be sufficient on its own to support "
-            "the claim. A timestamp alone is not evidence. If no supported item exists, output exactly: None explicitly stated."
+            " Return ONLY a JSON array, with at most three objects. Each object must have exactly these fields: "
+            "category, claim, evidence_quote, timestamp, owner, deadline, confidence. category must be '"
+            f"{role}'. evidence_quote must be a verbatim, self-sufficient quotation from the source transcript. "
+            "Use an empty string for unknown timestamp, owner, or deadline. If no supported item exists, return []."
         )
     user = (
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
         f"Task: {task} Give a concise factual handoff for another agent. "
         f"Only use the transcript. Include specific facts and state missing information rather than guessing.{format_instruction}"
     )
-    if review_packet is not None and previous_handoff is not None and review_round is not None:
-        user += (
-            f"\n\nFixed review pass {review_round}: reconsider the previous handoff using the following chronological "
-            "evidence packet. Correct over-classification and remove unsupported claims.\n\n"
-            f"Previous handoff:\n{previous_handoff}\n\nEvidence packet:\n{review_packet}"
-        )
     return user
 
 
@@ -203,9 +180,6 @@ def specialist_prompt(
     enable_thinking: bool,
     *,
     meeting_mode: bool,
-    previous_handoff: str | None = None,
-    review_packet: str | None = None,
-    review_round: int | None = None,
 ) -> str:
     """Build a normal Qwen chat prompt; cache only its token-identical prefix."""
     user = specialist_user(
@@ -213,9 +187,6 @@ def specialist_prompt(
         record,
         role,
         meeting_mode=meeting_mode,
-        previous_handoff=previous_handoff,
-        review_packet=review_packet,
-        review_round=review_round,
     )
     return chat_prompt(
         tokenizer,
@@ -238,20 +209,6 @@ def common_prefix_length(token_batches: list[torch.Tensor]) -> int:
     return limit
 
 
-def review_packet(ranked_chunks, round_index: int, neighbors: int) -> str:
-    """Select a deterministic ranked chunk and its chronological neighbors."""
-    if not ranked_chunks:
-        return "No additional evidence is available."
-    selected, _ = ranked_chunks[round_index % len(ranked_chunks)]
-    all_chunks = {chunk.chunk_id: chunk for chunk, _ in ranked_chunks}
-    packet = []
-    for chunk_id in range(max(0, selected.chunk_id - neighbors), selected.chunk_id + neighbors + 1):
-        chunk = all_chunks.get(chunk_id)
-        if chunk is not None:
-            packet.append(f"[review chunk {chunk.chunk_id}]\n{chunk.text}")
-    return "\n\n".join(packet)
-
-
 @torch.inference_mode()
 def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_ids: torch.Tensor, args):
     message_ids, states = generate_after_prefix_cache(
@@ -260,11 +217,55 @@ def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_
         prefix_cache,
         prefix_length,
         suffix_ids,
-        max_new_tokens=args.agent_max_new_tokens,
+        max_context_tokens=args.model_context_tokens,
     )
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
     count = min(args.prefix_tokens_per_agent, message_ids.size(1))
     return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:], int(message_ids.size(1))
+
+
+@torch.inference_mode()
+def states_for_handoff(model, tokenizer, handoff: str, args) -> tuple[torch.Tensor, torch.Tensor, int]:
+    """Encode verified text so StateBridge receives only grounded information."""
+    encoded = tokenizer(handoff, return_tensors="pt", add_special_tokens=False).to(args.device)
+    outputs = model(
+        input_ids=encoded.input_ids,
+        attention_mask=encoded.attention_mask,
+        output_hidden_states=True,
+        return_dict=True,
+    )
+    count = min(args.prefix_tokens_per_agent, encoded.input_ids.size(1))
+    return outputs.hidden_states[-1][0, -count:], encoded.input_ids[0, -count:], int(encoded.input_ids.size(1))
+
+
+@torch.inference_mode()
+def semantically_supported_claims(model, tokenizer, claims: list[dict[str, Any]], args) -> tuple[list[dict[str, Any]], str]:
+    """Use the same model to verify whether each located quote entails its claim."""
+    if not claims:
+        return [], "[]"
+    user = (
+        "For every item below, determine whether evidence_quote explicitly supports claim. "
+        "Return ONLY a JSON array of objects with fields index and verdict. verdict must be exactly supported, "
+        "unsupported, or uncertain. Do not infer unstated owners, deadlines, decisions, or actions.\n\n"
+        f"Items:\n{claim_packet(claims)}"
+    )
+    prompt = chat_prompt(
+        tokenizer,
+        "You are a strict evidence verifier for meeting minutes.",
+        user,
+        args.enable_thinking,
+    )
+    encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
+    _, verdict_ids = generate_from_ids(
+        model,
+        tokenizer,
+        encoded.input_ids,
+        encoded.attention_mask,
+        available_generation_tokens(args, encoded.input_ids.size(1)),
+    )
+    verdict_message = decode(tokenizer, verdict_ids)
+    supported = parse_verdicts(verdict_message, len(claims))
+    return [claim for index, claim in enumerate(claims) if index in supported], verdict_message
 
 
 @torch.inference_mode()
@@ -275,12 +276,6 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
     deliberately return latent handoffs rather than attempting to concatenate
     independent KV caches from different blocks.
     """
-    source_chunks = chunk_document(
-        tokenizer,
-        source,
-        chunk_tokens=args.backfill_chunk_tokens,
-        overlap_tokens=0,
-    )
     role_inputs = [
         tokenizer(
             specialist_prompt(tokenizer, source, record, role, args.enable_thinking, meeting_mode=meeting_mode),
@@ -304,13 +299,8 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
 
     encoded_prefix = role_inputs[0][:, :common_length]
     started = time.perf_counter()
-    if args.prefill_chunk_tokens:
-        prefix_cache, prefill_chunks = prefill_prefix_streaming(
-            model, encoded_prefix, chunk_tokens=args.prefill_chunk_tokens
-        )
-    else:
-        prefix_cache = prefill_prefix(model, encoded_prefix)
-        prefill_chunks = 1
+    prefix_cache = prefill_prefix(model, encoded_prefix)
+    prefill_chunks = 1
     if args.device.startswith("cuda"):
         torch.cuda.synchronize()
     prefill_seconds = time.perf_counter() - started
@@ -318,36 +308,40 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
 
     specialists, specialist_token_metrics, all_states, all_ids = [], [], [], []
     for role, full_prompt_ids in zip(args.roles, role_inputs):
-        message, states, token_ids, handoff_tokens = specialist_from_cache(
+        raw_message, states, token_ids, generated_tokens = specialist_from_cache(
             model, tokenizer, prefix_cache, encoded_prefix.size(1), full_prompt_ids[:, common_length:], args
         )
-        generation_tokens_total = handoff_tokens
-        reviews = []
-        ranking_query = f"{record['question']} {MEETING_ROLE_CONTRACTS.get(role, ROLE_INSTRUCTIONS[role])}"
-        ranked = rank_chunks(source_chunks, ranking_query)
-        for review_round in range(args.backfill_rounds):
-            packet = review_packet(ranked, review_round, args.backfill_neighbor_chunks)
-            review_ids = tokenizer(
-                specialist_prompt(
-                    tokenizer, source, record, role, args.enable_thinking,
-                    meeting_mode=meeting_mode, previous_handoff=message,
-                    review_packet=packet, review_round=review_round + 1,
-                ),
-                return_tensors="pt", add_special_tokens=False,
-            ).to(args.device).input_ids
-            if not torch.equal(review_ids[:, :common_length], encoded_prefix):
-                raise RuntimeError("Review prompt no longer shares the cached transcript prefix.")
-            message, states, token_ids, handoff_tokens = specialist_from_cache(
-                model, tokenizer, prefix_cache, encoded_prefix.size(1), review_ids[:, common_length:], args
+        verified_claims: list[dict[str, Any]] = []
+        rejection_reasons: list[str] = []
+        verifier_output = ""
+        if meeting_mode:
+            parsed_claims, rejection_reasons = parse_grounded_claims(
+                raw_message, role=role, source=source, block_id=block.chunk_id
             )
-            generation_tokens_total += handoff_tokens
-            reviews.append({"round": review_round + 1, "packet": packet})
-        specialists.append({"role": role, "message": message, "backfill_reviews": reviews})
+            verified_claims, verifier_output = semantically_supported_claims(model, tokenizer, parsed_claims, args)
+            if len(verified_claims) < len(parsed_claims):
+                rejection_reasons.append("semantic verifier did not mark one or more claims as supported")
+            message = verified_handoff(role, verified_claims)
+            states, token_ids, handoff_tokens = states_for_handoff(model, tokenizer, message, args)
+        else:
+            message = raw_message
+            handoff_tokens = generated_tokens
+        specialists.append(
+            {
+                "role": role,
+                "message": message,
+                "claims": verified_claims,
+                "raw_message": raw_message,
+                "rejection_reasons": rejection_reasons,
+                "verifier_output": verifier_output,
+            }
+        )
         specialist_token_metrics.append({
             "block_id": block.chunk_id,
             "role": role,
             "handoff_tokens": handoff_tokens,
-            "generation_tokens_total": generation_tokens_total,
+            "generated_tokens": generated_tokens,
+            "verified_claims": len(verified_claims),
             "selected_states": int(states.size(0)),
         })
         all_states.append(states)
@@ -389,36 +383,156 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
     )
 
 
+def block_receiver_prompt(tokenizer, question: str, block_id: int, enable_thinking: bool) -> str:
+    """Ask a receiver to summarize one block without promoting local claims globally."""
+    user = (
+        f"Objective: {question}\n\n"
+        f"You are summarizing chronological meeting block {block_id}. Create a concise block-local summary with exactly these sections:\n"
+        f"{MEETING_SECTIONS}\n"
+        "Use only supported specialist findings. Keep proposals and discussions out of Confirmed decisions. "
+        "Do not infer owners, deadlines, or agreement. This is a local block summary, not the final meeting summary."
+    )
+    return chat_prompt(
+        tokenizer,
+        "You aggregate specialist findings into an evidence-grounded block summary. Do not invent facts.",
+        user,
+        enable_thinking,
+    )
+
+
+def final_merge_prompt(tokenizer, question: str, enable_thinking: bool, reports: str | None = None) -> str:
+    user = (
+        f"Objective: {question}\n\nCreate the final evidence-grounded meeting summary with exactly these sections:\n"
+        f"{MEETING_SECTIONS}\n"
+        "Merge the chronological block summaries. Deduplicate repeated facts. When an earlier proposal conflicts with a later "
+        "confirmed outcome, use the later outcome. Do not invent facts, owners, deadlines, decisions, or action items."
+    )
+    if reports is not None:
+        user += f"\n\nChronological block summaries:\n{reports}"
+    return chat_prompt(
+        tokenizer,
+        "You merge evidence-grounded block summaries into final meeting minutes.",
+        user,
+        enable_thinking,
+    )
+
+
 @torch.inference_mode()
 def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args, *, meeting_mode: bool):
     if variant == "text":
         prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, reports, meeting_mode=meeting_mode)
         encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
-        _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, args.receiver_max_new_tokens)
+        _, answer_ids = generate_from_ids(
+            model, tokenizer, encoded.input_ids, encoded.attention_mask,
+            available_generation_tokens(args, encoded.input_ids.size(1)),
+        )
         return decode(tokenizer, answer_ids)
     prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, meeting_mode=meeting_mode)
     encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
     if variant == "no_comm":
-        _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, args.receiver_max_new_tokens)
+        _, answer_ids = generate_from_ids(
+            model, tokenizer, encoded.input_ids, encoded.attention_mask,
+            available_generation_tokens(args, encoded.input_ids.size(1)),
+        )
         return decode(tokenizer, answer_ids)
     prefix = bridge.align(states, token_ids)
-    return decode(tokenizer, generate_from_prefix(model, tokenizer, encoded.input_ids, prefix, args.receiver_max_new_tokens))
+    return decode(
+        tokenizer,
+        generate_from_prefix(
+            model, tokenizer, encoded.input_ids, prefix,
+            available_generation_tokens(args, encoded.input_ids.size(1) + prefix.size(0)),
+        ),
+    )
+
+
+@torch.inference_mode()
+def statebridge_block_summary(model, tokenizer, bridge, record, block_result, args) -> dict[str, Any]:
+    """Turn one block's specialist messages into a local summary and bridge-ready states."""
+    prompt = block_receiver_prompt(tokenizer, record["question"], block_result["block_id"], args.enable_thinking)
+    encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
+    specialist_prefix = bridge.align(block_result["states"], block_result["token_ids"])
+    summary_ids, summary_states = generate_after_embedding_prefix(
+        model,
+        tokenizer,
+        encoded.input_ids,
+        specialist_prefix,
+        max_context_tokens=args.model_context_tokens,
+    )
+    summary_ids, summary_states = remove_thinking_tokens(tokenizer, summary_ids, summary_states)
+    if summary_ids.size(1) < 2:
+        raise RuntimeError(f"Block {block_result['block_id']} summary produced fewer than two usable tokens.")
+    count = min(args.block_summary_prefix_tokens, summary_ids.size(1))
+    return {
+        "block_id": block_result["block_id"],
+        "summary": decode(tokenizer, summary_ids),
+        "states": summary_states[-count:],
+        "token_ids": summary_ids[0, -count:],
+        "summary_tokens": int(summary_ids.size(1)),
+        "selected_states": count,
+    }
+
+
+@torch.inference_mode()
+def merge_block_summaries(model, tokenizer, bridge, record, block_summaries, variant, args) -> str:
+    """Produce the final answer from chronological block summaries.
+
+    The statebridge variant receives latent states produced by the block receivers;
+    the text variant receives the same summaries as natural language.
+    """
+    reports = "\n\n".join(
+        f"[block {item['block_id']}]\n{item['summary']}" for item in block_summaries
+    )
+    if variant == "text":
+        prompt = final_merge_prompt(tokenizer, record["question"], args.enable_thinking, reports)
+        encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
+        _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, available_generation_tokens(args, encoded.input_ids.size(1)))
+        return decode(tokenizer, answer_ids)
+    prompt = final_merge_prompt(tokenizer, record["question"], args.enable_thinking)
+    encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
+    if variant == "no_comm":
+        _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, available_generation_tokens(args, encoded.input_ids.size(1)))
+        return decode(tokenizer, answer_ids)
+    states = torch.cat([item["states"] for item in block_summaries])
+    token_ids = torch.cat([item["token_ids"] for item in block_summaries])
+    prefix = bridge.align(states, token_ids)
+    return decode(tokenizer, generate_from_prefix(model, tokenizer, encoded.input_ids, prefix, available_generation_tokens(args, encoded.input_ids.size(1) + prefix.size(0))))
+
+
+def model_context_tokens(model, tokenizer) -> int:
+    """Return the usable context limit declared by the loaded model/tokenizer."""
+    candidates = [getattr(model.config, "max_position_embeddings", None)]
+    tokenizer_limit = getattr(tokenizer, "model_max_length", None)
+    # Some tokenizers use a huge sentinel instead of a real context limit.
+    if isinstance(tokenizer_limit, int) and 32 <= tokenizer_limit < 1_000_000:
+        candidates.append(tokenizer_limit)
+    limits = [value for value in candidates if isinstance(value, int) and value >= 32]
+    if not limits:
+        raise ValueError("Could not determine the loaded model's maximum context length.")
+    return min(limits)
+
+
+def automatic_meeting_block_tokens(model, tokenizer) -> int:
+    """Choose a conservative source budget from the loaded model context limit."""
+    return max(32, int(model_context_tokens(model, tokenizer) * 0.75))
+
+
+def available_generation_tokens(args, occupied_tokens: int) -> int:
+    remaining_tokens = args.model_context_tokens - occupied_tokens
+    if remaining_tokens < 1:
+        raise RuntimeError("The prompt fills the model context window; no output tokens remain.")
+    return remaining_tokens
 
 
 def main() -> None:
     args = parse_args()
     if args.prefix_tokens_per_agent < 2:
         raise ValueError("--prefix-tokens-per-agent must be at least 2")
-    if args.backfill_rounds < 0:
-        raise ValueError("--backfill-rounds cannot be negative")
-    if args.backfill_neighbor_chunks < 0:
-        raise ValueError("--backfill-neighbor-chunks cannot be negative")
-    if args.document_chunk_tokens and args.document_chunk_tokens < 32:
-        raise ValueError("--document-chunk-tokens must be 0 or at least 32")
+    if args.block_summary_prefix_tokens is None:
+        args.block_summary_prefix_tokens = args.prefix_tokens_per_agent
+    if args.block_summary_prefix_tokens < 2:
+        raise ValueError("--block-summary-prefix-tokens must be at least 2")
     if args.document_chunk_overlap_tokens < 0:
         raise ValueError("--document-chunk-overlap-tokens cannot be negative")
-    if args.document_chunk_tokens and args.document_chunk_overlap_tokens >= args.document_chunk_tokens:
-        raise ValueError("--document-chunk-overlap-tokens must be smaller than --document-chunk-tokens")
     torch.manual_seed(args.seed)
     meeting_mode = args.transcript is not None or args.meeting_data is not None
     if args.roles is None:
@@ -445,6 +559,10 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype).to(args.device).eval()
     bridge = StateBridge(model.get_input_embeddings().weight, regularization=args.regularization, snap_ratio=args.snap_ratio, vocab_chunk_size=args.vocab_chunk_size)
+    args.model_context_tokens = model_context_tokens(model, tokenizer)
+    meeting_block_tokens = automatic_meeting_block_tokens(model, tokenizer) if meeting_mode else 0
+    if meeting_mode and args.document_chunk_overlap_tokens >= meeting_block_tokens:
+        raise ValueError("--document-chunk-overlap-tokens must be smaller than the automatic meeting block size")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     jsonl_path = args.output.with_suffix(".jsonl")
@@ -452,23 +570,22 @@ def main() -> None:
         run_kind = "Meeting" if meeting_mode else "QASPER"
         communication_totals = {"text_tokens": 0, "latent_states": 0}
         report.write(f"Cross-agent Prefix KV Cache + StateBridge {run_kind} run: {datetime.now().isoformat(timespec='seconds')}\n")
-        prefill_mode = "single prefill" if args.prefill_chunk_tokens == 0 else f"streaming chunks of {args.prefill_chunk_tokens} tokens"
         source_mode = (
-            f"full document in chronological blocks of {args.document_chunk_tokens} tokens"
-            if args.document_chunk_tokens
+            f"full document in chronological blocks of {meeting_block_tokens} tokens (75% of loaded model context; {args.document_chunk_overlap_tokens}-token overlap)"
+            if meeting_mode
             else f"legacy first {args.source_max_tokens} source tokens"
         )
         report.write(f"model={args.model}, source_mode={source_mode}, roles={','.join(args.roles)}\n")
         report.write(
-            f"Each source block is prefetched once ({prefill_mode}) and reused by cloned per-agent KV caches. "
-            "Different blocks exchange stacked specialist handoffs, not concatenated KV caches.\n\n"
+            "Each source block is prefetched once and reused by cloned per-agent KV caches. "
+            "For multi-block meetings, each block becomes a StateBridge summary and those summaries are merged through a second StateBridge handoff.\n\n"
         )
         for index, record in enumerate(records, start=1):
-            if args.document_chunk_tokens:
+            if meeting_mode:
                 document_blocks = chunk_document(
                     tokenizer,
                     record["context"],
-                    chunk_tokens=args.document_chunk_tokens,
+                    chunk_tokens=meeting_block_tokens,
                     overlap_tokens=args.document_chunk_overlap_tokens,
                 )
             else:
@@ -506,18 +623,35 @@ def main() -> None:
             prefill_chunks = sum(block_result["prefix_prefill_chunks"] for block_result in block_results)
             text_handoff_tokens = len(tokenizer(reports, add_special_tokens=False).input_ids)
             latent_states = int(states.size(0))
-            communication_delta = latent_states - text_handoff_tokens
-            communication_percent = 0.0 if text_handoff_tokens == 0 else communication_delta * 100.0 / text_handoff_tokens
-            communication_totals["text_tokens"] += text_handoff_tokens
-            communication_totals["latent_states"] += latent_states
+            hierarchical_merge = meeting_mode and len(block_results) > 1
+            block_summaries = []
+            if hierarchical_merge:
+                block_summaries = [
+                    statebridge_block_summary(model, tokenizer, bridge, record, block_result, args)
+                    for block_result in block_results
+                ]
+            block_summary_text_tokens = sum(item["summary_tokens"] for item in block_summaries)
+            block_summary_latent_states = sum(item["selected_states"] for item in block_summaries)
+            total_text_tokens = text_handoff_tokens + block_summary_text_tokens
+            total_latent_states = latent_states + block_summary_latent_states
+            communication_delta = total_latent_states - total_text_tokens
+            communication_percent = 0.0 if total_text_tokens == 0 else communication_delta * 100.0 / total_text_tokens
+            communication_totals["text_tokens"] += total_text_tokens
+            communication_totals["latent_states"] += total_latent_states
             answers = {}
             if not args.communication_metrics_only:
-                answers = {
-                    variant: answer_variant(
-                        model, tokenizer, bridge, record, reports, states, token_ids, variant, args, meeting_mode=meeting_mode
-                    )
-                    for variant in args.variants
-                }
+                if hierarchical_merge:
+                    answers = {
+                        variant: merge_block_summaries(model, tokenizer, bridge, record, block_summaries, variant, args)
+                        for variant in args.variants
+                    }
+                else:
+                    answers = {
+                        variant: answer_variant(
+                            model, tokenizer, bridge, record, reports, states, token_ids, variant, args, meeting_mode=meeting_mode
+                        )
+                        for variant in args.variants
+                    }
             result = {
                 "id": record["id"],
                 "question": record["question"],
@@ -537,38 +671,65 @@ def main() -> None:
                     }
                     for block_result in block_results
                 ],
-                "statebridge_tokens": latent_states,
+                "statebridge_tokens": total_latent_states,
                 "communication": {
-                    "text_handoff_tokens": text_handoff_tokens,
-                    "latent_state_tokens": latent_states,
+                    "text_handoff_tokens": total_text_tokens,
+                    "latent_state_tokens": total_latent_states,
                     "latent_minus_text_tokens": communication_delta,
                     "latent_minus_text_percent": communication_percent,
+                    "specialist_to_block": {
+                        "text_handoff_tokens": text_handoff_tokens,
+                        "latent_state_tokens": latent_states,
+                    },
+                    "block_to_final": {
+                        "text_handoff_tokens": block_summary_text_tokens,
+                        "latent_state_tokens": block_summary_latent_states,
+                    },
                 },
                 "specialist_token_metrics": specialist_token_metrics,
                 "specialists": [] if args.communication_metrics_only else specialists,
-                "backfill_rounds": args.backfill_rounds,
+                "hierarchical_block_merge": hierarchical_merge,
+                "block_summaries": [
+                    {
+                        "block_id": item["block_id"],
+                        "summary_tokens": item["summary_tokens"],
+                        "selected_states": item["selected_states"],
+                        "summary": item["summary"],
+                    }
+                    for item in block_summaries
+                ],
                 "answers": answers,
             }
             jsonl.write(json.dumps(result, ensure_ascii=False) + "\n")
             jsonl.flush()
             report.write("=" * 80 + f"\nSample {index}\nId: {record['id']}\n\nQuestion:\n{record['question']}\n\n")
             report.write(
-                f"Document blocks: {len(block_results)}; combined prefixes: {result['prefix_tokens']} tokens in "
-                f"{prefill_chunks} chronological cache updates; peak block KV cache: {prefix_bytes / 2**20:.1f} MiB; "
+                f"Document blocks: {len(block_results)}; combined prefixes: {result['prefix_tokens']} tokens; "
+                f"one KV prefill per block; peak block KV cache: {prefix_bytes / 2**20:.1f} MiB; "
                 f"total prefill: {prefill_seconds:.2f}s\n"
             )
             report.write(f"StateBridge specialist prefix: {states.size(0)} tokens\n\n")
+            if hierarchical_merge:
+                report.write(
+                    f"Hierarchical merge: {len(block_summaries)} block summaries; "
+                    f"text={block_summary_text_tokens} tokens; latent={block_summary_latent_states} states.\n\n"
+                )
             report.write(
-                "Communication cost (specialists -> receiver): "
-                f"text={text_handoff_tokens} tokens; latent={latent_states} states; "
+                "Communication cost (all StateBridge hops): "
+                f"text={total_text_tokens} tokens; latent={total_latent_states} states; "
                 f"latent-text={communication_delta:+d} tokens ({communication_percent:+.1f}%). "
                 "Negative means latent saved communication units; positive means latent used more.\n\n"
             )
             if not args.communication_metrics_only:
+                for item in block_summaries:
+                    report.write(f"block {item['block_id']} summary (debug only):\n{item['summary']}\n\n")
                 for item in specialists:
                     report.write(f"block {item['block_id']} | {item['role']} handoff (debug only):\n{item['message']}\n\n")
-                    for review in item["backfill_reviews"]:
-                        report.write(f"{item['role']} fixed backfill pass {review['round']} evidence:\n{review['packet']}\n\n")
+                    if meeting_mode:
+                        report.write(
+                            f"verified claims: {len(item['claims'])}; rejected: "
+                            f"{'; '.join(item['rejection_reasons']) or 'none'}\n\n"
+                        )
                 for variant, answer in answers.items():
                     report.write(f"{variant} answer:\n{answer}\n\n")
                 if not meeting_mode:

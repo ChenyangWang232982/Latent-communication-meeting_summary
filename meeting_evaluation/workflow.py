@@ -33,18 +33,11 @@ def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig, *, mee
             # defaults to one record, so explicitly request all of this set.
             "--num-samples", "0",
             "--source-max-tokens", str(config.source_max_tokens),
-            "--prefill-chunk-tokens", str(config.prefill_chunk_tokens),
-            "--backfill-rounds", str(config.backfill_rounds),
-            "--agent-max-new-tokens", str(config.agent_max_new_tokens),
-            "--receiver-max-new-tokens", str(config.receiver_max_new_tokens),
             "--prefix-tokens-per-agent", str(config.prefix_tokens_per_agent),
             "--variants", "statebridge", "text", "no_comm",
         ]
-        if config.document_chunk_tokens:
-            command.extend([
-                "--document-chunk-tokens", str(config.document_chunk_tokens),
-                "--document-chunk-overlap-tokens", str(config.document_chunk_overlap_tokens),
-            ])
+        if config.document_chunk_overlap_tokens:
+            command.extend(["--document-chunk-overlap-tokens", str(config.document_chunk_overlap_tokens)])
         if config.device:
             command.extend(["--device", config.device])
         subprocess.run(command, check=True)

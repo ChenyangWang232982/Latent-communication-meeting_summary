@@ -36,7 +36,6 @@ python -m meeting_evaluation.test \
   --num-samples 8 \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 8192 \
-  --prefill-chunk-tokens 1024 \
   --prefix-tokens-per-agent 64
 ```
 
@@ -75,14 +74,15 @@ truncating the meeting to `--source-max-tokens`:
 python -m meeting_evaluation.test \
   --benchmark ami \
   --input input/my_long_meeting.txt \
-  --reference input/my_long_meeting_reference.txt \
-  --document-chunk-tokens 8192 \
-  --prefill-chunk-tokens 1024
+  --reference input/my_long_meeting_reference.txt
 ```
 
 Each document block has an independent shared Prefix KV cache. Only the
-specialist handoffs are stacked chronologically for the final receiver; block
-KV caches are not concatenated.
+specialists within that block reuse its cache. For multi-block meetings, each
+block produces a StateBridge summary, and a second StateBridge handoff passes
+the chronological block summaries to the final merger; block KV caches are
+never concatenated. The block size is automatically set to 75% of the loaded
+model context limit.
 
 ## Run All Benchmarks
 

@@ -98,7 +98,6 @@ python -m prophetkv_statebridge.run_prefix_cache \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 4096 \
   --roles facts \
-  --agent-max-new-tokens 256 \
   --prefix-tokens-per-agent 256
 ```
 
@@ -121,41 +120,45 @@ communication-cost sweep.
 For a dedicated communication-only test entry point, use
 `python -m prophetkv_statebridge.communication_benchmark` with the same
 arguments as `run_prefix_cache.py`. It always suppresses handoff, review, and
-answer content in its report, but it still executes any requested backfill
-rounds before measuring the final specialist-to-receiver communication.
-
-To construct the same shared cache as chronological updates (`KV1 -> KV1-2 ->
-KV1-2-3`), add `--prefill-chunk-tokens 1024`. Each new 1024-token block is
-forwarded with the previous block's `past_key_values`; separate chunk caches
-are never manually concatenated.
+answer content in its report while measuring the generated specialist-to-receiver
+communication.
 
 For a transcript longer than one model context, use document blocks instead of
 raising `--source-max-tokens`. Each document block gets its own exact shared
-Prefix KV cache, and the resulting specialist hidden-state handoffs are stacked
-chronologically before the final receiver. Independent KV caches are never
-concatenated. For example:
+Prefix KV cache. For a meeting split into two or more blocks, the runner first
+uses StateBridge to produce one structured block summary per block, then uses a
+second StateBridge handoff to pass those chronological block summaries to the
+final merger. Independent KV caches are never concatenated. For example:
 
 ```bash
 python -m prophetkv_statebridge.run_prefix_cache \
   --transcript input/my_long_meeting.txt \
   --output output/my_long_meeting.txt \
-  --document-chunk-tokens 8192 \
-  --prefill-chunk-tokens 1024 \
+  --document-chunk-overlap-tokens 512 \
   --prefix-tokens-per-agent 64 \
+  --block-summary-prefix-tokens 64 \
   --variants statebridge
 ```
 
-`--backfill-rounds N` adds exactly `N` deterministic review passes for every
-role. Each pass appends a query-ranked local transcript packet to a clone of
-the shared meeting cache and asks the role to revise its previous handoff.
-The number of passes is a command-line experiment parameter, not an Agent
-decision. Use `--backfill-chunk-tokens` and `--backfill-neighbor-chunks` to
-control the local reread evidence.
+The meeting runner reads the loaded model's context limit and automatically
+uses 75% of it as the document-block budget. The `text` control passes the
+same block summaries to the merger as natural language. The report counts both
+communication hops: specialist-to-block and block-to-final-merger.
 
-For a real meeting, use the default seven roles. Keep each role's handoff
-concise (for example `--agent-max-new-tokens 256`) so the StateBridge
-aggregator receives useful, distinct evidence rather than repeated long
-summaries. The final receiver outputs the same seven stable sections.
+## Fact-Centric Evidence Grounding
+
+For meeting inputs, every specialist must emit a small JSON claim list with a
+literal `evidence_quote` from its source block. The runner rejects claims whose
+quotation is absent from the block or whose decision/action evidence lacks the
+required commitment cue. The same model then verifies whether each remaining
+quote explicitly supports its claim. Only `supported` claims are re-encoded as
+the StateBridge handoff; unsupported and uncertain claims do not reach the
+block receiver or final merger. This fact-centric layer is always active for
+meeting inputs and does not add a user-facing switch.
+
+For a real meeting, use the default seven roles. Generation continues until
+the model emits an end token or reaches the remaining context capacity. The
+final receiver outputs the same seven stable sections.
 
 ## Meeting transcript run
 
@@ -178,15 +181,13 @@ python -m prophetkv_statebridge.run_prefix_cache \
   --output output/my_meeting_statebridge.txt \
   --model Qwen/Qwen3-4B \
   --source-max-tokens 8192 \
-  --prefill-chunk-tokens 1024 \
-  --backfill-rounds 2 \
-  --backfill-chunk-tokens 256 \
-  --backfill-neighbor-chunks 1 \
-  --agent-max-new-tokens 128 \
   --prefix-tokens-per-agent 128
 ```
 
-The long transcript is prefetched once; all seven meeting roles reuse its exact common
-chat-prefix KV cache. The `text` condition is the natural-language handoff
-control, `statebridge` passes only aligned continuous states, and `no_comm`
-shows what the aggregator produces without specialist evidence.
+For a single block, the transcript is prefetched once and all seven meeting
+roles reuse its exact common chat-prefix KV cache. For multiple document
+blocks, this occurs once per block; each block then produces a StateBridge
+summary before the final chronological merge. The `text` condition is the
+natural-language handoff control, `statebridge` passes only aligned continuous
+states, and `no_comm` shows what the aggregator produces without specialist
+evidence.

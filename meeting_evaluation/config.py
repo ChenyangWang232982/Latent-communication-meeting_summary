@@ -10,12 +10,7 @@ from pathlib import Path
 class WorkflowConfig:
     model: str = "Qwen/Qwen3-4B"
     source_max_tokens: int = 8192
-    document_chunk_tokens: int = 0
     document_chunk_overlap_tokens: int = 0
-    prefill_chunk_tokens: int = 1024
-    backfill_rounds: int = 0
-    agent_max_new_tokens: int = 128
-    receiver_max_new_tokens: int = 192
     prefix_tokens_per_agent: int = 64
     device: str | None = None
     num_samples: int = 0

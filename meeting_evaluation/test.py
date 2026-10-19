@@ -26,12 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--num-samples", type=int, default=0, help="0 evaluates every available record.")
     parser.add_argument("--source-max-tokens", type=int, default=8192)
-    parser.add_argument("--document-chunk-tokens", type=int, default=0, help="Read the full source in chronological blocks; 0 keeps the legacy source limit.")
     parser.add_argument("--document-chunk-overlap-tokens", type=int, default=0)
-    parser.add_argument("--prefill-chunk-tokens", type=int, default=1024)
-    parser.add_argument("--backfill-rounds", type=int, default=0)
-    parser.add_argument("--agent-max-new-tokens", type=int, default=128)
-    parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
     parser.add_argument("--device")
     return parser.parse_args()
@@ -48,12 +43,7 @@ def main() -> None:
     config = WorkflowConfig(
         model=args.model,
         source_max_tokens=args.source_max_tokens,
-        document_chunk_tokens=args.document_chunk_tokens,
         document_chunk_overlap_tokens=args.document_chunk_overlap_tokens,
-        prefill_chunk_tokens=args.prefill_chunk_tokens,
-        backfill_rounds=args.backfill_rounds,
-        agent_max_new_tokens=args.agent_max_new_tokens,
-        receiver_max_new_tokens=args.receiver_max_new_tokens,
         prefix_tokens_per_agent=args.prefix_tokens_per_agent,
         device=args.device,
         num_samples=args.num_samples,

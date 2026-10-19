@@ -60,39 +60,6 @@ def prefill_prefix(model, prefix_ids: torch.Tensor):
 
 
 @torch.inference_mode()
-def prefill_prefix_streaming(model, prefix_ids: torch.Tensor, *, chunk_tokens: int):
-    """Build one exact prefix cache by appending chronological token chunks.
-
-    ``chunk 2`` receives the cache produced by ``chunk 1``; no independent
-    caches are concatenated.  When the complete prefix fits the model context,
-    the result is the streaming counterpart of a single full-prefix prefill.
-    """
-    if chunk_tokens < 1:
-        raise ValueError("chunk_tokens must be positive")
-    if prefix_ids.ndim != 2 or prefix_ids.size(0) != 1:
-        raise ValueError("prefix_ids must have shape [1, sequence_length]")
-
-    cache = None
-    total_tokens = prefix_ids.size(1)
-    chunks = 0
-    for start in range(0, total_tokens, chunk_tokens):
-        end = min(start + chunk_tokens, total_tokens)
-        current_ids = prefix_ids[:, start:end]
-        outputs = model(
-            input_ids=current_ids,
-            attention_mask=torch.ones((1, end), device=prefix_ids.device, dtype=torch.long),
-            past_key_values=cache,
-            use_cache=True,
-            return_dict=True,
-        )
-        cache = outputs.past_key_values
-        chunks += 1
-    if cache is None:
-        raise RuntimeError("Cannot prefill an empty prefix")
-    return cache, chunks
-
-
-@torch.inference_mode()
 def generate_after_prefix_cache(
     model,
     tokenizer,
@@ -100,7 +67,7 @@ def generate_after_prefix_cache(
     prefix_length: int,
     suffix_ids: torch.Tensor,
     *,
-    max_new_tokens: int,
+    max_context_tokens: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Greedily generate a specialist response after an exact cached prefix.
 
@@ -124,13 +91,71 @@ def generate_after_prefix_cache(
     generated_states: list[torch.Tensor] = []
     eos_ids = {token_id for token_id in (tokenizer.eos_token_id, tokenizer.pad_token_id) if token_id is not None}
 
-    for step in range(max_new_tokens):
+    remaining_tokens = max_context_tokens - prefix_length - suffix_length
+    if remaining_tokens < 1:
+        raise RuntimeError("The specialist prompt leaves no generation space in the model context window.")
+    for step in range(remaining_tokens):
         current_id = next_token
         generated_ids.append(current_id)
         current_length = prefix_length + suffix_length + step + 1
         outputs = model(
             input_ids=current_id,
             attention_mask=torch.ones((1, current_length), device=device, dtype=torch.long),
+            past_key_values=cache,
+            use_cache=True,
+            output_hidden_states=True,
+            return_dict=True,
+        )
+        generated_states.append(outputs.hidden_states[-1][:, -1, :])
+        cache = outputs.past_key_values
+        if int(current_id.item()) in eos_ids:
+            break
+        next_token = outputs.logits[:, -1:].argmax(dim=-1)
+
+    return torch.cat(generated_ids, dim=1), torch.cat(generated_states, dim=0)
+
+
+@torch.inference_mode()
+def generate_after_embedding_prefix(
+    model,
+    tokenizer,
+    prompt_ids: torch.Tensor,
+    embedding_prefix: torch.Tensor,
+    *,
+    max_context_tokens: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Generate after a continuous prefix and retain states for a later bridge.
+
+    ``embedding_prefix`` is a StateBridge message rather than a token cache.  The
+    emitted states are therefore captured during decoding, which lets a block
+    receiver become the sender for the final document-level merger.
+    """
+    embedding_layer = model.get_input_embeddings()
+    prompt_embeddings = embedding_layer(prompt_ids)
+    inputs_embeds = torch.cat([embedding_prefix.unsqueeze(0), prompt_embeddings], dim=1)
+    device = inputs_embeds.device
+    prefix_length = inputs_embeds.size(1)
+    outputs = model(
+        inputs_embeds=inputs_embeds,
+        attention_mask=torch.ones((1, prefix_length), device=device, dtype=torch.long),
+        use_cache=True,
+        return_dict=True,
+    )
+    cache = outputs.past_key_values
+    next_token = outputs.logits[:, -1:].argmax(dim=-1)
+    generated_ids: list[torch.Tensor] = []
+    generated_states: list[torch.Tensor] = []
+    eos_ids = {token_id for token_id in (tokenizer.eos_token_id, tokenizer.pad_token_id) if token_id is not None}
+
+    remaining_tokens = max_context_tokens - prefix_length
+    if remaining_tokens < 1:
+        raise RuntimeError("The continuous prefix and prompt fill the model context window.")
+    for step in range(remaining_tokens):
+        current_id = next_token
+        generated_ids.append(current_id)
+        outputs = model(
+            input_ids=current_id,
+            attention_mask=torch.ones((1, prefix_length + step + 1), device=device, dtype=torch.long),
             past_key_values=cache,
             use_cache=True,
             output_hidden_states=True,

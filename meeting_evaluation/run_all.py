@@ -30,12 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-samples", type=int, default=8)
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--source-max-tokens", type=int, default=8192)
-    parser.add_argument("--document-chunk-tokens", type=int, default=0)
     parser.add_argument("--document-chunk-overlap-tokens", type=int, default=0)
-    parser.add_argument("--prefill-chunk-tokens", type=int, default=1024)
-    parser.add_argument("--backfill-rounds", type=int, default=0)
-    parser.add_argument("--agent-max-new-tokens", type=int, default=128)
-    parser.add_argument("--receiver-max-new-tokens", type=int, default=192)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
     parser.add_argument("--device")
     parser.add_argument(
@@ -55,12 +50,7 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace, ref
         "--num-samples", str(args.num_samples),
         "--model", args.model,
         "--source-max-tokens", str(args.source_max_tokens),
-        "--document-chunk-tokens", str(args.document_chunk_tokens),
         "--document-chunk-overlap-tokens", str(args.document_chunk_overlap_tokens),
-        "--prefill-chunk-tokens", str(args.prefill_chunk_tokens),
-        "--backfill-rounds", str(args.backfill_rounds),
-        "--agent-max-new-tokens", str(args.agent_max_new_tokens),
-        "--receiver-max-new-tokens", str(args.receiver_max_new_tokens),
         "--prefix-tokens-per-agent", str(args.prefix_tokens_per_agent),
     ]
     if reference:
