@@ -13,7 +13,9 @@ def test_grounded_action_requires_literal_quote_and_commitment():
     assert claims[0]["block_id"] == 2
     handoff = verified_handoff("actions", claims)
     assert "Alice will send" in handoff
-    assert handoff.index("Evidence") < handoff.index("Verified claim")
+    assert "Evidence" not in handoff
+    audit_handoff = verified_handoff("actions", claims, include_evidence=True)
+    assert audit_handoff.index("Evidence") < audit_handoff.index("Verified claim")
 
 
 def test_ungrounded_or_misclassified_claim_is_rejected():

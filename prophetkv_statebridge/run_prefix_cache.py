@@ -322,15 +322,21 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             verified_claims, verifier_output = semantically_supported_claims(model, tokenizer, parsed_claims, args)
             if len(verified_claims) < len(parsed_claims):
                 rejection_reasons.append("semantic verifier did not mark one or more claims as supported")
+            # Communication receives compact verified claims.  The longer
+            # evidence-rich form stays available for audit but is not allowed
+            # to crowd the fixed latent-state budget.
             message = verified_handoff(role, verified_claims)
+            evidence_message = verified_handoff(role, verified_claims, include_evidence=True)
             states, token_ids, handoff_tokens = states_for_handoff(model, tokenizer, message, args)
         else:
             message = raw_message
+            evidence_message = raw_message
             handoff_tokens = generated_tokens
         specialists.append(
             {
                 "role": role,
                 "message": message,
+                "evidence_message": evidence_message,
                 "claims": verified_claims,
                 "raw_message": raw_message,
                 "rejection_reasons": rejection_reasons,
@@ -725,7 +731,8 @@ def main() -> None:
                 for item in block_summaries:
                     report.write(f"block {item['block_id']} summary (debug only):\n{item['summary']}\n\n")
                 for item in specialists:
-                    report.write(f"block {item['block_id']} | {item['role']} handoff (debug only):\n{item['message']}\n\n")
+                    debug_message = item.get("evidence_message", item["message"])
+                    report.write(f"block {item['block_id']} | {item['role']} handoff (debug only):\n{debug_message}\n\n")
                     if meeting_mode:
                         report.write(
                             f"verified claims: {len(item['claims'])}; rejected: "

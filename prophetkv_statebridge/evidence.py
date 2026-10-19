@@ -206,8 +206,14 @@ def parse_verdicts(message: str, expected_count: int) -> set[int]:
     return supported
 
 
-def verified_handoff(role: str, claims: list[dict[str, Any]]) -> str:
-    """Render only verified fact units for text and latent communication."""
+def verified_handoff(role: str, claims: list[dict[str, Any]], *, include_evidence: bool = False) -> str:
+    """Render verified claims for communication, optionally with audit evidence.
+
+    Evidence is needed to audit the extraction stage, but long verbatim quotes
+    consume the small StateBridge budget and can obscure the compact conclusion.
+    The communication payload therefore defaults to claims only; callers can
+    request the evidence-rich version for reports and JSON inspection.
+    """
     if not claims:
         return f"{role}: None explicitly stated."
     lines = []
@@ -220,10 +226,8 @@ def verified_handoff(role: str, claims: list[dict[str, Any]]) -> str:
         if claim["deadline"]:
             metadata.append(f"deadline={claim['deadline']}")
         suffix = f" ({'; '.join(metadata)})" if metadata else ""
-        # StateBridge retains the final K hidden states.  Put the compact claim
-        # after its (often much longer) quotation so it survives compression.
-        lines.append(
-            f"- Evidence [{role}]: \"{claim['evidence_quote']}\"\n"
-            f"  Verified claim: {claim['claim']}{suffix}"
-        )
+        line = f"- [{role}] {claim['claim']}{suffix}"
+        if include_evidence:
+            line = f"- Evidence [{role}]: \"{claim['evidence_quote']}\"\n  Verified claim: {claim['claim']}{suffix}"
+        lines.append(line)
     return "\n".join(lines)
