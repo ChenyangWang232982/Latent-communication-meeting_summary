@@ -46,6 +46,28 @@ def test_unsupported_owner_metadata_is_removed():
     assert claims[0]["deadline"] == "next Tuesday"
 
 
+def test_facts_cannot_promote_a_proposal_to_a_decision():
+    source = "I personally think we should submit it as a short paper."
+    message = (
+        '[{"category":"facts","claim":"The group decided to submit a short paper.",'
+        '"evidence_quote":"I personally think we should submit it as a short paper."}]'
+    )
+    claims, rejected = parse_grounded_claims(message, role="facts", source=source, block_id=0)
+    assert not claims
+    assert "decision-like" in rejected[0]
+
+
+def test_question_speaker_is_not_rendered_as_owner():
+    source = "Kalle asks: Should we include the artifact in the meta model?"
+    message = (
+        '[{"category":"questions","claim":"Should the artifact be included?",'
+        '"evidence_quote":"Should we include the artifact in the meta model?", "owner":"Kalle"}]'
+    )
+    claims, rejected = parse_grounded_claims(message, role="questions", source=source, block_id=0)
+    assert not rejected
+    assert claims[0]["owner"] == ""
+
+
 def test_only_supported_verdicts_are_kept():
     message = '[{"index":0,"verdict":"supported"},{"index":1,"verdict":"uncertain"}]'
     assert parse_verdicts(message, 2) == {0}

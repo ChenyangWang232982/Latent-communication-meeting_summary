@@ -9,6 +9,8 @@ from typing import Any
 
 DECISION_CUES = ("agree", "decid", "approv", "choos", "reject", "commit", "settle")
 ACTION_CUES = (" will ", "assigned", "responsible", "need to", "deadline", "due ")
+FACT_DECISION_CUES = (" decided ", " agreed ", " approved ", " committed ", " settled ")
+TASK_VERBS = (" prepare", " send", " review", " write", " investigate", " finalize", " create", " complete")
 
 
 def _normalized(text: str) -> str:
@@ -148,6 +150,13 @@ def parse_grounded_claims(message: str, *, role: str, source: str, block_id: int
         if category == "actions" and not any(cue in quote_lower for cue in ACTION_CUES):
             rejected.append("action evidence lacks an explicit assignment or commitment cue")
             continue
+        claim_lower = f" {claim.casefold()} "
+        if category == "facts" and any(cue in claim_lower for cue in FACT_DECISION_CUES):
+            rejected.append("facts claim asserts a decision-like outcome; use decisions or discussion instead")
+            continue
+        if category == "next_steps" and any(verb in claim_lower for verb in TASK_VERBS):
+            rejected.append("next_steps claim is an assigned task; it belongs to actions")
+            continue
         timestamp = str(entry.get("timestamp", "")).strip()
         owner = str(entry.get("owner", "")).strip()
         deadline = str(entry.get("deadline", "")).strip()
@@ -158,7 +167,9 @@ def parse_grounded_claims(message: str, *, role: str, source: str, block_id: int
                 "evidence_quote": quote,
                 "block_id": block_id,
                 "timestamp": _grounded_metadata(timestamp, claim, quote),
-                "owner": _grounded_metadata(owner, claim, quote),
+                # A speaker who asks a question is not automatically responsible
+                # for resolving it.  Only action items expose an owner field.
+                "owner": _grounded_metadata(owner, claim, quote) if category == "actions" else "",
                 "deadline": _grounded_metadata(deadline, claim, quote),
                 "confidence": str(entry.get("confidence", "high")).strip().lower(),
             }
