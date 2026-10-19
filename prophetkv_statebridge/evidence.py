@@ -15,6 +15,77 @@ def _normalized(text: str) -> str:
     return re.sub(r"[^\w]+", "", text.casefold())
 
 
+def _word_spans(text: str) -> list[tuple[str, int, int]]:
+    """Return normalized words together with their original character spans."""
+    return [(match.group().casefold(), match.start(), match.end()) for match in re.finditer(r"\w+", text)]
+
+
+def _recover_source_quote(quote: str, source: str) -> str | None:
+    """Locate a model-copied quote, tolerating harmless transcript formatting drift.
+
+    Specialists are asked to copy their evidence verbatim, but ASR transcripts often
+    differ in whitespace, punctuation, or omit a short filler word.  We only recover
+    a source span when a substantial *contiguous* word sequence is shared; this is
+    deliberately not a semantic-paraphrase match.
+    """
+    quote_normalized = _normalized(quote)
+    source_normalized = _normalized(source)
+    if quote_normalized and quote_normalized in source_normalized:
+        return quote
+
+    quote_words = [word for word, _, _ in _word_spans(quote)]
+    source_words = _word_spans(source)
+    if len(quote_words) < 8 or len(source_words) < 8:
+        return None
+
+    # A shared six-word anchor avoids accepting generic meeting language.  Expand
+    # every anchor to its maximal exact run and keep the strongest evidence span.
+    anchor_size = 6
+    source_anchors: dict[tuple[str, ...], list[int]] = {}
+    for start in range(len(source_words) - anchor_size + 1):
+        key = tuple(word for word, _, _ in source_words[start : start + anchor_size])
+        source_anchors.setdefault(key, []).append(start)
+
+    best: tuple[int, int, int] | None = None
+    for quote_start in range(len(quote_words) - anchor_size + 1):
+        key = tuple(quote_words[quote_start : quote_start + anchor_size])
+        for source_start in source_anchors.get(key, []):
+            left = 0
+            while (
+                quote_start - left - 1 >= 0
+                and source_start - left - 1 >= 0
+                and quote_words[quote_start - left - 1] == source_words[source_start - left - 1][0]
+            ):
+                left += 1
+            right = anchor_size
+            while (
+                quote_start + right < len(quote_words)
+                and source_start + right < len(source_words)
+                and quote_words[quote_start + right] == source_words[source_start + right][0]
+            ):
+                right += 1
+            run_start = source_start - left
+            run_length = left + right
+            if best is None or run_length > best[2]:
+                best = (run_start, run_start + run_length, run_length)
+
+    required = max(anchor_size, (len(quote_words) + 1) // 2)
+    if best is None or best[2] < required:
+        return None
+    start, end, _ = best
+    # Return the enclosing utterance, rather than an arbitrary middle fragment:
+    # role cues (for example "will") can precede a filler that the model skipped.
+    char_start = source_words[start][1]
+    char_end = source_words[end - 1][2]
+    while char_start > 0 and source[char_start - 1] not in ".!?\n":
+        char_start -= 1
+    while char_end < len(source) and source[char_end] not in ".!?\n":
+        char_end += 1
+    if char_end < len(source):
+        char_end += 1
+    return source[char_start:char_end].strip()
+
+
 def _json_value(text: str) -> Any | None:
     """Find the first JSON object or array in a model response."""
     decoder = json.JSONDecoder()
@@ -29,15 +100,23 @@ def _json_value(text: str) -> Any | None:
     return None
 
 
+def _grounded_metadata(value: str, claim: str, quote: str) -> str:
+    """Keep optional metadata only when the claim or its evidence names it."""
+    normalized_value = _normalized(value)
+    if not normalized_value:
+        return ""
+    supported_by = _normalized(f"{claim} {quote}")
+    return value if normalized_value in supported_by else ""
+
+
 def parse_grounded_claims(message: str, *, role: str, source: str, block_id: int) -> tuple[list[dict[str, Any]], list[str]]:
-    """Parse claims and reject entries without a literal source quotation."""
+    """Parse claims and reject entries without recoverable source evidence."""
     value = _json_value(message)
     if isinstance(value, dict):
         value = value.get("claims", [])
     if not isinstance(value, list):
         return [], ["specialist output was not a JSON claim list"]
 
-    source_normalized = _normalized(source)
     accepted: list[dict[str, Any]] = []
     rejected: list[str] = []
     for entry in value:
@@ -53,25 +132,34 @@ def parse_grounded_claims(message: str, *, role: str, source: str, block_id: int
         if len(claim) < 3 or len(quote) < 8:
             rejected.append("claim or evidence quote was too short")
             continue
-        if _normalized(quote) not in source_normalized:
+        requested_quote = quote
+        recovered_quote = _recover_source_quote(requested_quote, source)
+        if recovered_quote is None:
             rejected.append("evidence quote was not found in the source block")
             continue
-        quote_lower = f" {quote.casefold()} "
+        quote = recovered_quote
+        # Evaluate role cues from the specialist's requested span: recovery may
+        # start after an ASR filler such as "uh", while the commitment cue is
+        # immediately before that filler in the same source utterance.
+        quote_lower = f" {requested_quote.casefold()} "
         if category == "decisions" and not any(cue in quote_lower for cue in DECISION_CUES):
             rejected.append("decision evidence lacks an explicit commitment cue")
             continue
         if category == "actions" and not any(cue in quote_lower for cue in ACTION_CUES):
             rejected.append("action evidence lacks an explicit assignment or commitment cue")
             continue
+        timestamp = str(entry.get("timestamp", "")).strip()
+        owner = str(entry.get("owner", "")).strip()
+        deadline = str(entry.get("deadline", "")).strip()
         accepted.append(
             {
                 "category": category,
                 "claim": claim,
                 "evidence_quote": quote,
                 "block_id": block_id,
-                "timestamp": str(entry.get("timestamp", "")).strip(),
-                "owner": str(entry.get("owner", "")).strip(),
-                "deadline": str(entry.get("deadline", "")).strip(),
+                "timestamp": _grounded_metadata(timestamp, claim, quote),
+                "owner": _grounded_metadata(owner, claim, quote),
+                "deadline": _grounded_metadata(deadline, claim, quote),
                 "confidence": str(entry.get("confidence", "high")).strip().lower(),
             }
         )

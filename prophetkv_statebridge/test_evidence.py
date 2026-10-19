@@ -22,6 +22,30 @@ def test_ungrounded_or_misclassified_claim_is_rejected():
     assert rejected
 
 
+def test_quote_recovery_tolerates_missing_filler_but_uses_source_text():
+    source = "We will, uh, prepare the final autonomy level table with better justification by next Tuesday."
+    message = (
+        '[{"category":"actions","claim":"The team will prepare the final autonomy level table.",'
+        '"evidence_quote":"We will prepare the final autonomy level table with better justification by next Tuesday."}]'
+    )
+    claims, rejected = parse_grounded_claims(message, role="actions", source=source, block_id=0)
+    assert not rejected
+    assert claims[0]["evidence_quote"] == source
+
+
+def test_unsupported_owner_metadata_is_removed():
+    source = "Toufique will prepare the autonomy level table by next Tuesday."
+    message = (
+        '[{"category":"actions","claim":"Toufique will prepare the autonomy level table.",'
+        '"evidence_quote":"Toufique will prepare the autonomy level table by next Tuesday.",'
+        '"owner":"Mahade Hasan","deadline":"next Tuesday"}]'
+    )
+    claims, rejected = parse_grounded_claims(message, role="actions", source=source, block_id=0)
+    assert not rejected
+    assert claims[0]["owner"] == ""
+    assert claims[0]["deadline"] == "next Tuesday"
+
+
 def test_only_supported_verdicts_are_kept():
     message = '[{"index":0,"verdict":"supported"},{"index":1,"verdict":"uncertain"}]'
     assert parse_verdicts(message, 2) == {0}

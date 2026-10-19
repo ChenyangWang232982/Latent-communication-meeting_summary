@@ -161,7 +161,8 @@ def specialist_user(
         format_instruction = (
             " Return ONLY a JSON array, with at most three objects. Each object must have exactly these fields: "
             "category, claim, evidence_quote, timestamp, owner, deadline, confidence. category must be '"
-            f"{role}'. evidence_quote must be a verbatim, self-sufficient quotation from the source transcript. "
+            f"{role}'. evidence_quote must copy a contiguous, self-sufficient passage from the source transcript; "
+            "do not paraphrase it, omit filler words, or combine distant turns. "
             "Use an empty string for unknown timestamp, owner, or deadline. If no supported item exists, return []."
         )
     user = (
