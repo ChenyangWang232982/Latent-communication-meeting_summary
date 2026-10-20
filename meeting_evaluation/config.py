@@ -12,6 +12,8 @@ class WorkflowConfig:
     source_max_tokens: int = 8192
     document_chunk_overlap_tokens: int = 0
     prefix_tokens_per_agent: int = 64
+    evidence_policy: str = "strict"
+    alignment_scope: str = "joint"
     device: str | None = None
     num_samples: int = 0
 

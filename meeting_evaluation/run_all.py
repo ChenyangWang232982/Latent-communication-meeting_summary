@@ -32,6 +32,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-max-tokens", type=int, default=8192)
     parser.add_argument("--document-chunk-overlap-tokens", type=int, default=0)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
+    parser.add_argument("--evidence-policy", choices=["strict", "off"], default="strict")
+    parser.add_argument("--alignment-scope", choices=["joint", "per-message"], default="joint")
     parser.add_argument("--device")
     parser.add_argument(
         "--skip-missing",
@@ -52,6 +54,8 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace, ref
         "--source-max-tokens", str(args.source_max_tokens),
         "--document-chunk-overlap-tokens", str(args.document_chunk_overlap_tokens),
         "--prefix-tokens-per-agent", str(args.prefix_tokens_per_agent),
+        "--evidence-policy", args.evidence_policy,
+        "--alignment-scope", args.alignment_scope,
     ]
     if reference:
         command.extend(["--reference", str(reference)])

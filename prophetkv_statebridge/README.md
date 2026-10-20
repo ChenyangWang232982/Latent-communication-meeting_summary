@@ -143,6 +143,13 @@ uses 75% of it as the document-block budget. The `text` control passes the
 same block summaries to the merger as natural language. The report counts both
 communication hops: specialist-to-block and block-to-final-merger.
 
+For an alignment ablation, keep the same transcript, model, seed, K, and
+evidence policy, changing only `--alignment-scope joint` (the original
+baseline) to `--alignment-scope per-message`. The latter aligns each
+specialist's states separately before concatenation and may take longer.
+The report lists each specialist's handoff length, selected states, and
+truncated tokens so omissions can be checked against the K budget.
+
 ## Fact-Centric Evidence Grounding
 
 With `--evidence-policy strict`, every meeting specialist must emit a small JSON claim list with a

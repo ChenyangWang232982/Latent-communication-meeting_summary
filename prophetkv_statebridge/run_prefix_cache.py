@@ -43,16 +43,16 @@ from .selection import Chunk, chunk_document
 MEETING_ROLE_CONTRACTS = {
     "decisions": (
         "List only decisions explicitly accepted, agreed, chosen, approved, rejected, or committed to in the transcript. "
+        "Read later turns before deciding whether an earlier proposal was accepted, reversed, or left open. "
         "A discussion topic, observation, problem, question, or suggestion is NOT a decision. If no such statement exists, "
-        "output None explicitly stated. The supporting quote must itself contain a commitment cue such as 'decided', "
-        "'agreed', 'approved', 'chosen', or 'we have settled on'. A project brief or a statement of planned work is not "
-        "automatically a decision made in this meeting."
+        "output None explicitly stated. A project brief or a statement of planned work is not automatically a decision "
+        "made in this meeting."
     ),
     "actions": (
         "List only explicit commitments or assigned follow-ups. An action needs an explicit task and a commitment or assignment "
         "such as 'will', 'assigned', 'responsible', 'need to', or a stated deadline. Include an owner or deadline only when the "
-        "transcript explicitly states one. The supporting quote must contain both the task and its commitment or assignment; "
-        "do not infer work from a person's role or from vague phrases such as 'you know what to do'."
+        "transcript explicitly states one. Do not infer work from a person's role or from vague phrases such as "
+        "'you know what to do'."
     ),
     "context": (
         "List only important background, constraints, discussion topics, proposals, and alternatives needed to understand the "
@@ -61,7 +61,8 @@ MEETING_ROLE_CONTRACTS = {
     ),
     "open_issues": (
         "List only unresolved questions, risks, blockers, constraints, disagreements, or uncertainties that still need a "
-        "decision, answer, or follow-up. Do not include a resolved decision or an assigned action."
+        "decision, answer, or follow-up at the end of the meeting. Check later turns for resolution before listing an issue. "
+        "Do not include a resolved decision or an assigned action."
     ),
 }
 
@@ -107,9 +108,15 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         choices=sorted(ROLE_INSTRUCTIONS),
         default=None,
-        help="Specialists to run. Defaults to seven meeting roles for --transcript and four research-QA roles for --data.",
+        help="Specialists to run. Defaults to four meeting roles for --transcript and four research-QA roles for --data.",
     )
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
+    parser.add_argument(
+        "--alignment-scope",
+        choices=["joint", "per-message"],
+        default="joint",
+        help="Align all specialist states jointly (baseline) or align each sender message independently.",
+    )
     parser.add_argument(
         "--evidence-policy",
         choices=["strict", "off"],
@@ -151,7 +158,7 @@ def specialist_user(
         task = MEETING_ROLE_CONTRACTS[role]
     if meeting_mode and evidence_policy == "strict":
         format_instruction = (
-            " Return ONLY a JSON array, with at most three objects. Each object must have exactly these fields: "
+            " Return ONLY a JSON array. Each object must have exactly these fields: "
             "category, claim, evidence_quote, timestamp, owner, deadline, confidence. category must be '"
             f"{role}'. evidence_quote must copy a contiguous, self-sufficient passage from the source transcript; "
             "do not paraphrase it, omit filler words, or combine distant turns. "
@@ -207,6 +214,18 @@ def common_prefix_length(token_batches: list[torch.Tensor]) -> int:
         if any(sequence[index] != value for sequence in sequences[1:]):
             return index
     return limit
+
+
+def align_handoffs(bridge, segments: list[dict[str, Any]], scope: str) -> torch.Tensor:
+    """Align sender messages without changing their order or state budget."""
+    if scope == "per-message":
+        return torch.cat([bridge.align(item["states"], item["token_ids"]) for item in segments])
+    if scope == "joint":
+        return bridge.align(
+            torch.cat([item["states"] for item in segments]),
+            torch.cat([item["token_ids"] for item in segments]),
+        )
+    raise ValueError(f"Unsupported alignment scope: {scope}")
 
 
 @torch.inference_mode()
@@ -289,7 +308,8 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
     ]
     prefix_inputs = role_inputs
     if len(role_inputs) == 1:
-        alternate_role = next(role for role in ROLE_INSTRUCTIONS if role not in args.roles)
+        available_roles = MEETING_ROLE_CONTRACTS if meeting_mode else ROLE_INSTRUCTIONS
+        alternate_role = next(role for role in available_roles if role not in args.roles)
         alternate_input = tokenizer(
             specialist_prompt(
                 tokenizer, source, record, alternate_role, args.enable_thinking,
@@ -312,7 +332,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
     prefill_seconds = time.perf_counter() - started
     prefix_bytes = cache_nbytes(prefix_cache)
 
-    specialists, specialist_token_metrics, all_states, all_ids = [], [], [], []
+    specialists, specialist_token_metrics, all_states, all_ids, segments = [], [], [], [], []
     for role, full_prompt_ids in zip(args.roles, role_inputs):
         raw_message, states, token_ids, generated_tokens = specialist_from_cache(
             model, tokenizer, prefix_cache, encoded_prefix.size(1), full_prompt_ids[:, common_length:], args
@@ -355,9 +375,11 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             "generated_tokens": generated_tokens,
             "verified_claims": len(verified_claims),
             "selected_states": int(states.size(0)),
+            "truncated_tokens": max(0, handoff_tokens - int(states.size(0))),
         })
         all_states.append(states)
         all_ids.append(token_ids)
+        segments.append({"states": states, "token_ids": token_ids})
 
     return {
         "block_id": block.chunk_id,
@@ -370,6 +392,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         "specialist_token_metrics": specialist_token_metrics,
         "states": torch.cat(all_states),
         "token_ids": torch.cat(all_ids),
+        "segments": segments,
     }
 
 
@@ -432,7 +455,7 @@ def final_merge_prompt(tokenizer, question: str, enable_thinking: bool, reports:
 
 
 @torch.inference_mode()
-def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args, *, meeting_mode: bool):
+def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids, variant, args, *, meeting_mode: bool, segments=None):
     if variant == "text":
         prompt = receiver_prompt(tokenizer, record["question"], args.enable_thinking, reports, meeting_mode=meeting_mode)
         encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
@@ -449,7 +472,11 @@ def answer_variant(model, tokenizer, bridge, record, reports, states, token_ids,
             available_generation_tokens(args, encoded.input_ids.size(1)),
         )
         return decode(tokenizer, answer_ids)
-    prefix = bridge.align(states, token_ids)
+    prefix = (
+        align_handoffs(bridge, segments, args.alignment_scope)
+        if segments is not None
+        else bridge.align(states, token_ids)
+    )
     return decode(
         tokenizer,
         generate_from_prefix(
@@ -464,7 +491,7 @@ def statebridge_block_summary(model, tokenizer, bridge, record, block_result, ar
     """Turn one block's specialist messages into a local summary and bridge-ready states."""
     prompt = block_receiver_prompt(tokenizer, record["question"], block_result["block_id"], args.enable_thinking)
     encoded = tokenizer(prompt, return_tensors="pt").to(args.device)
-    specialist_prefix = bridge.align(block_result["states"], block_result["token_ids"])
+    specialist_prefix = align_handoffs(bridge, block_result["segments"], args.alignment_scope)
     summary_ids, summary_states = generate_after_embedding_prefix(
         model,
         tokenizer,
@@ -506,9 +533,7 @@ def merge_block_summaries(model, tokenizer, bridge, record, block_summaries, var
     if variant == "no_comm":
         _, answer_ids = generate_from_ids(model, tokenizer, encoded.input_ids, encoded.attention_mask, available_generation_tokens(args, encoded.input_ids.size(1)))
         return decode(tokenizer, answer_ids)
-    states = torch.cat([item["states"] for item in block_summaries])
-    token_ids = torch.cat([item["token_ids"] for item in block_summaries])
-    prefix = bridge.align(states, token_ids)
+    prefix = align_handoffs(bridge, block_summaries, args.alignment_scope)
     return decode(tokenizer, generate_from_prefix(model, tokenizer, encoded.input_ids, prefix, available_generation_tokens(args, encoded.input_ids.size(1) + prefix.size(0))))
 
 
@@ -551,6 +576,8 @@ def main() -> None:
     meeting_mode = args.transcript is not None or args.meeting_data is not None
     if args.roles is None:
         args.roles = MEETING_DEFAULT_ROLES if meeting_mode else QASPER_DEFAULT_ROLES
+    if meeting_mode and any(role not in MEETING_ROLE_CONTRACTS for role in args.roles):
+        raise ValueError(f"Meeting roles must be chosen from: {', '.join(MEETING_ROLE_CONTRACTS)}")
     if args.transcript is not None:
         if not args.transcript.is_file():
             raise FileNotFoundError(f"Transcript not found: {args.transcript}")
@@ -591,7 +618,7 @@ def main() -> None:
         )
         report.write(
             f"model={args.model}, source_mode={source_mode}, roles={','.join(args.roles)}, "
-            f"evidence_policy={args.evidence_policy}\n"
+            f"evidence_policy={args.evidence_policy}, alignment_scope={args.alignment_scope}\n"
         )
         report.write(
             "Each source block is prefetched once and reused by cloned per-agent KV caches. "
@@ -634,6 +661,7 @@ def main() -> None:
             )
             states = torch.cat([block_result["states"] for block_result in block_results])
             token_ids = torch.cat([block_result["token_ids"] for block_result in block_results])
+            segments = [segment for block_result in block_results for segment in block_result["segments"]]
             prefix_tokens = sum(block_result["prefix_tokens"] for block_result in block_results)
             prefix_bytes = max(block_result["prefix_cache_bytes"] for block_result in block_results)
             prefill_seconds = sum(block_result["prefix_prefill_seconds"] for block_result in block_results)
@@ -666,7 +694,7 @@ def main() -> None:
                     answers = {
                         variant: answer_variant(
                             model, tokenizer, bridge, record, reports, states, token_ids, variant, args,
-                            meeting_mode=meeting_mode
+                            meeting_mode=meeting_mode, segments=segments
                         )
                         for variant in args.variants
                     }
@@ -690,6 +718,7 @@ def main() -> None:
                     for block_result in block_results
                 ],
                 "statebridge_tokens": total_latent_states,
+                "alignment_scope": args.alignment_scope,
                 "communication": {
                     "text_handoff_tokens": total_text_tokens,
                     "latent_state_tokens": total_latent_states,
@@ -743,9 +772,14 @@ def main() -> None:
             if not args.communication_metrics_only:
                 for item in block_summaries:
                     report.write(f"block {item['block_id']} summary (debug only):\n{item['summary']}\n\n")
-                for item in specialists:
+                for item, token_metric in zip(specialists, specialist_token_metrics):
                     debug_message = item.get("evidence_message", item["message"])
                     report.write(f"block {item['block_id']} | {item['role']} handoff (debug only):\n{debug_message}\n\n")
+                    report.write(
+                        f"handoff tokens: {token_metric['handoff_tokens']}; "
+                        f"selected states: {token_metric['selected_states']}; "
+                        f"truncated tokens: {token_metric['truncated_tokens']}\n\n"
+                    )
                     if meeting_mode:
                         report.write(
                             f"verified claims: {len(item['claims'])}; rejected: "

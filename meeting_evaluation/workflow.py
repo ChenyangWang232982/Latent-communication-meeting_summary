@@ -34,6 +34,8 @@ def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig, *, mee
             "--num-samples", "0",
             "--source-max-tokens", str(config.source_max_tokens),
             "--prefix-tokens-per-agent", str(config.prefix_tokens_per_agent),
+            "--evidence-policy", config.evidence_policy,
+            "--alignment-scope", config.alignment_scope,
             "--variants", "statebridge", "text", "no_comm",
         ]
         if config.document_chunk_overlap_tokens:
