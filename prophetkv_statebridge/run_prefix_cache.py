@@ -140,6 +140,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vocab-chunk-size", type=int, default=8192)
     parser.add_argument("--enable-thinking", action="store_true")
     parser.add_argument(
+        "--debug-progress",
+        action="store_true",
+        help="Print block, specialist, and summary-stage progress immediately to the console.",
+    )
+    parser.add_argument(
         "--communication-metrics-only",
         action="store_true",
         help="Generate specialist handoffs for a real communication count, but write only token/state metrics and skip final answers.",
@@ -148,6 +153,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=7)
     return parser.parse_args()
+
+
+def log_progress(args, message: str) -> None:
+    if getattr(args, "debug_progress", False):
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}", flush=True)
 
 
 def specialist_user(
@@ -296,7 +306,7 @@ def semantically_supported_claims(model, tokenizer, claims: list[dict[str, Any]]
 
 
 @torch.inference_mode()
-def process_source_block(model, tokenizer, record: dict[str, Any], source: str, block: Chunk, args, *, meeting_mode: bool) -> dict[str, Any]:
+def process_source_block(model, tokenizer, record: dict[str, Any], source: str, block: Chunk, args, *, meeting_mode: bool, progress_label: str = "") -> dict[str, Any]:
     """Analyze one bounded source block using one shared Prefix KV cache.
 
     A block cache is only reused by specialists reading that exact block.  We
@@ -332,6 +342,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         raise RuntimeError("Specialist prompts do not have a usable shared prefix and suffix.")
 
     encoded_prefix = role_inputs[0][:, :common_length]
+    log_progress(args, f"{progress_label}: prefill started ({encoded_prefix.size(1)} tokens)")
     started = time.perf_counter()
     prefix_cache = prefill_prefix(model, encoded_prefix)
     prefill_chunks = 1
@@ -339,12 +350,21 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         torch.cuda.synchronize()
     prefill_seconds = time.perf_counter() - started
     prefix_bytes = cache_nbytes(prefix_cache)
+    log_progress(args, f"{progress_label}: prefill complete ({prefill_seconds:.2f}s)")
 
     specialists, specialist_token_metrics, all_states, all_ids, segments = [], [], [], [], []
     for role, full_prompt_ids in zip(args.roles, role_inputs):
+        completed = len(specialists)
+        log_progress(
+            args,
+            f"{progress_label}: specialist {role} started "
+            f"({completed}/{len(args.roles)} complete, {len(args.roles) - completed} remaining)",
+        )
+        specialist_started = time.perf_counter()
         raw_message, states, token_ids, generated_tokens = specialist_from_cache(
             model, tokenizer, prefix_cache, encoded_prefix.size(1), full_prompt_ids[:, common_length:], args
         )
+        log_progress(args, f"{progress_label}: specialist {role} generated {generated_tokens} tokens; preparing handoff")
         verified_claims: list[dict[str, Any]] = []
         rejection_reasons: list[str] = []
         verifier_output = ""
@@ -388,6 +408,12 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         all_states.append(states)
         all_ids.append(token_ids)
         segments.append({"states": states, "token_ids": token_ids})
+        completed = len(specialists)
+        log_progress(
+            args,
+            f"{progress_label}: specialist {role} complete in {time.perf_counter() - specialist_started:.2f}s "
+            f"({completed}/{len(args.roles)} complete, {len(args.roles) - completed} remaining)",
+        )
 
     return {
         "block_id": block.chunk_id,
@@ -649,10 +675,23 @@ def main() -> None:
             if not document_blocks:
                 raise ValueError(f"Source is empty after tokenization: {record['id']}")
 
-            block_results = [
-                process_source_block(model, tokenizer, record, block.text, block, args, meeting_mode=meeting_mode)
-                for block in document_blocks
-            ]
+            log_progress(
+                args,
+                f"sample {index}/{len(records)} ({record['id']}): {len(document_blocks)} block(s), "
+                f"{len(args.roles)} specialist(s) per block, {len(document_blocks) * len(args.roles)} specialist run(s) total",
+            )
+            block_results = []
+            for block_index, block in enumerate(document_blocks, start=1):
+                block_results.append(process_source_block(
+                    model, tokenizer, record, block.text, block, args, meeting_mode=meeting_mode,
+                    progress_label=f"sample {index}/{len(records)} block {block_index}/{len(document_blocks)}",
+                ))
+                log_progress(
+                    args,
+                    f"sample {index}/{len(records)}: block {block_index}/{len(document_blocks)} complete "
+                    f"({len(document_blocks) - block_index} block(s) remaining)",
+                )
+            log_progress(args, f"sample {index}/{len(records)}: all {len(document_blocks)} block(s) and their specialists complete")
             specialists = [
                 {
                     "block_id": block_result["block_id"],
@@ -681,10 +720,12 @@ def main() -> None:
             hierarchical_merge = meeting_mode and len(block_results) > 1
             block_summaries = []
             if hierarchical_merge:
+                log_progress(args, f"sample {index}/{len(records)}: generating {len(block_results)} block summaries")
                 block_summaries = [
                     statebridge_block_summary(model, tokenizer, bridge, record, block_result, args)
                     for block_result in block_results
                 ]
+                log_progress(args, f"sample {index}/{len(records)}: block summaries complete")
             block_summary_text_tokens = sum(item["summary_tokens"] for item in block_summaries)
             block_summary_latent_states = sum(item["selected_states"] for item in block_summaries)
             total_text_tokens = text_handoff_tokens + block_summary_text_tokens
@@ -696,18 +737,18 @@ def main() -> None:
             answers = {}
             if not args.communication_metrics_only:
                 if hierarchical_merge:
-                    answers = {
-                        variant: merge_block_summaries(model, tokenizer, bridge, record, block_summaries, variant, args)
-                        for variant in args.variants
-                    }
+                    for variant in args.variants:
+                        log_progress(args, f"sample {index}/{len(records)}: final {variant} answer started")
+                        answers[variant] = merge_block_summaries(model, tokenizer, bridge, record, block_summaries, variant, args)
+                        log_progress(args, f"sample {index}/{len(records)}: final {variant} answer complete")
                 else:
-                    answers = {
-                        variant: answer_variant(
+                    for variant in args.variants:
+                        log_progress(args, f"sample {index}/{len(records)}: final {variant} answer started")
+                        answers[variant] = answer_variant(
                             model, tokenizer, bridge, record, reports, states, token_ids, variant, args,
                             meeting_mode=meeting_mode, segments=segments
                         )
-                        for variant in args.variants
-                    }
+                        log_progress(args, f"sample {index}/{len(records)}: final {variant} answer complete")
             result = {
                 "id": record["id"],
                 "question": record["question"],

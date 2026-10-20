@@ -1,9 +1,11 @@
 import torch
+from types import SimpleNamespace
 
 from prophetkv_statebridge.prefix_cache import cache_nbytes
 from prophetkv_statebridge.run_prefix_cache import (
     align_handoffs,
     common_prefix_length,
+    log_progress,
     receiver_prompt,
     specialist_user,
 )
@@ -68,3 +70,10 @@ def test_meeting_receiver_reports_status_conflicts():
     )
     assert "report the conflict" in prompt
     assert "do not silently omit the item" in prompt
+
+
+def test_progress_logging_is_opt_in(capsys):
+    log_progress(SimpleNamespace(debug_progress=False), "block 1/2")
+    assert capsys.readouterr().out == ""
+    log_progress(SimpleNamespace(debug_progress=True), "block 1/2")
+    assert "block 1/2" in capsys.readouterr().out
