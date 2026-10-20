@@ -109,3 +109,20 @@ def test_specialist_generation_reports_progress_without_eos():
     assert ids.shape == (1, 130)
     assert states.shape == (130, 2)
     assert counts == [128]
+
+
+def test_specialist_generation_honors_optional_max_new_tokens():
+    class Model:
+        def __call__(self, **kwargs):
+            return SimpleNamespace(
+                logits=torch.tensor([[[0.0, 1.0, 0.0]]]),
+                past_key_values=(),
+                hidden_states=(torch.ones(1, 1, 2),),
+            )
+
+    ids, states = generate_after_prefix_cache(
+        Model(), SimpleNamespace(eos_token_id=2, pad_token_id=2), (), 1,
+        torch.tensor([[0]]), max_context_tokens=200, max_new_tokens=7,
+    )
+    assert ids.shape == (1, 7)
+    assert states.shape == (7, 2)

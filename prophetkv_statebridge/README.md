@@ -173,6 +173,10 @@ Use `--debug-progress` to see each document block's prefill and specialist
 completion counts, followed by block-summary and final-answer stages. Progress
 lines are printed immediately, including a heartbeat every 128 tokens during
 specialist generation; the report still contains the finished result.
+Use `--specialist-max-new-tokens 384` to stop each specialist after at most 384
+generated tokens when it fails to emit EOS promptly. This does not change the
+per-specialist StateBridge budget set by `--prefix-tokens-per-agent`, and it
+does not limit the final summary generation.
 
 ## Meeting transcript run
 

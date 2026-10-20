@@ -118,6 +118,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
     parser.add_argument(
+        "--specialist-max-new-tokens",
+        type=int,
+        default=None,
+        help="Optional cap per specialist generation. Independent of the per-specialist StateBridge K.",
+    )
+    parser.add_argument(
         "--alignment-scope",
         choices=["joint", "per-message"],
         default="joint",
@@ -258,6 +264,7 @@ def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_
         prefix_length,
         suffix_ids,
         max_context_tokens=args.model_context_tokens,
+        max_new_tokens=args.specialist_max_new_tokens,
         progress_callback=progress_callback,
     )
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
@@ -612,6 +619,8 @@ def main() -> None:
     args = parse_args()
     if args.prefix_tokens_per_agent < 2:
         raise ValueError("--prefix-tokens-per-agent must be at least 2")
+    if args.specialist_max_new_tokens is not None and args.specialist_max_new_tokens < 1:
+        raise ValueError("--specialist-max-new-tokens must be positive")
     if args.block_summary_prefix_tokens is None:
         args.block_summary_prefix_tokens = args.prefix_tokens_per_agent
     if args.block_summary_prefix_tokens < 2:
@@ -671,7 +680,8 @@ def main() -> None:
         )
         report.write(
             f"model={args.model}, source_mode={source_mode}, roles={','.join(args.roles)}, "
-            f"evidence_policy={args.evidence_policy}, alignment_scope={args.alignment_scope}\n"
+            f"evidence_policy={args.evidence_policy}, alignment_scope={args.alignment_scope}, "
+            f"specialist_max_new_tokens={args.specialist_max_new_tokens}\n"
         )
         report.write(
             "Each source block is prefetched once and reused by cloned per-agent KV caches. "

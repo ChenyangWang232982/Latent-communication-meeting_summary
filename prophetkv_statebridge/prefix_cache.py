@@ -69,6 +69,7 @@ def generate_after_prefix_cache(
     suffix_ids: torch.Tensor,
     *,
     max_context_tokens: int,
+    max_new_tokens: int | None = None,
     progress_callback: Callable[[int], None] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Greedily generate a specialist response after an exact cached prefix.
@@ -96,6 +97,10 @@ def generate_after_prefix_cache(
     remaining_tokens = max_context_tokens - prefix_length - suffix_length
     if remaining_tokens < 1:
         raise RuntimeError("The specialist prompt leaves no generation space in the model context window.")
+    if max_new_tokens is not None:
+        if max_new_tokens < 1:
+            raise ValueError("max_new_tokens must be positive")
+        remaining_tokens = min(remaining_tokens, max_new_tokens)
     for step in range(remaining_tokens):
         current_id = next_token
         generated_ids.append(current_id)
