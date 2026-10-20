@@ -103,8 +103,11 @@ def test_structured_handoff_samples_each_status_item_including_its_start_and_end
                 "offset_mapping": [(index, index + 1) for index in range(len(text))],
             }
 
+        def decode(self, token_ids, **kwargs):
+            return "".join(message[index] for index in token_ids)
+
     segments = split_structured_handoff_states(
-        CharacterTokenizer(), message, states, token_ids, ratio=0.5,
+        CharacterTokenizer(), states, token_ids, ratio=0.5,
     )
 
     assert len(segments) == 2

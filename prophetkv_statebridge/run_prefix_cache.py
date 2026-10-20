@@ -332,9 +332,29 @@ def evenly_sample_indices(indices: torch.Tensor, ratio: float) -> torch.Tensor:
     return indices.index_select(0, positions)
 
 
+def generated_token_character_spans(tokenizer, token_ids: torch.Tensor) -> tuple[str, list[tuple[int, int]]]:
+    """Map generated token positions to their decoded, trimmed handoff text.
+
+    Retokenizing decoded Qwen text is not guaranteed to reproduce the exact
+    generation IDs around whitespace and special tokens. Prefix decoding keeps
+    the mapping tied to the IDs whose hidden states are being transferred.
+    """
+    sequence = token_ids.tolist()
+    decoded = tokenizer.decode(sequence, skip_special_tokens=True)
+    leading_whitespace = len(decoded) - len(decoded.lstrip())
+    message = decoded.strip()
+    spans = []
+    previous_end = 0
+    for index in range(1, len(sequence) + 1):
+        prefix = tokenizer.decode(sequence[:index], skip_special_tokens=True)
+        current_end = min(len(message), max(0, len(prefix) - leading_whitespace))
+        spans.append((previous_end, current_end))
+        previous_end = current_end
+    return message, spans
+
+
 def split_structured_handoff_states(
     tokenizer,
-    message: str,
     states: torch.Tensor,
     token_ids: torch.Tensor,
     *,
@@ -342,28 +362,21 @@ def split_structured_handoff_states(
 ) -> list[dict[str, torch.Tensor]]:
     """Sample each status-labelled conclusion independently and uniformly.
 
-    Offset mappings allow the item boundaries in decoded text to select the
-    matching context-aware hidden states from the original specialist output.
+    Prefix-decoded spans allow item boundaries in text to select matching,
+    context-aware hidden states from the original specialist output.
     """
-    ranges = status_item_ranges(message)
+    decoded_message, spans = generated_token_character_spans(tokenizer, token_ids)
+    ranges = status_item_ranges(decoded_message)
     if not ranges:
         return [{
             "states": states.index_select(0, evenly_sample_indices(torch.arange(states.size(0), device=states.device), ratio)),
             "token_ids": token_ids.index_select(0, evenly_sample_indices(torch.arange(token_ids.size(0), device=token_ids.device), ratio)),
         }]
-    try:
-        encoded = tokenizer(message, add_special_tokens=False, return_offsets_mapping=True)
-        encoded_ids = torch.tensor(encoded["input_ids"], device=token_ids.device)
-        offsets = encoded["offset_mapping"]
-    except (KeyError, NotImplementedError, TypeError, ValueError):
-        encoded_ids, offsets = None, None
-    if encoded_ids is None or not torch.equal(encoded_ids, token_ids):
-        raise RuntimeError("Structured handoff tokenization did not match the generated token sequence.")
 
     segments = []
     for start, end in ranges:
         positions = torch.tensor(
-            [index for index, (token_start, token_end) in enumerate(offsets) if token_start < end and token_end > start],
+            [index for index, (token_start, token_end) in enumerate(spans) if token_start < end and token_end > start],
             device=token_ids.device,
             dtype=torch.long,
         )
@@ -529,7 +542,6 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         if args.max_items_per_specialist is not None:
             handoff_segments = split_structured_handoff_states(
                 tokenizer,
-                message,
                 states,
                 token_ids,
                 ratio=args.item_state_ratio,
