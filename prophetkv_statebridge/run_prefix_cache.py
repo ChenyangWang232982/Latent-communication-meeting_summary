@@ -494,11 +494,13 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
         user = (
             f"Objective: {question}\n\nCreate a concise meeting summary with exactly these sections:\n"
             f"{MEETING_SECTIONS}\n"
-            "Use each item once only: accepted outcomes belong in Confirmed decisions; explicit owner commitments belong in "
-            "Action items; unresolved questions, blockers, and uncertainty belong in Open issues and risks; everything else "
-            "important belongs in Key context and discussion. Under each section, write 'None explicitly stated.' only when the "
-            "handoff conveys no item for that section. If handoffs disagree about an item's final status, report the conflict "
-            "under Open issues and risks without claiming that either status is confirmed; do not silently omit the item. "
+            "Status labels are authoritative routing signals. Copy every complete CONFIRMED_DECISION item into Confirmed decisions, "
+            "and every complete COMMITTED_ACTION item into Action items. Copy UNRESOLVED items into Open issues and risks, and "
+            "CONTEXT items into Key context and discussion. A contextual mention of an earlier proposal, uncertainty, or a future "
+            "review must NOT cancel a labelled confirmed decision or action. Exclude a labelled decision only when a handoff explicitly "
+            "states that the same decision was reversed or withdrawn. Avoid needless repetition, but preserve both a confirmed item "
+            "and a genuinely separate unresolved follow-up when both are present. Under each section, write 'None explicitly stated.' "
+            "only when no handoff contains an item routed to that section. "
             "Only name an owner or deadline when the specialist handoff provides it."
         )
     else:
@@ -508,8 +510,8 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
     return chat_prompt(
         tokenizer,
         "You aggregate specialist findings into an evidence-grounded response. Use only information conveyed by the specialist "
-        "handoff; do not invent facts. Treat a suggestion or discussion topic as neither a decision nor an action unless the "
-        "handoff states a commitment. Use the handoff's status labels when present. Do not repeat an item across sections.",
+        "handoff; do not invent facts. When status labels are present, route each item by its label rather than re-classifying it. "
+        "Treat an unlabelled suggestion or discussion topic as neither a decision nor an action unless it states a commitment.",
         user,
         enable_thinking,
     )
@@ -521,8 +523,9 @@ def block_receiver_prompt(tokenizer, question: str, block_id: int, enable_thinki
         f"Objective: {question}\n\n"
         f"You are summarizing chronological meeting block {block_id}. Create a concise block-local summary with exactly these sections:\n"
         f"{MEETING_SECTIONS}\n"
-        "Use only information conveyed by the specialist handoffs. Keep proposals and discussions out of Confirmed decisions, and "
-        "do not repeat an item across sections. Do not infer owners, deadlines, or agreement. This is a local block summary, not the final meeting summary."
+        "Use only information conveyed by the specialist handoffs. When status labels are present, route CONFIRMED_DECISION, "
+        "COMMITTED_ACTION, UNRESOLVED, and CONTEXT items to their matching sections without re-classifying them. Do not infer "
+        "owners, deadlines, or agreement. This is a local block summary, not the final meeting summary."
     )
     return chat_prompt(
         tokenizer,

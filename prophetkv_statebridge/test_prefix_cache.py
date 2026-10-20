@@ -100,7 +100,7 @@ def test_unfiltered_meeting_handoff_does_not_request_quotes_or_limit_items():
     assert "COMMITTED_ACTION:" in prompt
 
 
-def test_meeting_receiver_reports_status_conflicts():
+def test_meeting_receiver_routes_explicit_status_labels():
     class Tokenizer:
         def apply_chat_template(self, messages, **kwargs):
             return " ".join(message["content"] for message in messages)
@@ -108,8 +108,8 @@ def test_meeting_receiver_reports_status_conflicts():
     prompt = receiver_prompt(
         Tokenizer(), "Summarize", False, meeting_mode=True,
     )
-    assert "report the conflict" in prompt
-    assert "do not silently omit the item" in prompt
+    assert "Status labels are authoritative routing signals" in prompt
+    assert "must NOT cancel a labelled confirmed decision" in prompt
 
 
 def test_progress_logging_is_opt_in(capsys):
