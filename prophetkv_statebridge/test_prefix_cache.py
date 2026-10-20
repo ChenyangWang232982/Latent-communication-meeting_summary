@@ -7,6 +7,7 @@ from prophetkv_statebridge.run_prefix_cache import (
     common_prefix_length,
     log_progress,
     receiver_prompt,
+    split_handoff_states,
     specialist_user,
 )
 
@@ -59,6 +60,33 @@ def test_per_message_alignment_preserves_order_and_uses_separate_sender_calls():
     bridge = RecordingBridge()
     align_handoffs(bridge, segments, "joint")
     assert bridge.lengths == [3]
+
+
+def test_handoff_windows_retain_a_tail_budget_per_window():
+    states = torch.arange(384, dtype=torch.float32).unsqueeze(-1)
+    token_ids = torch.arange(384)
+
+    segments = split_handoff_states(
+        states, token_ids, state_budget=96, chunk_tokens=192,
+    )
+
+    assert [segment["states"].size(0) for segment in segments] == [96, 96]
+    assert segments[0]["token_ids"][0].item() == 96
+    assert segments[0]["token_ids"][-1].item() == 191
+    assert segments[1]["token_ids"][0].item() == 288
+    assert segments[1]["token_ids"][-1].item() == 383
+
+
+def test_handoff_without_window_preserves_legacy_single_tail_budget():
+    states = torch.arange(384, dtype=torch.float32).unsqueeze(-1)
+    token_ids = torch.arange(384)
+
+    segments = split_handoff_states(
+        states, token_ids, state_budget=96, chunk_tokens=None,
+    )
+
+    assert len(segments) == 1
+    assert segments[0]["token_ids"][0].item() == 288
 
 
 def test_unfiltered_meeting_handoff_does_not_request_quotes_or_limit_items():

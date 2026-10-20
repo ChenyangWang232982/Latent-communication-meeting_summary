@@ -118,6 +118,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
     parser.add_argument(
+        "--handoff-chunk-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Optional token window for each specialist handoff. Each window sends up to "
+            "--prefix-tokens-per-agent latent states; omit to retain the legacy one-tail-per-specialist behavior."
+        ),
+    )
+    parser.add_argument(
         "--specialist-max-new-tokens",
         type=int,
         default=None,
@@ -255,6 +264,33 @@ def align_handoffs(bridge, segments: list[dict[str, Any]], scope: str) -> torch.
     raise ValueError(f"Unsupported alignment scope: {scope}")
 
 
+def split_handoff_states(
+    states: torch.Tensor,
+    token_ids: torch.Tensor,
+    *,
+    state_budget: int,
+    chunk_tokens: int | None,
+) -> list[dict[str, torch.Tensor]]:
+    """Retain a tail budget from each chronological handoff window.
+
+    The default single window preserves the original StateBridge behavior. A
+    configured window prevents a long specialist response from contributing
+    only its final generated tokens.
+    """
+    if states.size(0) != token_ids.size(0):
+        raise ValueError("Handoff states and token IDs must have the same length")
+    window_size = chunk_tokens or token_ids.size(0)
+    segments = []
+    for start in range(0, token_ids.size(0), window_size):
+        end = min(start + window_size, token_ids.size(0))
+        count = min(state_budget, end - start)
+        segments.append({
+            "states": states[end - count:end],
+            "token_ids": token_ids[end - count:end],
+        })
+    return segments
+
+
 @torch.inference_mode()
 def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_ids: torch.Tensor, args, *, progress_callback=None):
     message_ids, states = generate_after_prefix_cache(
@@ -268,8 +304,7 @@ def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_
         progress_callback=progress_callback,
     )
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
-    count = min(args.prefix_tokens_per_agent, message_ids.size(1))
-    return decode(tokenizer, message_ids), states[-count:], message_ids[0, -count:], int(message_ids.size(1))
+    return decode(tokenizer, message_ids), states, message_ids[0], int(message_ids.size(1))
 
 
 @torch.inference_mode()
@@ -282,8 +317,7 @@ def states_for_handoff(model, tokenizer, handoff: str, args) -> tuple[torch.Tens
         output_hidden_states=True,
         return_dict=True,
     )
-    count = min(args.prefix_tokens_per_agent, encoded.input_ids.size(1))
-    return outputs.hidden_states[-1][0, -count:], encoded.input_ids[0, -count:], int(encoded.input_ids.size(1))
+    return outputs.hidden_states[-1][0], encoded.input_ids[0], int(encoded.input_ids.size(1))
 
 
 @torch.inference_mode()
@@ -402,6 +436,13 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             message = raw_message
             evidence_message = raw_message
             handoff_tokens = generated_tokens
+        handoff_segments = split_handoff_states(
+            states,
+            token_ids,
+            state_budget=args.prefix_tokens_per_agent,
+            chunk_tokens=args.handoff_chunk_tokens,
+        )
+        selected_states = sum(segment["states"].size(0) for segment in handoff_segments)
         specialists.append(
             {
                 "role": role,
@@ -419,12 +460,13 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             "handoff_tokens": handoff_tokens,
             "generated_tokens": generated_tokens,
             "verified_claims": len(verified_claims),
-            "selected_states": int(states.size(0)),
-            "truncated_tokens": max(0, handoff_tokens - int(states.size(0))),
+            "selected_states": selected_states,
+            "truncated_tokens": max(0, handoff_tokens - selected_states),
+            "handoff_windows": len(handoff_segments),
         })
-        all_states.append(states)
-        all_ids.append(token_ids)
-        segments.append({"states": states, "token_ids": token_ids})
+        all_states.extend(segment["states"] for segment in handoff_segments)
+        all_ids.extend(segment["token_ids"] for segment in handoff_segments)
+        segments.extend(handoff_segments)
         completed = len(specialists)
         log_progress(
             args,
@@ -619,6 +661,8 @@ def main() -> None:
     args = parse_args()
     if args.prefix_tokens_per_agent < 2:
         raise ValueError("--prefix-tokens-per-agent must be at least 2")
+    if args.handoff_chunk_tokens is not None and args.handoff_chunk_tokens < args.prefix_tokens_per_agent:
+        raise ValueError("--handoff-chunk-tokens must be at least --prefix-tokens-per-agent")
     if args.specialist_max_new_tokens is not None and args.specialist_max_new_tokens < 1:
         raise ValueError("--specialist-max-new-tokens must be positive")
     if args.block_summary_prefix_tokens is None:
@@ -857,6 +901,7 @@ def main() -> None:
                     report.write(f"block {item['block_id']} | {item['role']} handoff (debug only):\n{debug_message}\n\n")
                     report.write(
                         f"handoff tokens: {token_metric['handoff_tokens']}; "
+                        f"handoff windows: {token_metric['handoff_windows']}; "
                         f"selected states: {token_metric['selected_states']}; "
                         f"truncated tokens: {token_metric['truncated_tokens']}\n\n"
                     )
