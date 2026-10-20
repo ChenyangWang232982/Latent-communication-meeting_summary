@@ -90,7 +90,7 @@ def test_handoff_without_window_preserves_legacy_single_tail_budget():
     assert segments[0]["token_ids"][0].item() == 288
 
 
-def test_structured_handoff_samples_each_status_item_including_its_start_and_end():
+def test_structured_handoff_keeps_a_contiguous_tail_for_each_status_item():
     message = "CONFIRMED_DECISION: Alpha\nCOMMITTED_ACTION: Beta"
     token_ids = torch.arange(len(message))
     states = token_ids.float().unsqueeze(-1)
@@ -111,9 +111,9 @@ def test_structured_handoff_samples_each_status_item_including_its_start_and_end
     )
 
     assert len(segments) == 2
-    assert segments[0]["token_ids"][0].item() == 0
+    assert segments[0]["token_ids"][0].item() > 0
     assert segments[0]["token_ids"][-1].item() == len("CONFIRMED_DECISION: Alpha") - 1
-    assert segments[1]["token_ids"][0].item() == len("CONFIRMED_DECISION: Alpha\n")
+    assert segments[1]["token_ids"][0].item() > len("CONFIRMED_DECISION: Alpha\n")
     assert segments[1]["token_ids"][-1].item() == len(message) - 1
 
 

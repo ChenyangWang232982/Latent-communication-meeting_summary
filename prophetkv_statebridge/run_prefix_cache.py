@@ -137,14 +137,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Enable structured meeting handoffs with at most this many ranked status-labelled items per specialist. "
-            "Each item contributes a uniform sample of its hidden states."
+            "Each item contributes a contiguous trailing fraction of its hidden states."
         ),
     )
     parser.add_argument(
         "--item-state-ratio",
         type=float,
         default=0.5,
-        help="Fraction of each structured handoff item's hidden states to transmit (default: 0.5).",
+        help="Trailing fraction of each structured handoff item's hidden states to transmit (default: 0.5).",
     )
     parser.add_argument(
         "--specialist-max-new-tokens",
@@ -325,11 +325,10 @@ def status_item_ranges(message: str) -> list[tuple[int, int]]:
     return [(start, starts[index + 1] if index + 1 < len(starts) else len(message)) for index, start in enumerate(starts)]
 
 
-def evenly_sample_indices(indices: torch.Tensor, ratio: float) -> torch.Tensor:
-    """Keep a uniform sample, including an item's first and final states."""
+def trailing_indices(indices: torch.Tensor, ratio: float) -> torch.Tensor:
+    """Keep a contiguous trailing fraction of one semantic handoff item."""
     count = min(indices.numel(), max(1, math.ceil(indices.numel() * ratio)))
-    positions = torch.linspace(0, indices.numel() - 1, steps=count, device=indices.device).round().long()
-    return indices.index_select(0, positions)
+    return indices[-count:]
 
 
 def generated_token_character_spans(tokenizer, token_ids: torch.Tensor) -> tuple[str, list[tuple[int, int]]]:
@@ -363,14 +362,16 @@ def split_structured_handoff_states(
     """Sample each status-labelled conclusion independently and uniformly.
 
     Prefix-decoded spans allow item boundaries in text to select matching,
-    context-aware hidden states from the original specialist output.
+    context-aware hidden states from the original specialist output. Each
+    item keeps a contiguous trailing fraction, preserving the local latent
+    trajectory expected by the receiver.
     """
     decoded_message, spans = generated_token_character_spans(tokenizer, token_ids)
     ranges = status_item_ranges(decoded_message)
     if not ranges:
         return [{
-            "states": states.index_select(0, evenly_sample_indices(torch.arange(states.size(0), device=states.device), ratio)),
-            "token_ids": token_ids.index_select(0, evenly_sample_indices(torch.arange(token_ids.size(0), device=token_ids.device), ratio)),
+            "states": states.index_select(0, trailing_indices(torch.arange(states.size(0), device=states.device), ratio)),
+            "token_ids": token_ids.index_select(0, trailing_indices(torch.arange(token_ids.size(0), device=token_ids.device), ratio)),
         }]
 
     segments = []
@@ -382,7 +383,7 @@ def split_structured_handoff_states(
         )
         if positions.numel() == 0:
             continue
-        selected = evenly_sample_indices(positions, ratio)
+        selected = trailing_indices(positions, ratio)
         segments.append({
             "states": states.index_select(0, selected),
             "token_ids": token_ids.index_select(0, selected),
