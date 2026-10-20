@@ -150,6 +150,11 @@ specialist's states separately before concatenation and may take longer.
 The report lists each specialist's handoff length, selected states, and
 truncated tokens so omissions can be checked against the K budget.
 
+In meeting mode with `--evidence-policy off`, specialists mark the status of
+each handoff item. The receiver reports conflicting statuses as unresolved
+instead of silently omitting them. Each specialist still sends its final K
+states; K is not shared across specialists.
+
 ## Fact-Centric Evidence Grounding
 
 With `--evidence-policy strict`, every meeting specialist must emit a small JSON claim list with a

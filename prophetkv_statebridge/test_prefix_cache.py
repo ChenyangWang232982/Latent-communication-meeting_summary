@@ -1,7 +1,12 @@
 import torch
 
 from prophetkv_statebridge.prefix_cache import cache_nbytes
-from prophetkv_statebridge.run_prefix_cache import align_handoffs, common_prefix_length, specialist_user
+from prophetkv_statebridge.run_prefix_cache import (
+    align_handoffs,
+    common_prefix_length,
+    receiver_prompt,
+    specialist_user,
+)
 
 
 def test_common_prefix_stops_before_role_specific_suffix():
@@ -50,3 +55,16 @@ def test_unfiltered_meeting_handoff_does_not_request_quotes_or_limit_items():
     assert "supporting quote" not in prompt.lower()
     assert "at most" not in prompt.lower()
     assert "do not write a full meeting summary" in prompt.lower()
+    assert "COMMITTED_ACTION:" in prompt
+
+
+def test_meeting_receiver_reports_status_conflicts():
+    class Tokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            return " ".join(message["content"] for message in messages)
+
+    prompt = receiver_prompt(
+        Tokenizer(), "Summarize", False, meeting_mode=True,
+    )
+    assert "report the conflict" in prompt
+    assert "do not silently omit the item" in prompt

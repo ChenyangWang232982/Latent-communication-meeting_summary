@@ -71,6 +71,12 @@ MEETING_DEFAULT_ROLES = ["decisions", "actions", "open_issues", "context"]
 MEETING_SECTIONS = (
     "Key context and discussion\nConfirmed decisions\nAction items\nOpen issues and risks"
 )
+MEETING_STATUS_LABELS = {
+    "decisions": "CONFIRMED_DECISION",
+    "actions": "COMMITTED_ACTION",
+    "open_issues": "UNRESOLVED",
+    "context": "CONTEXT",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,8 +172,10 @@ def specialist_user(
         )
     elif meeting_mode:
         format_instruction = (
-            " Return concise items for this role only. Do not write a full meeting summary, repeat another role's items, "
-            "or add headings, quotations, or unsupported details."
+            f" Begin each item on a new line with {MEETING_STATUS_LABELS[role]}: "
+            "Describe its final status at the end of the meeting. Return concise items for this role only. "
+            "Do not write a full meeting summary, repeat another role's items, or add headings, quotations, "
+            "or unsupported details."
         )
     user = (
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
@@ -404,7 +412,9 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
             "Use each item once only: accepted outcomes belong in Confirmed decisions; explicit owner commitments belong in "
             "Action items; unresolved questions, blockers, and uncertainty belong in Open issues and risks; everything else "
             "important belongs in Key context and discussion. Under each section, write 'None explicitly stated.' only when the "
-            "handoff conveys no item for that section. Only name an owner or deadline when the specialist handoff provides it."
+            "handoff conveys no item for that section. If handoffs disagree about an item's final status, report the conflict "
+            "under Open issues and risks without claiming that either status is confirmed; do not silently omit the item. "
+            "Only name an owner or deadline when the specialist handoff provides it."
         )
     else:
         user = f"Question: {question}\n\nGive a concise factual answer."
@@ -414,7 +424,7 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
         tokenizer,
         "You aggregate specialist findings into an evidence-grounded response. Use only information conveyed by the specialist "
         "handoff; do not invent facts. Treat a suggestion or discussion topic as neither a decision nor an action unless the "
-        "handoff states a commitment. Do not repeat an item across sections.",
+        "handoff states a commitment. Use the handoff's status labels when present. Do not repeat an item across sections.",
         user,
         enable_thinking,
     )
