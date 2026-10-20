@@ -80,8 +80,14 @@ MEETING_STATUS_LABELS = {
     "context": "CONTEXT",
 }
 STATUS_ITEM_PATTERN = re.compile(
-    r"(?m)^(?:CONFIRMED_DECISION|COMMITTED_ACTION|UNRESOLVED|CONTEXT):"
+    r"(?m)^(?P<label>CONFIRMED_DECISION|COMMITTED_ACTION|UNRESOLVED|CONTEXT):"
 )
+STATUS_CONTROL_TEXT = {
+    "CONFIRMED_DECISION": "[decision]",
+    "COMMITTED_ACTION": "[action]",
+    "UNRESOLVED": "[issue]",
+    "CONTEXT": "[context]",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -282,13 +288,30 @@ def common_prefix_length(token_batches: list[torch.Tensor]) -> int:
 
 def align_handoffs(bridge, segments: list[dict[str, Any]], scope: str) -> torch.Tensor:
     """Align sender messages without changing their order or state budget."""
+    def with_control_prefix(aligned: torch.Tensor, segment: dict[str, Any]) -> torch.Tensor:
+        control_ids = segment.get("control_token_ids")
+        if control_ids is None or control_ids.numel() == 0:
+            return aligned
+        control = bridge.vocab_embeddings.index_select(0, control_ids.to(bridge.vocab_embeddings.device))
+        return torch.cat((control.to(device=aligned.device, dtype=aligned.dtype), aligned))
+
     if scope == "per-message":
-        return torch.cat([bridge.align(item["states"], item["token_ids"]) for item in segments])
+        return torch.cat([
+            with_control_prefix(bridge.align(item["states"], item["token_ids"]), item)
+            for item in segments
+        ])
     if scope == "joint":
-        return bridge.align(
+        aligned = bridge.align(
             torch.cat([item["states"] for item in segments]),
             torch.cat([item["token_ids"] for item in segments]),
         )
+        offset = 0
+        aligned_segments = []
+        for item in segments:
+            length = item["states"].size(0)
+            aligned_segments.append(with_control_prefix(aligned[offset:offset + length], item))
+            offset += length
+        return torch.cat(aligned_segments)
     raise ValueError(f"Unsupported alignment scope: {scope}")
 
 
@@ -319,10 +342,13 @@ def split_handoff_states(
     return segments
 
 
-def status_item_ranges(message: str) -> list[tuple[int, int]]:
+def status_item_ranges(message: str) -> list[tuple[int, int, str]]:
     """Return character spans for newline-delimited structured handoff items."""
-    starts = [match.start() for match in STATUS_ITEM_PATTERN.finditer(message)]
-    return [(start, starts[index + 1] if index + 1 < len(starts) else len(message)) for index, start in enumerate(starts)]
+    matches = list(STATUS_ITEM_PATTERN.finditer(message))
+    return [
+        (match.start(), matches[index + 1].start() if index + 1 < len(matches) else len(message), match.group("label"))
+        for index, match in enumerate(matches)
+    ]
 
 
 def trailing_indices(indices: torch.Tensor, ratio: float) -> torch.Tensor:
@@ -375,7 +401,7 @@ def split_structured_handoff_states(
         }]
 
     segments = []
-    for start, end in ranges:
+    for start, end, label in ranges:
         positions = torch.tensor(
             [index for index, (token_start, token_end) in enumerate(spans) if token_start < end and token_end > start],
             device=token_ids.device,
@@ -384,13 +410,23 @@ def split_structured_handoff_states(
         if positions.numel() == 0:
             continue
         selected = trailing_indices(positions, ratio)
+        control_ids = tokenizer(STATUS_CONTROL_TEXT[label], add_special_tokens=False)["input_ids"]
         segments.append({
             "states": states.index_select(0, selected),
             "token_ids": token_ids.index_select(0, selected),
+            "control_token_ids": torch.tensor(control_ids, device=token_ids.device, dtype=torch.long),
         })
     if not segments:
         raise RuntimeError("Structured handoff labels did not map to generated tokens.")
     return segments
+
+
+def segment_communication_tokens(segments: list[dict[str, Any]]) -> int:
+    """Count aligned latent states plus explicit structured control tokens."""
+    return sum(
+        segment["states"].size(0) + int(segment.get("control_token_ids", torch.empty(0)).numel())
+        for segment in segments
+    )
 
 
 @torch.inference_mode()
@@ -555,6 +591,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
                 chunk_tokens=args.handoff_chunk_tokens,
             )
         selected_states = sum(segment["states"].size(0) for segment in handoff_segments)
+        control_tokens = sum(int(segment.get("control_token_ids", torch.empty(0)).numel()) for segment in handoff_segments)
         specialists.append(
             {
                 "role": role,
@@ -573,6 +610,8 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             "generated_tokens": generated_tokens,
             "verified_claims": len(verified_claims),
             "selected_states": selected_states,
+            "control_tokens": control_tokens,
+            "communicated_tokens": selected_states + control_tokens,
             "truncated_tokens": max(0, handoff_tokens - selected_states),
             "handoff_windows": len(handoff_segments),
             "selection": "structured_items" if args.max_items_per_specialist is not None else "token_windows",
@@ -613,7 +652,8 @@ def receiver_prompt(tokenizer, question: str, enable_thinking: bool, reports: st
             "review must NOT cancel a labelled confirmed decision or action. Exclude a labelled decision only when a handoff explicitly "
             "states that the same decision was reversed or withdrawn. Avoid needless repetition, but preserve both a confirmed item "
             "and a genuinely separate unresolved follow-up when both are present. Under each section, write 'None explicitly stated.' "
-            "only when no handoff contains an item routed to that section. "
+            "only when no handoff contains an item routed to that section. For latent handoffs, [decision], [action], [issue], and "
+            "[context] are the corresponding authoritative control labels. "
             "Only name an owner or deadline when the specialist handoff provides it."
         )
     else:
@@ -915,7 +955,7 @@ def main() -> None:
             prefill_seconds = sum(block_result["prefix_prefill_seconds"] for block_result in block_results)
             prefill_chunks = sum(block_result["prefix_prefill_chunks"] for block_result in block_results)
             text_handoff_tokens = len(tokenizer(reports, add_special_tokens=False).input_ids)
-            latent_states = int(states.size(0))
+            latent_states = segment_communication_tokens(segments)
             hierarchical_merge = meeting_mode and len(block_results) > 1
             block_summaries = []
             if hierarchical_merge:
@@ -1006,7 +1046,7 @@ def main() -> None:
                 f"total prefill: {prefill_seconds:.2f}s\n"
             )
             report.write(
-                f"StateBridge specialist prefix: {states.size(0)} latent states\n\n"
+                f"StateBridge specialist prefix: {latent_states} communicated states/tokens\n\n"
             )
             if hierarchical_merge:
                 report.write(
@@ -1030,6 +1070,8 @@ def main() -> None:
                         f"selection: {token_metric['selection']}; "
                         f"handoff segments: {token_metric['handoff_windows']}; "
                         f"selected states: {token_metric['selected_states']}; "
+                        f"control tokens: {token_metric['control_tokens']}; "
+                        f"communicated: {token_metric['communicated_tokens']}; "
                         f"truncated tokens: {token_metric['truncated_tokens']}\n\n"
                     )
                     if meeting_mode:
