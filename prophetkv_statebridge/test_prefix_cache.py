@@ -8,6 +8,7 @@ from prophetkv_statebridge.run_prefix_cache import (
     log_progress,
     receiver_prompt,
     split_handoff_states,
+    split_structured_handoff_states,
     specialist_user,
 )
 
@@ -89,6 +90,30 @@ def test_handoff_without_window_preserves_legacy_single_tail_budget():
     assert segments[0]["token_ids"][0].item() == 288
 
 
+def test_structured_handoff_samples_each_status_item_including_its_start_and_end():
+    message = "CONFIRMED_DECISION: Alpha\nCOMMITTED_ACTION: Beta"
+    token_ids = torch.arange(len(message))
+    states = token_ids.float().unsqueeze(-1)
+
+    class CharacterTokenizer:
+        def __call__(self, text, **kwargs):
+            assert text == message
+            return {
+                "input_ids": list(range(len(text))),
+                "offset_mapping": [(index, index + 1) for index in range(len(text))],
+            }
+
+    segments = split_structured_handoff_states(
+        CharacterTokenizer(), message, states, token_ids, ratio=0.5,
+    )
+
+    assert len(segments) == 2
+    assert segments[0]["token_ids"][0].item() == 0
+    assert segments[0]["token_ids"][-1].item() == len("CONFIRMED_DECISION: Alpha") - 1
+    assert segments[1]["token_ids"][0].item() == len("CONFIRMED_DECISION: Alpha\n")
+    assert segments[1]["token_ids"][-1].item() == len(message) - 1
+
+
 def test_unfiltered_meeting_handoff_does_not_request_quotes_or_limit_items():
     prompt = specialist_user(
         "Meeting transcript", {"question": "Summarize the meeting"}, "actions",
@@ -98,6 +123,15 @@ def test_unfiltered_meeting_handoff_does_not_request_quotes_or_limit_items():
     assert "at most" not in prompt.lower()
     assert "do not write a full meeting summary" in prompt.lower()
     assert "COMMITTED_ACTION:" in prompt
+
+
+def test_structured_meeting_handoff_limits_items_without_padding():
+    prompt = specialist_user(
+        "Meeting transcript", {"question": "Summarize the meeting"}, "actions",
+        meeting_mode=True, evidence_policy="off", max_items=8,
+    )
+    assert "at most 8 self-contained items" in prompt
+    assert "never pad or invent items" in prompt
 
 
 def test_meeting_receiver_routes_explicit_status_labels():

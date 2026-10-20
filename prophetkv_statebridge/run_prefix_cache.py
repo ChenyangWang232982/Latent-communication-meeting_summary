@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -77,6 +79,9 @@ MEETING_STATUS_LABELS = {
     "open_issues": "UNRESOLVED",
     "context": "CONTEXT",
 }
+STATUS_ITEM_PATTERN = re.compile(
+    r"(?m)^(?:CONFIRMED_DECISION|COMMITTED_ACTION|UNRESOLVED|CONTEXT):"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -125,6 +130,21 @@ def parse_args() -> argparse.Namespace:
             "Optional token window for each specialist handoff. Each window sends up to "
             "--prefix-tokens-per-agent latent states; omit to retain the legacy one-tail-per-specialist behavior."
         ),
+    )
+    parser.add_argument(
+        "--max-items-per-specialist",
+        type=int,
+        default=None,
+        help=(
+            "Enable structured meeting handoffs with at most this many ranked status-labelled items per specialist. "
+            "Each item contributes a uniform sample of its hidden states."
+        ),
+    )
+    parser.add_argument(
+        "--item-state-ratio",
+        type=float,
+        default=0.5,
+        help="Fraction of each structured handoff item's hidden states to transmit (default: 0.5).",
     )
     parser.add_argument(
         "--specialist-max-new-tokens",
@@ -182,6 +202,7 @@ def specialist_user(
     *,
     meeting_mode: bool,
     evidence_policy: str,
+    max_items: int | None = None,
 ) -> str:
     task = ROLE_INSTRUCTIONS[role]
     format_instruction = ""
@@ -196,11 +217,16 @@ def specialist_user(
             "Use an empty string for unknown timestamp, owner, or deadline. If no supported item exists, return []."
         )
     elif meeting_mode:
+        item_limit = (
+            f" Return at most {max_items} self-contained items, ranked by importance. "
+            "If fewer supported items exist, return fewer; never pad or invent items."
+            if max_items is not None else ""
+        )
         format_instruction = (
             f" Begin each item on a new line with {MEETING_STATUS_LABELS[role]}: "
             "Describe its final status at the end of the meeting. Return concise items for this role only. "
             "Do not write a full meeting summary, repeat another role's items, or add headings, quotations, "
-            "or unsupported details."
+            f"or unsupported details.{item_limit}"
         )
     user = (
         f"Source transcript:\n{source}\n\nQuestion: {record['question']}\n\n"
@@ -219,6 +245,7 @@ def specialist_prompt(
     *,
     meeting_mode: bool,
     evidence_policy: str,
+    max_items: int | None = None,
 ) -> str:
     """Build a normal Qwen chat prompt; cache only its token-identical prefix."""
     user = specialist_user(
@@ -227,6 +254,7 @@ def specialist_prompt(
         role,
         meeting_mode=meeting_mode,
         evidence_policy=evidence_policy,
+        max_items=max_items,
     )
     return chat_prompt(
         tokenizer,
@@ -288,6 +316,66 @@ def split_handoff_states(
             "states": states[end - count:end],
             "token_ids": token_ids[end - count:end],
         })
+    return segments
+
+
+def status_item_ranges(message: str) -> list[tuple[int, int]]:
+    """Return character spans for newline-delimited structured handoff items."""
+    starts = [match.start() for match in STATUS_ITEM_PATTERN.finditer(message)]
+    return [(start, starts[index + 1] if index + 1 < len(starts) else len(message)) for index, start in enumerate(starts)]
+
+
+def evenly_sample_indices(indices: torch.Tensor, ratio: float) -> torch.Tensor:
+    """Keep a uniform sample, including an item's first and final states."""
+    count = min(indices.numel(), max(1, math.ceil(indices.numel() * ratio)))
+    positions = torch.linspace(0, indices.numel() - 1, steps=count, device=indices.device).round().long()
+    return indices.index_select(0, positions)
+
+
+def split_structured_handoff_states(
+    tokenizer,
+    message: str,
+    states: torch.Tensor,
+    token_ids: torch.Tensor,
+    *,
+    ratio: float,
+) -> list[dict[str, torch.Tensor]]:
+    """Sample each status-labelled conclusion independently and uniformly.
+
+    Offset mappings allow the item boundaries in decoded text to select the
+    matching context-aware hidden states from the original specialist output.
+    """
+    ranges = status_item_ranges(message)
+    if not ranges:
+        return [{
+            "states": states.index_select(0, evenly_sample_indices(torch.arange(states.size(0), device=states.device), ratio)),
+            "token_ids": token_ids.index_select(0, evenly_sample_indices(torch.arange(token_ids.size(0), device=token_ids.device), ratio)),
+        }]
+    try:
+        encoded = tokenizer(message, add_special_tokens=False, return_offsets_mapping=True)
+        encoded_ids = torch.tensor(encoded["input_ids"], device=token_ids.device)
+        offsets = encoded["offset_mapping"]
+    except (KeyError, NotImplementedError, TypeError, ValueError):
+        encoded_ids, offsets = None, None
+    if encoded_ids is None or not torch.equal(encoded_ids, token_ids):
+        raise RuntimeError("Structured handoff tokenization did not match the generated token sequence.")
+
+    segments = []
+    for start, end in ranges:
+        positions = torch.tensor(
+            [index for index, (token_start, token_end) in enumerate(offsets) if token_start < end and token_end > start],
+            device=token_ids.device,
+            dtype=torch.long,
+        )
+        if positions.numel() == 0:
+            continue
+        selected = evenly_sample_indices(positions, ratio)
+        segments.append({
+            "states": states.index_select(0, selected),
+            "token_ids": token_ids.index_select(0, selected),
+        })
+    if not segments:
+        raise RuntimeError("Structured handoff labels did not map to generated tokens.")
     return segments
 
 
@@ -364,6 +452,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             specialist_prompt(
                 tokenizer, source, record, role, args.enable_thinking,
                 meeting_mode=meeting_mode, evidence_policy=args.evidence_policy,
+                max_items=args.max_items_per_specialist,
             ),
             return_tensors="pt",
             add_special_tokens=False,
@@ -378,6 +467,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             specialist_prompt(
                 tokenizer, source, record, alternate_role, args.enable_thinking,
                 meeting_mode=meeting_mode, evidence_policy=args.evidence_policy,
+                max_items=args.max_items_per_specialist,
             ),
             return_tensors="pt",
             add_special_tokens=False,
@@ -436,12 +526,21 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             message = raw_message
             evidence_message = raw_message
             handoff_tokens = generated_tokens
-        handoff_segments = split_handoff_states(
-            states,
-            token_ids,
-            state_budget=args.prefix_tokens_per_agent,
-            chunk_tokens=args.handoff_chunk_tokens,
-        )
+        if args.max_items_per_specialist is not None:
+            handoff_segments = split_structured_handoff_states(
+                tokenizer,
+                message,
+                states,
+                token_ids,
+                ratio=args.item_state_ratio,
+            )
+        else:
+            handoff_segments = split_handoff_states(
+                states,
+                token_ids,
+                state_budget=args.prefix_tokens_per_agent,
+                chunk_tokens=args.handoff_chunk_tokens,
+            )
         selected_states = sum(segment["states"].size(0) for segment in handoff_segments)
         specialists.append(
             {
@@ -463,6 +562,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
             "selected_states": selected_states,
             "truncated_tokens": max(0, handoff_tokens - selected_states),
             "handoff_windows": len(handoff_segments),
+            "selection": "structured_items" if args.max_items_per_specialist is not None else "token_windows",
         })
         all_states.extend(segment["states"] for segment in handoff_segments)
         all_ids.extend(segment["token_ids"] for segment in handoff_segments)
@@ -666,6 +766,14 @@ def main() -> None:
         raise ValueError("--prefix-tokens-per-agent must be at least 2")
     if args.handoff_chunk_tokens is not None and args.handoff_chunk_tokens < args.prefix_tokens_per_agent:
         raise ValueError("--handoff-chunk-tokens must be at least --prefix-tokens-per-agent")
+    if args.max_items_per_specialist is not None and args.max_items_per_specialist < 1:
+        raise ValueError("--max-items-per-specialist must be positive")
+    if not 0 < args.item_state_ratio <= 1:
+        raise ValueError("--item-state-ratio must be in (0, 1]")
+    if args.max_items_per_specialist is not None and args.handoff_chunk_tokens is not None:
+        raise ValueError("Use either --max-items-per-specialist or --handoff-chunk-tokens, not both")
+    if args.max_items_per_specialist is not None and args.evidence_policy != "off":
+        raise ValueError("Structured handoff items currently require --evidence-policy off")
     if args.specialist_max_new_tokens is not None and args.specialist_max_new_tokens < 1:
         raise ValueError("--specialist-max-new-tokens must be positive")
     if args.block_summary_prefix_tokens is None:
@@ -728,7 +836,9 @@ def main() -> None:
         report.write(
             f"model={args.model}, source_mode={source_mode}, roles={','.join(args.roles)}, "
             f"evidence_policy={args.evidence_policy}, alignment_scope={args.alignment_scope}, "
-            f"specialist_max_new_tokens={args.specialist_max_new_tokens}\n"
+            f"specialist_max_new_tokens={args.specialist_max_new_tokens}, "
+            f"max_items_per_specialist={args.max_items_per_specialist}, "
+            f"item_state_ratio={args.item_state_ratio}\n"
         )
         report.write(
             "Each source block is prefetched once and reused by cloned per-agent KV caches. "
@@ -904,7 +1014,8 @@ def main() -> None:
                     report.write(f"block {item['block_id']} | {item['role']} handoff (debug only):\n{debug_message}\n\n")
                     report.write(
                         f"handoff tokens: {token_metric['handoff_tokens']}; "
-                        f"handoff windows: {token_metric['handoff_windows']}; "
+                        f"selection: {token_metric['selection']}; "
+                        f"handoff segments: {token_metric['handoff_windows']}; "
                         f"selected states: {token_metric['selected_states']}; "
                         f"truncated tokens: {token_metric['truncated_tokens']}\n\n"
                     )
