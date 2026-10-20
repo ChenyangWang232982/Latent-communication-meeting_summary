@@ -171,7 +171,8 @@ the model emits an end token or reaches the remaining context capacity. The
 final receiver outputs the same four stable sections.
 Use `--debug-progress` to see each document block's prefill and specialist
 completion counts, followed by block-summary and final-answer stages. Progress
-lines are printed immediately; the report still contains the finished result.
+lines are printed immediately, including a heartbeat every 128 tokens during
+specialist generation; the report still contains the finished result.
 
 ## Meeting transcript run
 

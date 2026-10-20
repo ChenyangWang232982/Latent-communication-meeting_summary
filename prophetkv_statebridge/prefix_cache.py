@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Iterable
+from collections.abc import Callable
 
 import torch
 
@@ -68,6 +69,7 @@ def generate_after_prefix_cache(
     suffix_ids: torch.Tensor,
     *,
     max_context_tokens: int,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Greedily generate a specialist response after an exact cached prefix.
 
@@ -108,6 +110,8 @@ def generate_after_prefix_cache(
         )
         generated_states.append(outputs.hidden_states[-1][:, -1, :])
         cache = outputs.past_key_values
+        if progress_callback is not None and (step + 1) % 128 == 0:
+            progress_callback(step + 1)
         if int(current_id.item()) in eos_ids:
             break
         next_token = outputs.logits[:, -1:].argmax(dim=-1)

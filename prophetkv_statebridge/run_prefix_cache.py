@@ -227,11 +227,14 @@ def common_prefix_length(token_batches: list[torch.Tensor]) -> int:
         raise ValueError("At least one specialist prompt is required")
     sequences = [tokens[0] for tokens in token_batches]
     limit = min(sequence.numel() for sequence in sequences)
-    for index in range(limit):
-        value = sequences[0][index]
-        if any(sequence[index] != value for sequence in sequences[1:]):
-            return index
-    return limit
+    if len(sequences) == 1:
+        return limit
+    baseline = sequences[0][:limit]
+    matching = torch.ones(limit, dtype=torch.bool, device=baseline.device)
+    for sequence in sequences[1:]:
+        matching &= baseline.eq(sequence[:limit])
+    mismatches = (~matching).nonzero(as_tuple=True)[0]
+    return int(mismatches[0].item()) if mismatches.numel() else limit
 
 
 def align_handoffs(bridge, segments: list[dict[str, Any]], scope: str) -> torch.Tensor:
@@ -247,7 +250,7 @@ def align_handoffs(bridge, segments: list[dict[str, Any]], scope: str) -> torch.
 
 
 @torch.inference_mode()
-def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_ids: torch.Tensor, args):
+def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_ids: torch.Tensor, args, *, progress_callback=None):
     message_ids, states = generate_after_prefix_cache(
         model,
         tokenizer,
@@ -255,6 +258,7 @@ def specialist_from_cache(model, tokenizer, prefix_cache, prefix_length, suffix_
         prefix_length,
         suffix_ids,
         max_context_tokens=args.model_context_tokens,
+        progress_callback=progress_callback,
     )
     message_ids, states = remove_thinking_tokens(tokenizer, message_ids, states)
     count = min(args.prefix_tokens_per_agent, message_ids.size(1))
@@ -313,6 +317,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
     deliberately return latent handoffs rather than attempting to concatenate
     independent KV caches from different blocks.
     """
+    log_progress(args, f"{progress_label}: tokenizing {len(args.roles)} specialist prompts")
     role_inputs = [
         tokenizer(
             specialist_prompt(
@@ -338,6 +343,7 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         ).to(args.device).input_ids
         prefix_inputs = [role_inputs[0], alternate_input]
     common_length = common_prefix_length(prefix_inputs)
+    log_progress(args, f"{progress_label}: shared prefix comparison complete ({common_length} tokens)")
     if common_length < 2 or any(input_ids.size(1) == common_length for input_ids in role_inputs):
         raise RuntimeError("Specialist prompts do not have a usable shared prefix and suffix.")
 
@@ -362,7 +368,11 @@ def process_source_block(model, tokenizer, record: dict[str, Any], source: str, 
         )
         specialist_started = time.perf_counter()
         raw_message, states, token_ids, generated_tokens = specialist_from_cache(
-            model, tokenizer, prefix_cache, encoded_prefix.size(1), full_prompt_ids[:, common_length:], args
+            model, tokenizer, prefix_cache, encoded_prefix.size(1), full_prompt_ids[:, common_length:], args,
+            progress_callback=(
+                lambda count: log_progress(args, f"{progress_label}: specialist {role} generated {count} tokens so far")
+                if args.debug_progress else None
+            ),
         )
         log_progress(args, f"{progress_label}: specialist {role} generated {generated_tokens} tokens; preparing handoff")
         verified_claims: list[dict[str, Any]] = []

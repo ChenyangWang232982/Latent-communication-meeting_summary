@@ -1,7 +1,7 @@
 import torch
 from types import SimpleNamespace
 
-from prophetkv_statebridge.prefix_cache import cache_nbytes
+from prophetkv_statebridge.prefix_cache import cache_nbytes, generate_after_prefix_cache
 from prophetkv_statebridge.run_prefix_cache import (
     align_handoffs,
     common_prefix_length,
@@ -17,6 +17,18 @@ def test_common_prefix_stops_before_role_specific_suffix():
         torch.tensor([[1, 2, 3, 9]]),
     ]
     assert common_prefix_length(prompts) == 3
+
+
+def test_common_prefix_handles_long_prompts_and_shorter_roles():
+    shared = torch.arange(15_000)
+    prompts = [
+        torch.cat((shared, torch.tensor([1]))).unsqueeze(0),
+        torch.cat((shared, torch.tensor([2]))).unsqueeze(0),
+        shared.unsqueeze(0),
+    ]
+    assert common_prefix_length(prompts) == 15_000
+    prompts[1][0, 7_500] = -1
+    assert common_prefix_length(prompts) == 7_500
 
 
 def test_legacy_cache_size_is_counted_once():
@@ -77,3 +89,23 @@ def test_progress_logging_is_opt_in(capsys):
     assert capsys.readouterr().out == ""
     log_progress(SimpleNamespace(debug_progress=True), "block 1/2")
     assert "block 1/2" in capsys.readouterr().out
+
+
+def test_specialist_generation_reports_progress_without_eos():
+    class Model:
+        def __call__(self, **kwargs):
+            logits = torch.tensor([[[0.0, 1.0, 0.0]]])
+            return SimpleNamespace(
+                logits=logits,
+                past_key_values=(),
+                hidden_states=(torch.ones(1, 1, 2),),
+            )
+
+    counts = []
+    ids, states = generate_after_prefix_cache(
+        Model(), SimpleNamespace(eos_token_id=2, pad_token_id=2), (), 1,
+        torch.tensor([[0]]), max_context_tokens=132, progress_callback=counts.append,
+    )
+    assert ids.shape == (1, 130)
+    assert states.shape == (130, 2)
+    assert counts == [128]
