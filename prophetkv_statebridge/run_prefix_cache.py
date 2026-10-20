@@ -630,12 +630,19 @@ def main() -> None:
         data_path = args.meeting_data or args.data
         assert data_path is not None
         records = load_records(data_path, args.num_samples)
+    log_progress(args, f"startup: loaded {len(records)} record(s); checking device and dtype ({args.device})")
     dtype = torch.bfloat16 if args.device.startswith("cuda") and torch.cuda.is_bf16_supported() else torch.float16
+    log_progress(args, f"startup: loading tokenizer for {args.model}")
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype).to(args.device).eval()
+    log_progress(args, f"startup: loading model weights ({dtype})")
+    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype)
+    log_progress(args, f"startup: model weights loaded; transferring to {args.device}")
+    model = model.to(args.device).eval()
+    log_progress(args, "startup: model ready; initializing StateBridge")
     bridge = StateBridge(model.get_input_embeddings().weight, regularization=args.regularization, snap_ratio=args.snap_ratio, vocab_chunk_size=args.vocab_chunk_size)
+    log_progress(args, "startup: StateBridge ready")
     args.model_context_tokens = model_context_tokens(model, tokenizer)
     meeting_block_tokens = automatic_meeting_block_tokens(model, tokenizer) if meeting_mode else 0
     if meeting_mode and args.document_chunk_overlap_tokens >= meeting_block_tokens:
@@ -662,6 +669,7 @@ def main() -> None:
         )
         for index, record in enumerate(records, start=1):
             if meeting_mode:
+                log_progress(args, f"sample {index}/{len(records)} ({record['id']}): splitting transcript into document blocks")
                 document_blocks = chunk_document(
                     tokenizer,
                     record["context"],
@@ -669,6 +677,7 @@ def main() -> None:
                     overlap_tokens=args.document_chunk_overlap_tokens,
                 )
             else:
+                log_progress(args, f"sample {index}/{len(records)} ({record['id']}): preparing source block")
                 source = trim_context(tokenizer, record["context"], args.source_max_tokens)
                 source_tokens = len(tokenizer(source, add_special_tokens=False).input_ids)
                 document_blocks = [Chunk(0, source, source_tokens)]
