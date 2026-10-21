@@ -1,4 +1,10 @@
-from prophetkv_statebridge.evidence import parse_grounded_claims, parse_verdicts, verified_handoff
+from prophetkv_statebridge.evidence import (
+    apply_retrieval_verdicts,
+    parse_grounded_claims,
+    parse_retrieval_claims,
+    parse_verdicts,
+    verified_handoff,
+)
 
 
 def test_grounded_action_requires_literal_quote_and_commitment():
@@ -75,3 +81,39 @@ def test_question_speaker_is_not_rendered_as_owner():
 def test_only_supported_verdicts_are_kept():
     message = '[{"index":0,"verdict":"supported"},{"index":1,"verdict":"uncertain"}]'
     assert parse_verdicts(message, 2) == {0}
+
+
+def test_retrieval_claim_uses_keywords_to_find_a_source_span():
+    source = (
+        "The group discussed the paper format.\n"
+        "After reviewing the deadline, everyone agreed to submit a short paper.\n"
+        "Toufique will prepare the autonomy table."
+    )
+    message = (
+        '[{"category":"decisions","claim":"The team chose the short-paper format.",'
+        '"evidence_keywords":["agreed", "short paper", "deadline"]}]'
+    )
+    claims, rejected = parse_retrieval_claims(message, role="decisions", source=source, block_id=0)
+    assert not rejected
+    assert "everyone agreed" in claims[0]["evidence_candidates"][0]["text"]
+
+
+def test_retrieval_verdict_records_the_verifier_selected_candidate():
+    claims = [{
+        "claim": "The team chose a short paper.",
+        "evidence_quote": "first",
+        "evidence_candidates": [{"text": "first"}, {"text": "The team agreed on a short paper."}],
+    }]
+    supported = apply_retrieval_verdicts(
+        '[{"index":0,"verdict":"supported","candidate_index":1}]', claims,
+    )
+    assert supported[0]["evidence_quote"] == "The team agreed on a short paper."
+    assert "evidence_candidates" not in supported[0]
+
+
+def test_verified_handoff_can_restore_a_structured_status_label():
+    handoff = verified_handoff(
+        "decisions", [{"claim": "The team chose a short paper.", "timestamp": "", "owner": "", "deadline": ""}],
+        status_label="CONFIRMED_DECISION",
+    )
+    assert handoff == "CONFIRMED_DECISION: The team chose a short paper."

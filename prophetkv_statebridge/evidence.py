@@ -6,6 +6,8 @@ import json
 import re
 from typing import Any
 
+from evidence_grounding import retrieve_evidence_candidates
+
 
 DECISION_CUES = ("agree", "decid", "approv", "choos", "reject", "commit", "settle")
 ACTION_CUES = (" will ", "assigned", "responsible", "need to", "deadline", "due ")
@@ -177,11 +179,85 @@ def parse_grounded_claims(message: str, *, role: str, source: str, block_id: int
     return accepted, rejected
 
 
+def parse_retrieval_claims(message: str, *, role: str, source: str, block_id: int) -> tuple[list[dict[str, Any]], list[str]]:
+    """Parse claims and attach retrieved candidate spans for semantic review.
+
+    Unlike the legacy strict path, specialists provide optional keywords instead
+    of a copied quote. Retrieval only proposes evidence; the verifier decides
+    whether a candidate actually supports the claim.
+    """
+    value = _json_value(message)
+    if isinstance(value, dict):
+        value = value.get("claims", [])
+    if not isinstance(value, list):
+        return [], ["specialist output was not a JSON claim list"]
+
+    accepted: list[dict[str, Any]] = []
+    rejected: list[str] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            rejected.append("claim entry was not an object")
+            continue
+        category = str(entry.get("category", role)).strip().lower()
+        claim = str(entry.get("claim", "")).strip()
+        if category != role:
+            rejected.append("claim category does not match its specialist")
+            continue
+        if len(claim) < 3:
+            rejected.append("claim was too short")
+            continue
+        raw_keywords = entry.get("evidence_keywords", [])
+        keywords = [str(item).strip() for item in raw_keywords] if isinstance(raw_keywords, list) else []
+        candidates = retrieve_evidence_candidates(source, claim, keywords=keywords)
+        if not candidates:
+            rejected.append("no lexical evidence candidate was retrieved for claim")
+            continue
+        candidate_rows = [
+            {"text": candidate.text, "start": candidate.start, "end": candidate.end, "score": candidate.score}
+            for candidate in candidates
+        ]
+        evidence_text = " ".join(candidate["text"] for candidate in candidate_rows)
+        timestamp = str(entry.get("timestamp", "")).strip()
+        owner = str(entry.get("owner", "")).strip()
+        deadline = str(entry.get("deadline", "")).strip()
+        accepted.append(
+            {
+                "category": category,
+                "claim": claim,
+                # The verifier replaces this with the selected candidate.
+                "evidence_quote": candidate_rows[0]["text"],
+                "evidence_candidates": candidate_rows,
+                "block_id": block_id,
+                "timestamp": _grounded_metadata(timestamp, claim, evidence_text),
+                "owner": _grounded_metadata(owner, claim, evidence_text) if category == "actions" else "",
+                "deadline": _grounded_metadata(deadline, claim, evidence_text),
+                "confidence": str(entry.get("confidence", "high")).strip().lower(),
+            }
+        )
+    return accepted, rejected
+
+
 def claim_packet(claims: list[dict[str, Any]]) -> str:
     """Create a compact, deterministic packet for the semantic verifier."""
     return json.dumps(
         [
             {"index": index, "category": claim["category"], "claim": claim["claim"], "evidence_quote": claim["evidence_quote"]}
+            for index, claim in enumerate(claims)
+        ],
+        ensure_ascii=False,
+    )
+
+
+def retrieved_claim_packet(claims: list[dict[str, Any]]) -> str:
+    """Render retrieved spans for the semantic verifier, without the full source."""
+    return json.dumps(
+        [
+            {
+                "index": index,
+                "category": claim["category"],
+                "claim": claim["claim"],
+                "candidates": [candidate["text"] for candidate in claim["evidence_candidates"]],
+            }
             for index, claim in enumerate(claims)
         ],
         ensure_ascii=False,
@@ -206,7 +282,38 @@ def parse_verdicts(message: str, expected_count: int) -> set[int]:
     return supported
 
 
-def verified_handoff(role: str, claims: list[dict[str, Any]], *, include_evidence: bool = False) -> str:
+def apply_retrieval_verdicts(message: str, claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only supported claims and record the verifier-selected evidence span."""
+    value = _json_value(message)
+    if isinstance(value, dict):
+        value = value.get("verdicts", [])
+    if not isinstance(value, list):
+        return []
+    supported: list[dict[str, Any]] = []
+    for verdict in value:
+        if not isinstance(verdict, dict) or str(verdict.get("verdict", "")).strip().lower() != "supported":
+            continue
+        index = verdict.get("index")
+        candidate_index = verdict.get("candidate_index")
+        if not isinstance(index, int) or not isinstance(candidate_index, int) or not 0 <= index < len(claims):
+            continue
+        candidates = claims[index].get("evidence_candidates", [])
+        if not 0 <= candidate_index < len(candidates):
+            continue
+        claim = dict(claims[index])
+        claim["evidence_quote"] = candidates[candidate_index]["text"]
+        claim.pop("evidence_candidates", None)
+        supported.append(claim)
+    return supported
+
+
+def verified_handoff(
+    role: str,
+    claims: list[dict[str, Any]],
+    *,
+    include_evidence: bool = False,
+    status_label: str | None = None,
+) -> str:
     """Render verified claims for communication, optionally with audit evidence.
 
     Evidence is needed to audit the extraction stage, but long verbatim quotes
@@ -226,7 +333,7 @@ def verified_handoff(role: str, claims: list[dict[str, Any]], *, include_evidenc
         if claim["deadline"]:
             metadata.append(f"deadline={claim['deadline']}")
         suffix = f" ({'; '.join(metadata)})" if metadata else ""
-        line = f"- [{role}] {claim['claim']}{suffix}"
+        line = f"{status_label}: {claim['claim']}{suffix}" if status_label else f"- [{role}] {claim['claim']}{suffix}"
         if include_evidence:
             line = f"- Evidence [{role}]: \"{claim['evidence_quote']}\"\n  Verified claim: {claim['claim']}{suffix}"
         lines.append(line)

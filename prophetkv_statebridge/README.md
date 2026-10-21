@@ -140,13 +140,22 @@ states; K is not shared across specialists.
 ## Fact-Centric Evidence Grounding
 
 With `--evidence-policy strict`, every meeting specialist must emit a small JSON claim list with a
-literal `evidence_quote` from its source block. The runner rejects claims whose
-quotation is absent from the block or whose decision/action evidence lacks the
-required commitment cue. The same model then verifies whether each remaining
-quote explicitly supports its claim. Only `supported` claims are re-encoded as
-the StateBridge handoff; unsupported and uncertain claims do not reach the
-block receiver or final merger. Use `--evidence-policy off` for the raw-handoff
-ablation; that setting improves recall but is not evidence-verified.
+literal `evidence_quote` from the transcript. The runner rejects claims whose
+quotation is absent or whose decision/action evidence lacks the required
+commitment cue. The same model then verifies whether each remaining quote
+explicitly supports its claim. Only `supported` claims are re-encoded as the
+StateBridge handoff; unsupported and uncertain claims do not reach the receiver.
+
+`--evidence-policy retrieval` uses the training-free `evidence_grounding`
+component instead. Specialists provide short evidence keywords rather than a
+copied quote. The component retrieves a few auditable transcript spans for
+each claim, then the verifier accepts a claim only when one candidate span
+supports both its content and category. This tolerates ASR punctuation and
+paraphrase drift without treating retrieval as proof. The selected source span
+is retained for audit but omitted from the StateBridge communication payload.
+
+Use `--evidence-policy off` for the raw-handoff ablation; that setting improves
+recall but is not evidence-verified.
 
 For a real meeting, use the default four meeting roles. Generation continues until
 the model emits an end token or reaches the remaining context capacity. The

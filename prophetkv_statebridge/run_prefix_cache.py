@@ -36,7 +36,15 @@ from .prefix_cache import (
     generate_after_prefix_cache,
     prefill_prefix,
 )
-from .evidence import claim_packet, parse_grounded_claims, parse_verdicts, verified_handoff
+from .evidence import (
+    apply_retrieval_verdicts,
+    claim_packet,
+    parse_grounded_claims,
+    parse_retrieval_claims,
+    parse_verdicts,
+    retrieved_claim_packet,
+    verified_handoff,
+)
 from .run import ROLE_INSTRUCTIONS
 
 
@@ -158,9 +166,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--evidence-policy",
-        choices=["strict", "off"],
+        choices=["strict", "retrieval", "off"],
         default="strict",
-        help="strict validates and filters meeting claims; off sends raw specialist handoffs for an ablation.",
+        help="strict requires copied quotes; retrieval verifies retrieved evidence spans; off sends raw handoffs for an ablation.",
     )
     parser.add_argument("--snap-ratio", type=float, default=0.3)
     parser.add_argument("--regularization", type=float, default=1e-3)
@@ -198,6 +206,11 @@ def specialist_user(
 ) -> str:
     task = ROLE_INSTRUCTIONS[role]
     format_instruction = ""
+    item_limit = (
+        f" Return at most {max_items} items, ranked by importance. "
+        "If fewer supported items exist, return fewer; never pad or invent items."
+        if max_items is not None else ""
+    )
     if meeting_mode:
         task = MEETING_ROLE_CONTRACTS[role]
     if meeting_mode and evidence_policy == "strict":
@@ -207,13 +220,19 @@ def specialist_user(
             f"{role}'. evidence_quote must copy a contiguous, self-sufficient passage from the source transcript; "
             "do not paraphrase it, omit filler words, or combine distant turns. "
             "Use an empty string for unknown timestamp, owner, or deadline. If no supported item exists, return []."
+            f"{item_limit}"
+        )
+    elif meeting_mode and evidence_policy == "retrieval":
+        format_instruction = (
+            " Return ONLY a JSON array. Each object must have exactly these fields: "
+            "category, claim, evidence_keywords, timestamp, owner, deadline, confidence. category must be '"
+            f"{role}'. evidence_keywords must be a JSON list of 2 to 6 distinctive words or short phrases from the "
+            "transcript that can locate supporting evidence; do not copy a full quote. Use an empty list when no "
+            "reliable anchor exists, and use an empty string for unknown timestamp, owner, or deadline. "
+            "If no supported item exists, return []."
+            f"{item_limit}"
         )
     elif meeting_mode:
-        item_limit = (
-            f" Return at most {max_items} self-contained items, ranked by importance. "
-            "If fewer supported items exist, return fewer; never pad or invent items."
-            if max_items is not None else ""
-        )
         format_instruction = (
             f" Begin each item on a new line with {MEETING_STATUS_LABELS[role]}: "
             "Describe its final status at the end of the meeting. Return concise items for this role only. "
@@ -446,15 +465,27 @@ def states_for_handoff(model, tokenizer, handoff: str, args) -> tuple[torch.Tens
 
 @torch.inference_mode()
 def semantically_supported_claims(model, tokenizer, claims: list[dict[str, Any]], args) -> tuple[list[dict[str, Any]], str]:
-    """Use the same model to verify whether each located quote entails its claim."""
+    """Use the same model to verify claim support from supplied evidence spans."""
     if not claims:
         return [], "[]"
-    user = (
-        "For every item below, determine whether evidence_quote explicitly supports claim. "
-        "Return ONLY a JSON array of objects with fields index and verdict. verdict must be exactly supported, "
-        "unsupported, or uncertain. Do not infer unstated owners, deadlines, decisions, or actions.\n\n"
-        f"Items:\n{claim_packet(claims)}"
-    )
+    retrieved = "evidence_candidates" in claims[0]
+    if retrieved:
+        user = (
+            "For every item below, determine whether one candidate span explicitly supports the claim and its category. "
+            "For decisions, require an explicit accepted, agreed, chosen, approved, rejected, or committed outcome. "
+            "For actions, require an explicit assignment, commitment, or deadline. Return ONLY a JSON array of objects "
+            "with fields index, verdict, and candidate_index. verdict must be exactly supported, unsupported, or uncertain. "
+            "candidate_index must name the supporting candidate when verdict is supported; otherwise use -1. "
+            "Do not infer unstated owners, deadlines, decisions, or actions.\n\n"
+            f"Items:\n{retrieved_claim_packet(claims)}"
+        )
+    else:
+        user = (
+            "For every item below, determine whether evidence_quote explicitly supports claim. "
+            "Return ONLY a JSON array of objects with fields index and verdict. verdict must be exactly supported, "
+            "unsupported, or uncertain. Do not infer unstated owners, deadlines, decisions, or actions.\n\n"
+            f"Items:\n{claim_packet(claims)}"
+        )
     prompt = chat_prompt(
         tokenizer,
         "You are a strict evidence verifier for meeting minutes.",
@@ -470,6 +501,8 @@ def semantically_supported_claims(model, tokenizer, claims: list[dict[str, Any]]
         available_generation_tokens(args, encoded.input_ids.size(1)),
     )
     verdict_message = decode(tokenizer, verdict_ids)
+    if retrieved:
+        return apply_retrieval_verdicts(verdict_message, claims), verdict_message
     supported = parse_verdicts(verdict_message, len(claims))
     return [claim for index, claim in enumerate(claims) if index in supported], verdict_message
 
@@ -490,6 +523,13 @@ def process_source(model, tokenizer, record: dict[str, Any], source: str, args, 
         ).to(args.device).input_ids
         for role in args.roles
     ]
+    longest_prompt_tokens = max(input_ids.size(1) for input_ids in role_inputs)
+    if longest_prompt_tokens >= args.model_context_tokens:
+        raise RuntimeError(
+            "The context is too long for the loaded model: the longest specialist prompt uses "
+            f"{longest_prompt_tokens} tokens, but the model context limit is "
+            f"{args.model_context_tokens} tokens. Use a shorter transcript or a model with a larger context window."
+        )
     prefix_inputs = role_inputs
     if len(role_inputs) == 1:
         available_roles = MEETING_ROLE_CONTRACTS if meeting_mode else ROLE_INSTRUCTIONS
@@ -540,17 +580,21 @@ def process_source(model, tokenizer, record: dict[str, Any], source: str, args, 
         verified_claims: list[dict[str, Any]] = []
         rejection_reasons: list[str] = []
         verifier_output = ""
-        if meeting_mode and args.evidence_policy == "strict":
-            parsed_claims, rejection_reasons = parse_grounded_claims(
+        if meeting_mode and args.evidence_policy in {"strict", "retrieval"}:
+            claim_parser = parse_grounded_claims if args.evidence_policy == "strict" else parse_retrieval_claims
+            parsed_claims, rejection_reasons = claim_parser(
                 raw_message, role=role, source=source, block_id=0
             )
             verified_claims, verifier_output = semantically_supported_claims(model, tokenizer, parsed_claims, args)
             if len(verified_claims) < len(parsed_claims):
                 rejection_reasons.append("semantic verifier did not mark one or more claims as supported")
+            if args.max_items_per_specialist is not None:
+                verified_claims = verified_claims[:args.max_items_per_specialist]
             # Communication receives compact verified claims.  The longer
             # evidence-rich form stays available for audit but is not allowed
             # to crowd the fixed latent-state budget.
-            message = verified_handoff(role, verified_claims)
+            status_label = MEETING_STATUS_LABELS[role] if args.max_items_per_specialist is not None else None
+            message = verified_handoff(role, verified_claims, status_label=status_label)
             evidence_message = verified_handoff(role, verified_claims, include_evidence=True)
             states, token_ids, handoff_tokens = states_for_handoff(model, tokenizer, message, args)
         else:
@@ -713,8 +757,6 @@ def main() -> None:
         raise ValueError("--item-state-ratio must be in (0, 1]")
     if args.max_items_per_specialist is not None and args.handoff_chunk_tokens is not None:
         raise ValueError("Use either --max-items-per-specialist or --handoff-chunk-tokens, not both")
-    if args.max_items_per_specialist is not None and args.evidence_policy != "off":
-        raise ValueError("Structured handoff items currently require --evidence-policy off")
     if args.specialist_max_new_tokens is not None and args.specialist_max_new_tokens < 1:
         raise ValueError("--specialist-max-new-tokens must be positive")
     torch.manual_seed(args.seed)
