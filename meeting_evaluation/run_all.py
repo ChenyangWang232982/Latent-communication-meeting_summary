@@ -30,7 +30,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-samples", type=int, default=8)
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--source-max-tokens", type=int, default=8192)
-    parser.add_argument("--document-chunk-overlap-tokens", type=int, default=0)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
     parser.add_argument("--evidence-policy", choices=["strict", "off"], default="strict")
     parser.add_argument("--alignment-scope", choices=["joint", "per-message"], default="joint")
@@ -52,7 +51,6 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace, ref
         "--num-samples", str(args.num_samples),
         "--model", args.model,
         "--source-max-tokens", str(args.source_max_tokens),
-        "--document-chunk-overlap-tokens", str(args.document_chunk_overlap_tokens),
         "--prefix-tokens-per-agent", str(args.prefix_tokens_per_agent),
         "--evidence-policy", args.evidence_policy,
         "--alignment-scope", args.alignment_scope,

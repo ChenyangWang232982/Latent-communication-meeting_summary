@@ -121,27 +121,9 @@ arguments as `run_prefix_cache.py`. It always suppresses handoff, review, and
 answer content in its report while measuring the generated specialist-to-receiver
 communication.
 
-For a transcript longer than one model context, use document blocks instead of
-raising `--source-max-tokens`. Each document block gets its own exact shared
-Prefix KV cache. For a meeting split into two or more blocks, the runner first
-uses StateBridge to produce one structured block summary per block, then uses a
-second StateBridge handoff to pass those chronological block summaries to the
-final merger. Independent KV caches are never concatenated. For example:
-
-```bash
-python -m prophetkv_statebridge.run_prefix_cache \
-  --transcript input/my_long_meeting.txt \
-  --output output/my_long_meeting.txt \
-  --document-chunk-overlap-tokens 512 \
-  --prefix-tokens-per-agent 64 \
-  --block-summary-prefix-tokens 64 \
-  --variants statebridge
-```
-
-The meeting runner reads the loaded model's context limit and automatically
-uses 75% of it as the document-block budget. The `text` control passes the
-same block summaries to the merger as natural language. The report counts both
-communication hops: specialist-to-block and block-to-final-merger.
+Meeting transcripts are processed as one shared source prefix. The runner does
+not split a transcript into blocks or perform a second summary-merging hop.
+Use a transcript that fits the loaded model context window.
 
 For an alignment ablation, keep the same transcript, model, seed, K, and
 evidence policy, changing only `--alignment-scope joint` (the original
@@ -169,10 +151,10 @@ ablation; that setting improves recall but is not evidence-verified.
 For a real meeting, use the default four meeting roles. Generation continues until
 the model emits an end token or reaches the remaining context capacity. The
 final receiver outputs the same four stable sections.
-Use `--debug-progress` to see each document block's prefill and specialist
-completion counts, followed by block-summary and final-answer stages. Progress
-lines are printed immediately, including a heartbeat every 128 tokens during
-specialist generation; the report still contains the finished result.
+Use `--debug-progress` to see source-prefill, specialist completion, and final
+answer stages. Progress lines are printed immediately, including a heartbeat
+every 128 tokens during specialist generation; the report still contains the
+finished result.
 Use `--specialist-max-new-tokens 384` to stop each specialist after at most 384
 generated tokens when it fails to emit EOS promptly. This does not change the
 per-specialist StateBridge budget set by `--prefix-tokens-per-agent`, and it

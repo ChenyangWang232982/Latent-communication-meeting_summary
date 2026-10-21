@@ -10,7 +10,6 @@ from pathlib import Path
 class WorkflowConfig:
     model: str = "Qwen/Qwen3-4B"
     source_max_tokens: int = 8192
-    document_chunk_overlap_tokens: int = 0
     prefix_tokens_per_agent: int = 64
     evidence_policy: str = "strict"
     alignment_scope: str = "joint"

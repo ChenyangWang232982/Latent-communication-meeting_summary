@@ -26,7 +26,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--num-samples", type=int, default=0, help="0 evaluates every available record.")
     parser.add_argument("--source-max-tokens", type=int, default=8192)
-    parser.add_argument("--document-chunk-overlap-tokens", type=int, default=0)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
     parser.add_argument("--evidence-policy", choices=["strict", "off"], default="strict")
     parser.add_argument("--alignment-scope", choices=["joint", "per-message"], default="joint")
@@ -45,7 +44,6 @@ def main() -> None:
     config = WorkflowConfig(
         model=args.model,
         source_max_tokens=args.source_max_tokens,
-        document_chunk_overlap_tokens=args.document_chunk_overlap_tokens,
         prefix_tokens_per_agent=args.prefix_tokens_per_agent,
         evidence_policy=args.evidence_policy,
         alignment_scope=args.alignment_scope,

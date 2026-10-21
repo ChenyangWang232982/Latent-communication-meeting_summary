@@ -38,8 +38,6 @@ def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig, *, mee
             "--alignment-scope", config.alignment_scope,
             "--variants", "statebridge", "text", "no_comm",
         ]
-        if config.document_chunk_overlap_tokens:
-            command.extend(["--document-chunk-overlap-tokens", str(config.document_chunk_overlap_tokens)])
         if config.device:
             command.extend(["--device", config.device])
         subprocess.run(command, check=True)

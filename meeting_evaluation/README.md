@@ -67,8 +67,7 @@ python -m meeting_evaluation.test \
   --asr-model small
 ```
 
-For an over-window transcript, process every source block rather than
-truncating the meeting to `--source-max-tokens`:
+The meeting workflow processes one transcript as one shared Prefix KV source:
 
 ```bash
 python -m meeting_evaluation.test \
@@ -77,12 +76,9 @@ python -m meeting_evaluation.test \
   --reference input/my_long_meeting_reference.txt
 ```
 
-Each document block has an independent shared Prefix KV cache. Only the
-specialists within that block reuse its cache. For multi-block meetings, each
-block produces a StateBridge summary, and a second StateBridge handoff passes
-the chronological block summaries to the final merger; block KV caches are
-never concatenated. The block size is automatically set to 75% of the loaded
-model context limit.
+All specialists clone and reuse that single source cache. The transcript must
+fit the loaded model context window; automatic document splitting and
+block-summary merging are not part of this workflow.
 
 ## Run All Benchmarks
 
