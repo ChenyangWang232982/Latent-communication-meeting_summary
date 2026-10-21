@@ -83,6 +83,17 @@ def write_receiver_kv_reports(output_dir: Path, benchmark: str, metrics: dict[st
             f"{result['mean_specialist_seconds']:.3f} | {result['mean_receiver_seconds']:.3f} | "
             f"{result['mean_pipeline_seconds_excluding_model_load']:.3f} | {result['mean_generated_tokens']:.1f} | {result['output_cap_hits']}"
         )
+    lines += ["", "Logical model-token events per sample (mean)",
+              "variant | source prefill | selection probes | specialist prompts | specialist handoffs | receiver prompt | receiver output | total input | total output | total"]
+    for variant in ("routed_kv", "full_kv", "selected_text", "specialist_text"):
+        result = efficiency["variants"][variant]
+        lines.append(
+            f"{variant} | {result['mean_source_prefill_tokens']:.1f} | {result['mean_selection_probe_tokens']:.1f} | "
+            f"{result['mean_specialist_prompt_tokens']:.1f} | {result['mean_specialist_handoff_tokens']:.1f} | "
+            f"{result['mean_receiver_prompt_tokens']:.1f} | {result['mean_receiver_output_tokens']:.1f} | "
+            f"{result['mean_end_to_end_input_tokens']:.1f} | {result['mean_end_to_end_output_tokens']:.1f} | "
+            f"{result['mean_end_to_end_total_tokens']:.1f}"
+        )
     lines += ["", metrics["efficiency_note"], metrics["factuality_note"]]
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return text_path, json_path

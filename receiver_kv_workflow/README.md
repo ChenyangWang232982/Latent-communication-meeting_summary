@@ -76,6 +76,8 @@ JSON 保存选中位置索引，便于审计。终端逐角色、逐 receiver �
 | specialist_text | 四个 specialist 从完整会议生成自然语言 handoff，最终摘要器读取 handoff | 传统多 agent 自然语言通信基线 |
 
 `selected_text` **不是**自然语言专家 handoff 基线；`specialist_text` 才是该基线。
+
+评测报告还会列出每个变体的端到端 logical model-token events：一次源 prefill、选择 query、specialist prompt/handoff、最终 receiver prompt/output。它不等于 attention FLOPs、真实服务商账单或 KV 字节数，但可用于比较同一模型下的 token 处理量。
 如果要与旧 StateBridge 比较，须额外运行旧程序，并统一样本、参考、模型、
 输出预算与解码方式；本程序没有伪造一个同名 StateBridge baseline。
 

@@ -102,6 +102,7 @@ class ReceiverKVRunner:
 
             messages, role_metrics = [], {}
             selection_seconds = 0.0
+            selection_probe_tokens = 0
             if any(name in {"routed_kv", "selected_text"} for name in requested):
                 selection_start = time.perf_counter()
                 for index, (role, query) in enumerate(queries.items(), start=1):
@@ -110,6 +111,7 @@ class ReceiverKVRunner:
                     selected = select_spans(scores, budget, span_size=self.config.span_tokens, protected=protected)
                     messages.append(selected)
                     role_metrics[role] = {"query_tokens": len(query), "selected_positions": len(selected)}
+                    selection_probe_tokens += len(query)
                 self._sync()
                 selection_seconds = time.perf_counter() - selection_start
             selected = union_positions(messages)
@@ -143,9 +145,18 @@ class ReceiverKVRunner:
                     "pipeline_seconds_excluding_model_load": prefill_seconds + receiver_seconds + (
                         0 if variant == "full_kv" else selection_seconds),
                     "generated_tokens": generated_tokens, "output_cap_hit": output_cap_hit,
+                    "token_accounting": {
+                        "source_prefill_tokens": len(prefix),
+                        "selection_probe_tokens": selection_probe_tokens if variant != "full_kv" else 0,
+                        "specialist_prompt_tokens": 0,
+                        "specialist_handoff_tokens": 0,
+                        "receiver_prompt_tokens": len(ids) + len(suffix) if variant == "selected_text" else len(suffix),
+                        "receiver_output_tokens": generated_tokens,
+                    },
                 }
             if "specialist_text" in requested:
                 handoffs, handoff_tokens, specialist_seconds = {}, 0, 0.0
+                specialist_prompt_tokens = sum(len(role_suffix) for role_suffix in specialist_suffixes)
                 for index, ((role, _), suffix_ids) in enumerate(zip(ROLE_HANDOFF_REQUESTS.items(), specialist_suffixes), start=1):
                     self.progress(f"{record_id}: specialist_text {role} started ({index - 1}/4 complete)")
                     suffix = self._tensor(suffix_ids)
@@ -185,6 +196,14 @@ class ReceiverKVRunner:
                     "pipeline_seconds_excluding_model_load": prefill_seconds + specialist_seconds + receiver_seconds,
                     "generated_tokens": generated_tokens,
                     "output_cap_hit": output_cap_hit,
+                    "token_accounting": {
+                        "source_prefill_tokens": len(prefix),
+                        "selection_probe_tokens": 0,
+                        "specialist_prompt_tokens": specialist_prompt_tokens,
+                        "specialist_handoff_tokens": handoff_tokens,
+                        "receiver_prompt_tokens": receiver_prompt.shape[1],
+                        "receiver_output_tokens": generated_tokens,
+                    },
                 }
         return {
             "id": record_id, "answers": answers, "variants": measurements,

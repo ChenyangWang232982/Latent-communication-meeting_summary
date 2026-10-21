@@ -108,7 +108,9 @@ def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[
     efficiency = {
         name: {"incoming_positions": [], "incoming_cache_mib": [], "logical_payload_bytes": [],
                "specialist_handoff_tokens": [], "specialist_seconds": [], "receiver_seconds": [],
-               "pipeline_seconds": [], "generated_tokens": [], "output_cap_hits": 0}
+               "pipeline_seconds": [], "generated_tokens": [], "output_cap_hits": 0,
+               "source_prefill_tokens": [], "selection_probe_tokens": [], "specialist_prompt_tokens": [],
+               "receiver_prompt_tokens": [], "receiver_output_tokens": []}
         for name in variants
     }
     for result in results:
@@ -138,6 +140,10 @@ def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[
             data["pipeline_seconds"].append(measurement["pipeline_seconds_excluding_model_load"])
             data["generated_tokens"].append(measurement["generated_tokens"])
             data["output_cap_hits"] += int(measurement["output_cap_hit"])
+            accounting = measurement.get("token_accounting", {})
+            for field in ("source_prefill_tokens", "selection_probe_tokens", "specialist_prompt_tokens",
+                          "receiver_prompt_tokens", "receiver_output_tokens"):
+                data[field].append(accounting.get(field, 0))
     return {
         "samples": len(results),
         "quality": {name: {metric: _average(values) for metric, values in metrics.items()}
@@ -158,13 +164,39 @@ def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[
                     "mean_pipeline_seconds_excluding_model_load": _average(values["pipeline_seconds"]),
                     "mean_generated_tokens": _average(values["generated_tokens"]),
                     "output_cap_hits": values["output_cap_hits"],
+                    "mean_source_prefill_tokens": _average(values["source_prefill_tokens"]),
+                    "mean_selection_probe_tokens": _average(values["selection_probe_tokens"]),
+                    "mean_specialist_prompt_tokens": _average(values["specialist_prompt_tokens"]),
+                    "mean_receiver_prompt_tokens": _average(values["receiver_prompt_tokens"]),
+                    "mean_receiver_output_tokens": _average(values["receiver_output_tokens"]),
+                    "mean_end_to_end_input_tokens": _average([
+                        source + probe + specialist + receiver
+                        for source, probe, specialist, receiver in zip(
+                            values["source_prefill_tokens"], values["selection_probe_tokens"],
+                            values["specialist_prompt_tokens"], values["receiver_prompt_tokens"],
+                        )
+                    ]),
+                    "mean_end_to_end_output_tokens": _average([
+                        handoff + receiver for handoff, receiver in zip(
+                            values["specialist_handoff_tokens"], values["receiver_output_tokens"]
+                        )
+                    ]),
+                    "mean_end_to_end_total_tokens": _average([
+                        source + probe + specialist + handoff + receiver_prompt + receiver_output
+                        for source, probe, specialist, handoff, receiver_prompt, receiver_output in zip(
+                            values["source_prefill_tokens"], values["selection_probe_tokens"],
+                            values["specialist_prompt_tokens"], values["specialist_handoff_tokens"],
+                            values["receiver_prompt_tokens"], values["receiver_output_tokens"],
+                        )
+                    ]),
                 }
                 for name, values in efficiency.items()
             },
         },
         "efficiency_note": (
             "KV positions, KV bytes and text-token payloads are reported separately. "
-            "They are not interchangeable measures of token or cost savings."
+            "They are not interchangeable measures of token or cost savings. End-to-end logical model tokens "
+            "count input/output token events, not attention FLOPs, wall-clock cost, or provider billing."
         ),
     }
 
