@@ -102,12 +102,13 @@ def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -
 
 def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -> dict[str, Any]:
     """Score the receiver-KV controls without pretending KV bytes are tokens."""
-    variants = ("routed_kv", "full_kv", "selected_text")
+    variants = ("routed_kv", "full_kv", "selected_text", "specialist_text")
     quality = {name: {"rouge_l_f1": [], "supported_claim_rate": []} for name in variants}
     source_prefill, selection, source_cache = [], [], []
     efficiency = {
         name: {"incoming_positions": [], "incoming_cache_mib": [], "logical_payload_bytes": [],
-               "receiver_seconds": [], "pipeline_seconds": [], "generated_tokens": [], "output_cap_hits": 0}
+               "specialist_handoff_tokens": [], "specialist_seconds": [], "receiver_seconds": [],
+               "pipeline_seconds": [], "generated_tokens": [], "output_cap_hits": 0}
         for name in variants
     }
     for result in results:
@@ -131,6 +132,8 @@ def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[
             data["incoming_positions"].append(measurement["incoming_positions"])
             data["incoming_cache_mib"].append(measurement["incoming_cache_bytes"] / 2**20)
             data["logical_payload_bytes"].append(measurement["logical_payload_bytes"])
+            data["specialist_handoff_tokens"].append(measurement.get("specialist_handoff_tokens", 0))
+            data["specialist_seconds"].append(measurement.get("specialist_seconds", 0.0))
             data["receiver_seconds"].append(measurement["receiver_seconds"])
             data["pipeline_seconds"].append(measurement["pipeline_seconds_excluding_model_load"])
             data["generated_tokens"].append(measurement["generated_tokens"])
@@ -149,6 +152,8 @@ def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[
                     "mean_incoming_positions": _average(values["incoming_positions"]),
                     "mean_incoming_cache_mib": _average(values["incoming_cache_mib"]),
                     "mean_logical_payload_bytes": _average(values["logical_payload_bytes"]),
+                    "mean_specialist_handoff_tokens": _average(values["specialist_handoff_tokens"]),
+                    "mean_specialist_seconds": _average(values["specialist_seconds"]),
                     "mean_receiver_seconds": _average(values["receiver_seconds"]),
                     "mean_pipeline_seconds_excluding_model_load": _average(values["pipeline_seconds"]),
                     "mean_generated_tokens": _average(values["generated_tokens"]),

@@ -39,13 +39,13 @@ python -m receiver_kv_workflow.run \
   --model Qwen/Qwen3-4B \
   --role-budget-ratio 0.15 \
   --max-new-tokens 1024 \
-  --variants routed_kv full_kv selected_text
+  --variants routed_kv full_kv selected_text specialist_text
 ```
 
 PowerShell 可以使用以下单行命令，不要复制 Bash 的反斜杠续行：
 
 ```powershell
-python -m receiver_kv_workflow.run --transcript input/meeting1.txt --model Qwen/Qwen3-4B --role-budget-ratio 0.15 --max-new-tokens 1024 --variants routed_kv full_kv selected_text
+python -m receiver_kv_workflow.run --transcript input/meeting1.txt --model Qwen/Qwen3-4B --role-budget-ratio 0.15 --max-new-tokens 1024 --variants routed_kv full_kv selected_text specialist_text
 ```
 
 有人工参考摘要时追加 `--reference input/meeting1_reference.txt`。当前复用项目的
@@ -58,6 +58,7 @@ python -m receiver_kv_workflow.run --transcript input/meeting1.txt --model Qwen/
 output/receiver_kv/时间戳/routed_kv.txt
 output/receiver_kv/时间戳/full_kv.txt
 output/receiver_kv/时间戳/selected_text.txt
+output/receiver_kv/时间戳/specialist_text.txt
 test_result/receiver_kv/时间戳/metrics.txt
 test_result/receiver_kv/时间戳/metrics.json
 ```
@@ -72,8 +73,9 @@ JSON 保存选中位置索引，便于审计。终端逐角色、逐 receiver �
 | routed_kv | 四角色选择并集的原文 KV | 新实验方法 |
 | full_kv | 完整原文 KV | 无选择损失的直接摘要对照 |
 | selected_text | 同一组选中原文 token，重新 prefill | 区分 KV 状态保留与文本重新编码 |
+| specialist_text | 四个 specialist 从完整会议生成自然语言 handoff，最终摘要器读取 handoff | 传统多 agent 自然语言通信基线 |
 
-`selected_text` **不是旧工作流的自然语言专家 handoff 基线**。
+`selected_text` **不是**自然语言专家 handoff 基线；`specialist_text` 才是该基线。
 如果要与旧 StateBridge 比较，须额外运行旧程序，并统一样本、参考、模型、
 输出预算与解码方式；本程序没有伪造一个同名 StateBridge baseline。
 

@@ -7,7 +7,7 @@ import math
 import time
 from typing import Callable
 
-from .prompts import ROLE_QUERIES, prompt_parts
+from .prompts import ROLE_HANDOFF_REQUESTS, ROLE_QUERIES, following_turn_suffix, prompt_parts, specialist_text_prompt
 from .selection import select_spans, union_positions
 
 
@@ -19,6 +19,7 @@ class ReceiverKVConfig:
     span_tokens: int = 32
     query_batch_tokens: int = 8
     max_new_tokens: int = 1024
+    specialist_text_max_new_tokens: int = 384
     seed: int = 7
 
 
@@ -28,7 +29,7 @@ class ReceiverKVRunner:
     def __init__(self, config: ReceiverKVConfig, progress: Callable[[str], None] | None = None) -> None:
         if not 0 < config.role_budget_ratio <= 1:
             raise ValueError("role_budget_ratio must be in (0, 1]")
-        if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens) < 1:
+        if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens, config.specialist_text_max_new_tokens) < 1:
             raise ValueError("Token budgets must be positive")
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
@@ -69,11 +70,20 @@ class ReceiverKVRunner:
         if not transcript.strip():
             raise ValueError(f"Transcript is empty: {record_id}")
         requested = tuple(dict.fromkeys(variants))
-        if not requested or any(name not in {"routed_kv", "full_kv", "selected_text"} for name in requested):
-            raise ValueError("variants must be routed_kv, full_kv and/or selected_text")
+        valid_variants = {"routed_kv", "full_kv", "selected_text", "specialist_text"}
+        if not requested or any(name not in valid_variants for name in requested):
+            raise ValueError("variants must be routed_kv, full_kv, selected_text and/or specialist_text")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in ROLE_QUERIES.items()}
-        required = len(prefix) + max(len(suffix) + self.config.max_new_tokens, max(map(len, queries.values())))
+        specialist_suffixes = (
+            [following_turn_suffix(self.tokenizer, transcript, request) for request in ROLE_HANDOFF_REQUESTS.values()]
+            if "specialist_text" in requested else []
+        )
+        required = len(prefix) + max(
+            len(suffix) + self.config.max_new_tokens,
+            max(map(len, queries.values())),
+            *(len(role_suffix) + self.config.specialist_text_max_new_tokens for role_suffix in specialist_suffixes),
+        )
         if required > self.context_limit:
             raise ValueError(
                 f"{record_id}: context requires {required} positions but model supports {self.context_limit}; no text was truncated."
@@ -92,7 +102,7 @@ class ReceiverKVRunner:
 
             messages, role_metrics = [], {}
             selection_seconds = 0.0
-            if any(name != "full_kv" for name in requested):
+            if any(name in {"routed_kv", "selected_text"} for name in requested):
                 selection_start = time.perf_counter()
                 for index, (role, query) in enumerate(queries.items(), start=1):
                     self.progress(f"{record_id}: selector {role} started ({index - 1}/4 complete)")
@@ -104,7 +114,7 @@ class ReceiverKVRunner:
                 selection_seconds = time.perf_counter() - selection_start
             selected = union_positions(messages)
             answers, measurements = {}, {}
-            for variant in requested:
+            for variant in (name for name in requested if name != "specialist_text"):
                 receiver_start = time.perf_counter()
                 ids = list(range(len(prefix))) if variant == "full_kv" else selected
                 if variant == "selected_text":
@@ -133,6 +143,48 @@ class ReceiverKVRunner:
                     "pipeline_seconds_excluding_model_load": prefill_seconds + receiver_seconds + (
                         0 if variant == "full_kv" else selection_seconds),
                     "generated_tokens": generated_tokens, "output_cap_hit": output_cap_hit,
+                }
+            if "specialist_text" in requested:
+                handoffs, handoff_tokens, specialist_seconds = {}, 0, 0.0
+                for index, ((role, _), suffix_ids) in enumerate(zip(ROLE_HANDOFF_REQUESTS.items(), specialist_suffixes), start=1):
+                    self.progress(f"{record_id}: specialist_text {role} started ({index - 1}/4 complete)")
+                    suffix = self._tensor(suffix_ids)
+                    specialist_start = time.perf_counter()
+                    handoff, generated_tokens, _ = generate(
+                        self.model, self.tokenizer, select_cache(source, range(len(prefix))), suffix,
+                        absolute_start=len(prefix), max_new_tokens=self.config.specialist_text_max_new_tokens,
+                        context_limit=self.context_limit,
+                    )
+                    self._sync()
+                    specialist_seconds += time.perf_counter() - specialist_start
+                    handoffs[role] = handoff
+                    handoff_tokens += generated_tokens
+                receiver_prompt = self._tensor(specialist_text_prompt(self.tokenizer, handoffs))
+                if receiver_prompt.shape[1] + self.config.max_new_tokens > self.context_limit:
+                    raise ValueError(
+                        f"{record_id}: specialist handoffs plus output reserve exceed the model context limit; no input was truncated."
+                    )
+                receiver_start = time.perf_counter()
+                answer, generated_tokens, output_cap_hit = generate(
+                    self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
+                    max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
+                )
+                self._sync()
+                receiver_seconds = time.perf_counter() - receiver_start
+                answers["specialist_text"] = answer
+                measurements["specialist_text"] = {
+                    "incoming_positions": receiver_prompt.shape[1],
+                    "incoming_cache_bytes": 0,
+                    "logical_payload_bytes": handoff_tokens * 4,
+                    "positions_vs_full_percent": None,
+                    "cache_bytes_vs_full_percent": None,
+                    "specialist_handoff_tokens": handoff_tokens,
+                    "specialist_count": len(handoffs),
+                    "specialist_seconds": specialist_seconds,
+                    "receiver_seconds": receiver_seconds,
+                    "pipeline_seconds_excluding_model_load": prefill_seconds + specialist_seconds + receiver_seconds,
+                    "generated_tokens": generated_tokens,
+                    "output_cap_hit": output_cap_hit,
                 }
         return {
             "id": record_id, "answers": answers, "variants": measurements,

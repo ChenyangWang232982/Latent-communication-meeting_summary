@@ -16,6 +16,7 @@ def result(record_id="meeting-1"):
             "routed_kv": "Alice will send the draft Friday.",
             "full_kv": "Alice will send the draft Friday.",
             "selected_text": "Alice will send the draft.",
+            "specialist_text": "Alice will send the draft Friday.",
         },
         "prefill_seconds": 1.0, "selection_seconds": 0.5, "source_cache_bytes": 2**20,
         "variants": {
@@ -23,7 +24,7 @@ def result(record_id="meeting-1"):
                    "logical_payload_bytes": 200, "receiver_seconds": 0.3,
                    "pipeline_seconds_excluding_model_load": 1.8,
                    "generated_tokens": 8, "output_cap_hit": False}
-            for name in ("routed_kv", "full_kv", "selected_text")
+            for name in ("routed_kv", "full_kv", "selected_text", "specialist_text")
         },
     }
 

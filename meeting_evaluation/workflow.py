@@ -56,7 +56,7 @@ def run_receiver_kv(records: list[MeetingRecord], config: ReceiverKVConfig, *, n
     results = []
     for index, record in enumerate(selected, start=1):
         print(f"[receiver_kv] record {index}/{total}: {record.id}", flush=True)
-        result = runner.run(record.id, record.context, variants=("routed_kv", "full_kv", "selected_text"))
+        result = runner.run(record.id, record.context, variants=("routed_kv", "full_kv", "selected_text", "specialist_text"))
         result["gold_answer"] = record.answer
         results.append(result)
     return results

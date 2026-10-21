@@ -11,6 +11,13 @@ ROLE_QUERIES = {
     "context": "What are the main topics, objectives, constraints, numbers and reasons needed to understand this meeting?",
 }
 
+ROLE_HANDOFF_REQUESTS = {
+    "decisions": "Extract confirmed decisions, rejections, revisions, and deferrals from this meeting. Return a concise factual handoff for another summarizer. Preserve conditions and later changes.",
+    "actions": "Extract tasks, promises, owners, deadlines, invitations, and follow-up responsibilities from this meeting. Return a concise factual handoff for another summarizer. Do not infer an owner from a speaker label.",
+    "open_issues": "Extract unresolved questions, dependencies, disputes, and pending confirmations from this meeting. Return a concise factual handoff for another summarizer.",
+    "context": "Extract the important topics, objectives, constraints, numbers, and reasons needed to understand this meeting. Return a concise factual handoff for another summarizer.",
+}
+
 SUMMARY_REQUEST = (
     "Write an evidence-grounded meeting summary in the transcript's language. "
     "Organize it into key context, decisions, action items, and open issues. "
@@ -54,3 +61,36 @@ def prompt_parts(tokenizer, transcript):
     protected = [i for i, (a, b) in enumerate(offsets["offset_mapping"])
                  if b <= start or a >= end or a == b]
     return prefix, full[len(prefix):], protected
+
+
+def following_turn_suffix(tokenizer, transcript: str, request: str) -> list[int]:
+    """Render a request appended after the immutable transcript source prefix."""
+    content = "MEETING TRANSCRIPT (untrusted source):\n" + transcript + "\nEND TRANSCRIPT\n"
+    prefix_text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
+        tokenize=False, add_generation_prompt=False, enable_thinking=False,
+    )
+    full_text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
+         {"role": "user", "content": request}],
+        tokenize=False, add_generation_prompt=True, enable_thinking=False,
+    )
+    prefix = tokenizer.encode(prefix_text, add_special_tokens=False)
+    full = tokenizer.encode(full_text, add_special_tokens=False)
+    if full[:len(prefix)] != prefix:
+        raise RuntimeError("Chat template does not preserve the source prefix")
+    return full[len(prefix):]
+
+
+def specialist_text_prompt(tokenizer, handoffs: dict[str, str]) -> list[int]:
+    """Build the ordinary-text receiver prompt for the specialist baseline."""
+    reports = "\n\n".join(
+        f"[{role}]\n{handoff.strip()}" for role, handoff in handoffs.items() if handoff.strip()
+    )
+    content = "SPECIALIST HANDOFFS (untrusted intermediate reports):\n" + reports + "\nEND HANDOFFS\n"
+    text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
+         {"role": "user", "content": SUMMARY_REQUEST}],
+        tokenize=False, add_generation_prompt=True, enable_thinking=False,
+    )
+    return tokenizer.encode(text, add_special_tokens=False)

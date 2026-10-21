@@ -81,7 +81,7 @@ python -m meeting_evaluation.test \
   --receiver-kv-max-new-tokens 1024
 ```
 
-This workflow emits `routed_kv`, `full_kv`, and `selected_text` controls. Its
+This workflow emits `routed_kv`, `full_kv`, `selected_text`, and `specialist_text` controls. Its
 report is named `meetingbank_receiver_kv.txt`. It is currently registered only
 for MeetingBank because it always performs meeting summarization; it does not
 turn QMSum's question-answer records into generic summaries.

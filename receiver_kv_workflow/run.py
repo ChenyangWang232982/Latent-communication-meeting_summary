@@ -21,14 +21,16 @@ def arguments():
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--max-new-tokens", type=int, default=1024,
                         help="Explicit final output reserve; report flags when exhausted")
-    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "full_kv", "selected_text"],
-                        default=["routed_kv", "full_kv", "selected_text"])
+    parser.add_argument("--specialist-text-max-new-tokens", type=int, default=384,
+                        help="Per-specialist cap for the natural-language handoff baseline")
+    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "full_kv", "selected_text", "specialist_text"],
+                        default=["routed_kv", "full_kv", "selected_text", "specialist_text"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
-    if min(args.span_tokens, args.query_batch_tokens, args.max_new_tokens) < 1:
+    if min(args.span_tokens, args.query_batch_tokens, args.max_new_tokens, args.specialist_text_max_new_tokens) < 1:
         parser.error("Token budgets must be positive")
     return args
 
@@ -47,7 +49,8 @@ def main():
     runner = ReceiverKVRunner(ReceiverKVConfig(
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
-        max_new_tokens=args.max_new_tokens, seed=args.seed,
+        max_new_tokens=args.max_new_tokens, specialist_text_max_new_tokens=args.specialist_text_max_new_tokens,
+        seed=args.seed,
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants))
     answers = result["answers"]
@@ -58,10 +61,11 @@ def main():
         "source_cache_bytes": result["source_cache_bytes"], "prefill_seconds": result["prefill_seconds"],
         "selection_seconds": result["selection_seconds"], "roles": result["roles"],
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
-                     "query_batch_tokens": args.query_batch_tokens, "max_new_tokens": args.max_new_tokens},
+                     "query_batch_tokens": args.query_batch_tokens, "max_new_tokens": args.max_new_tokens,
+                     "specialist_text_max_new_tokens": args.specialist_text_max_new_tokens},
         "variants": result["variants"],
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
-                  "selected_text is selected-source text, NOT generated specialist handoffs.",
+                  "selected_text is selected-source text; specialist_text is generated natural-language specialist handoffs.",
                   "ROUGE-L is lexical reference overlap, not factual accuracy; no reference means N/A.",
                   "Queries are selector instructions, not generated latent reasoning.",
                   "Source prefill processes every token; selection subsequently drops evidence positions.",
@@ -83,8 +87,10 @@ def main():
             "variant | ROUGE-L | input positions | KV MiB | positions vs full | total seconds | output tokens | cap-hit"]
     for variant, values in report["variants"].items():
         score = "N/A" if values["rouge_l_f1"] is None else f"{values['rouge_l_f1']:.4f}"
+        position_delta = values["positions_vs_full_percent"]
+        position_delta_text = "N/A" if position_delta is None else f"{position_delta:+.1f}%"
         rows.append(f"{variant} | {score} | {values['incoming_positions']} | "
-                    f"{values['incoming_cache_bytes']/2**20:.1f} | {values['positions_vs_full_percent']:+.1f}% | "
+                    f"{values['incoming_cache_bytes']/2**20:.1f} | {position_delta_text} | "
                     f"{values['pipeline_seconds_excluding_model_load']:.2f} | "
                     f"{values['generated_tokens']} | {values['output_cap_hit']}")
     rows.extend(["", *report["notes"]])

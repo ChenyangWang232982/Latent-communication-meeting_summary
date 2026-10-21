@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
+    parser.add_argument("--receiver-kv-specialist-text-max-new-tokens", type=int, default=384)
     parser.add_argument("--device")
     parser.add_argument(
         "--skip-missing",
@@ -65,6 +66,14 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace, ref
         command.extend(["--reference", str(reference)])
     if args.device:
         command.extend(["--device", args.device])
+    if args.workflow == "receiver_kv":
+        command.extend([
+            "--receiver-kv-role-budget-ratio", str(args.receiver_kv_role_budget_ratio),
+            "--receiver-kv-span-tokens", str(args.receiver_kv_span_tokens),
+            "--receiver-kv-query-batch-tokens", str(args.receiver_kv_query_batch_tokens),
+            "--receiver-kv-max-new-tokens", str(args.receiver_kv_max_new_tokens),
+            "--receiver-kv-specialist-text-max-new-tokens", str(args.receiver_kv_specialist_text_max_new_tokens),
+        ])
     return command
 
 
@@ -79,13 +88,6 @@ def main() -> None:
         ("meetingbank", args.meetingbank, None),
         ("ami", args.ami, args.ami_reference),
     ]
-    if args.workflow == "receiver_kv":
-        command.extend([
-            "--receiver-kv-role-budget-ratio", str(args.receiver_kv_role_budget_ratio),
-            "--receiver-kv-span-tokens", str(args.receiver_kv_span_tokens),
-            "--receiver-kv-query-batch-tokens", str(args.receiver_kv_query_batch_tokens),
-            "--receiver-kv-max-new-tokens", str(args.receiver_kv_max_new_tokens),
-        ])
     if args.workflow == "receiver_kv":
         jobs = [("meetingbank", args.meetingbank, None)]
     missing = [f"{name}: {path}" for name, path, _ in jobs if not path.is_file()]

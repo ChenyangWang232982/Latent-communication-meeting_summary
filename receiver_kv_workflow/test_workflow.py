@@ -114,12 +114,13 @@ class QwenCacheTests(unittest.TestCase):
             (root / "meeting.txt").write_text("Alice: I will send the draft on Friday. Bob: Agreed.", encoding="utf-8")
             command = ["run", "--transcript", str(root / "meeting.txt"), "--model", str(model_dir),
                        "--device", "cpu", "--max-new-tokens", "2", "--role-budget-ratio", "0.7",
+                       "--specialist-text-max-new-tokens", "2",
                        "--output-dir", str(root / "output"), "--metrics-dir", str(root / "metrics")]
             with patch("sys.argv", command):
                 main()
             report = json.loads(next((root / "metrics").glob("*/metrics.json")).read_text())
-            self.assertEqual(set(report["variants"]), {"routed_kv", "full_kv", "selected_text"})
-            self.assertEqual(len(list((root / "output").glob("*/*.txt"))), 3)
+            self.assertEqual(set(report["variants"]), {"routed_kv", "full_kv", "selected_text", "specialist_text"})
+            self.assertEqual(len(list((root / "output").glob("*/*.txt"))), 4)
             self.assertIsNone(report["variants"]["routed_kv"]["rouge_l_f1"])
             self.assertNotIn("answers", report)
 
