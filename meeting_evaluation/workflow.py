@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import WorkflowConfig
 from .records import MeetingRecord
+from receiver_kv_workflow.engine import ReceiverKVConfig, ReceiverKVRunner
 
 
 def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig, *, meeting_mode: bool) -> list[dict]:
@@ -43,3 +44,19 @@ def run_statebridge(records: list[MeetingRecord], config: WorkflowConfig, *, mee
         subprocess.run(command, check=True)
         result_path = raw_output.with_suffix(".jsonl")
         return [json.loads(line) for line in result_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def run_receiver_kv(records: list[MeetingRecord], config: ReceiverKVConfig, *, num_samples: int) -> list[dict]:
+    """Batch MeetingBank records while holding one Qwen3 model in GPU memory."""
+    selected = records[:num_samples] if num_samples else records
+    if not selected:
+        raise ValueError("No records selected for evaluation.")
+    total = len(selected)
+    runner = ReceiverKVRunner(config, progress=lambda message: print(f"[receiver_kv] {message}", flush=True))
+    results = []
+    for index, record in enumerate(selected, start=1):
+        print(f"[receiver_kv] record {index}/{total}: {record.id}", flush=True)
+        result = runner.run(record.id, record.context, variants=("routed_kv", "full_kv", "selected_text"))
+        result["gold_answer"] = record.answer
+        results.append(result)
+    return results

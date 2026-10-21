@@ -29,10 +29,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=Path("test_result"))
     parser.add_argument("--num-samples", type=int, default=8)
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
+    parser.add_argument("--workflow", choices=["statebridge", "receiver_kv"], default="statebridge")
     parser.add_argument("--source-max-tokens", type=int, default=8192)
     parser.add_argument("--prefix-tokens-per-agent", type=int, default=64)
     parser.add_argument("--evidence-policy", choices=["strict", "retrieval", "off"], default="strict")
     parser.add_argument("--alignment-scope", choices=["joint", "per-message"], default="joint")
+    parser.add_argument("--receiver-kv-role-budget-ratio", type=float, default=0.15)
+    parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
+    parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
+    parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
     parser.add_argument("--device")
     parser.add_argument(
         "--skip-missing",
@@ -46,6 +51,7 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace, ref
     command = [
         sys.executable, "-m", "meeting_evaluation.test",
         "--benchmark", benchmark,
+        "--workflow", args.workflow,
         "--input", str(input_path),
         "--output-dir", str(args.output_dir),
         "--num-samples", str(args.num_samples),
@@ -73,6 +79,15 @@ def main() -> None:
         ("meetingbank", args.meetingbank, None),
         ("ami", args.ami, args.ami_reference),
     ]
+    if args.workflow == "receiver_kv":
+        command.extend([
+            "--receiver-kv-role-budget-ratio", str(args.receiver_kv_role_budget_ratio),
+            "--receiver-kv-span-tokens", str(args.receiver_kv_span_tokens),
+            "--receiver-kv-query-batch-tokens", str(args.receiver_kv_query_batch_tokens),
+            "--receiver-kv-max-new-tokens", str(args.receiver_kv_max_new_tokens),
+        ])
+    if args.workflow == "receiver_kv":
+        jobs = [("meetingbank", args.meetingbank, None)]
     missing = [f"{name}: {path}" for name, path, _ in jobs if not path.is_file()]
     if missing and not args.skip_missing:
         raise FileNotFoundError(

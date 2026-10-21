@@ -99,3 +99,67 @@ def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -
         },
     }
 
+
+def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -> dict[str, Any]:
+    """Score the receiver-KV controls without pretending KV bytes are tokens."""
+    variants = ("routed_kv", "full_kv", "selected_text")
+    quality = {name: {"rouge_l_f1": [], "supported_claim_rate": []} for name in variants}
+    source_prefill, selection, source_cache = [], [], []
+    efficiency = {
+        name: {"incoming_positions": [], "incoming_cache_mib": [], "logical_payload_bytes": [],
+               "receiver_seconds": [], "pipeline_seconds": [], "generated_tokens": [], "output_cap_hits": 0}
+        for name in variants
+    }
+    for result in results:
+        source = source_by_id[result["id"]]
+        source_prefill.append(result["prefill_seconds"])
+        selection.append(result["selection_seconds"])
+        source_cache.append(result["source_cache_bytes"] / 2**20)
+        references = result.get("gold_answers") or [result.get("gold_answer", "")]
+        for name in variants:
+            if name not in result["answers"]:
+                continue
+            answer = result["answers"][name]
+            scores = [rouge_l_f1(answer, str(reference)) for reference in references]
+            valid = [score for score in scores if score is not None]
+            quality[name]["rouge_l_f1"].append(max(valid) if valid else None)
+            quality[name]["supported_claim_rate"].append(
+                source_overlap_support(answer, source)["supported_claim_rate"]
+            )
+            measurement = result["variants"][name]
+            data = efficiency[name]
+            data["incoming_positions"].append(measurement["incoming_positions"])
+            data["incoming_cache_mib"].append(measurement["incoming_cache_bytes"] / 2**20)
+            data["logical_payload_bytes"].append(measurement["logical_payload_bytes"])
+            data["receiver_seconds"].append(measurement["receiver_seconds"])
+            data["pipeline_seconds"].append(measurement["pipeline_seconds_excluding_model_load"])
+            data["generated_tokens"].append(measurement["generated_tokens"])
+            data["output_cap_hits"] += int(measurement["output_cap_hit"])
+    return {
+        "samples": len(results),
+        "quality": {name: {metric: _average(values) for metric, values in metrics.items()}
+                    for name, metrics in quality.items()},
+        "factuality_note": "supported_claim_rate is a lexical source-overlap proxy inspired by MESA-style source checking; it is not an LLM or human MESA score.",
+        "efficiency": {
+            "mean_source_prefill_seconds": _average(source_prefill),
+            "mean_selection_seconds": _average(selection),
+            "mean_full_source_cache_mib": _average(source_cache),
+            "variants": {
+                name: {
+                    "mean_incoming_positions": _average(values["incoming_positions"]),
+                    "mean_incoming_cache_mib": _average(values["incoming_cache_mib"]),
+                    "mean_logical_payload_bytes": _average(values["logical_payload_bytes"]),
+                    "mean_receiver_seconds": _average(values["receiver_seconds"]),
+                    "mean_pipeline_seconds_excluding_model_load": _average(values["pipeline_seconds"]),
+                    "mean_generated_tokens": _average(values["generated_tokens"]),
+                    "output_cap_hits": values["output_cap_hits"],
+                }
+                for name, values in efficiency.items()
+            },
+        },
+        "efficiency_note": (
+            "KV positions, KV bytes and text-token payloads are reported separately. "
+            "They are not interchangeable measures of token or cost savings."
+        ),
+    }
+

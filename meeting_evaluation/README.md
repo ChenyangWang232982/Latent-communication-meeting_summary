@@ -67,6 +67,25 @@ python -m meeting_evaluation.test \
   --asr-model small
 ```
 
+Receiver-conditioned KV routing evaluation on MeetingBank:
+
+```bash
+python -m meeting_evaluation.test \
+  --benchmark meetingbank \
+  --workflow receiver_kv \
+  --input input/meetingbank_test.jsonl \
+  --output-dir test_result \
+  --num-samples 8 \
+  --model Qwen/Qwen3-4B \
+  --receiver-kv-role-budget-ratio 0.15 \
+  --receiver-kv-max-new-tokens 1024
+```
+
+This workflow emits `routed_kv`, `full_kv`, and `selected_text` controls. Its
+report is named `meetingbank_receiver_kv.txt`. It is currently registered only
+for MeetingBank because it always performs meeting summarization; it does not
+turn QMSum's question-answer records into generic summaries.
+
 The meeting workflow processes one transcript as one shared Prefix KV source:
 
 ```bash
