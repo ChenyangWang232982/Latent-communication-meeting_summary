@@ -25,7 +25,12 @@ SUMMARY_REQUEST = (
     "A plan contingent on approval is not a confirmed event. Preserve owners, "
     "dates and negation only when supported. Do not require a magic phrase such "
     "as 'we decided' for a supported decision. Omit unsupported claims. "
-    "Do not treat omitted evidence as proof that no decision or action exists."
+    "Do not treat omitted evidence as proof that no decision or action exists. "
+    "Treat an uncompleted coordination dependency for a future meeting, such as "
+    "an invitation, attendance confirmation, time or location confirmation, or "
+    "required approval, as an action item or open issue when it can affect the plan. "
+    "Before finalizing, check that supported coordination dependencies are not "
+    "lost merely because they are administrative."
 )
 
 

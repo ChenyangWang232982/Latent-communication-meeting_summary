@@ -4,6 +4,11 @@ from .selection import select_spans, union_positions
 
 
 class SelectionTests(unittest.TestCase):
+    def test_summary_prompt_preserves_pending_coordination(self):
+        from .prompts import SUMMARY_REQUEST
+        self.assertIn("coordination dependency", SUMMARY_REQUEST)
+        self.assertIn("attendance confirmation", SUMMARY_REQUEST)
+
     def test_budget_and_order(self):
         selected = select_spans([0, 1, 9, 8, 0, 0], 4, span_size=2, protected=[0, 5])
         self.assertEqual(selected, [0, 2, 3, 5])
