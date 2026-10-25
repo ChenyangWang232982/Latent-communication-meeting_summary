@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
 from statistics import mean
 from typing import Any
 
@@ -51,53 +50,6 @@ def source_overlap_support(summary: str, source: str, minimum_overlap: float = 0
 def _average(values: list[float | None]) -> float | None:
     valid = [value for value in values if value is not None]
     return mean(valid) if valid else None
-
-
-def _best_rouge_l(prediction: str, result: dict[str, Any]) -> float | None:
-    references = result.get("gold_answers")
-    if not isinstance(references, list):
-        references = [result.get("gold_answer", "")]
-    scores = [rouge_l_f1(prediction, str(reference)) for reference in references]
-    valid = [score for score in scores if score is not None]
-    return max(valid) if valid else None
-
-
-def score_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -> dict[str, Any]:
-    variants = ("statebridge", "text", "no_comm")
-    per_variant: dict[str, dict[str, list[float | None]]] = {
-        name: {"rouge_l_f1": [], "supported_claim_rate": []} for name in variants
-    }
-    communication = {"text_handoff_tokens": 0, "latent_state_tokens": 0, "prefix_prefill_seconds": [], "prefix_cache_bytes": []}
-    for result in results:
-        communication["text_handoff_tokens"] += result["communication"]["text_handoff_tokens"]
-        communication["latent_state_tokens"] += result["communication"]["latent_state_tokens"]
-        communication["prefix_prefill_seconds"].append(result["prefix_prefill_seconds"])
-        communication["prefix_cache_bytes"].append(result["prefix_cache_bytes"])
-        for variant in variants:
-            answer = result.get("answers", {}).get(variant, "")
-            per_variant[variant]["rouge_l_f1"].append(_best_rouge_l(answer, result))
-            per_variant[variant]["supported_claim_rate"].append(
-                source_overlap_support(answer, source_by_id[result["id"]])["supported_claim_rate"]
-            )
-    text_tokens = communication["text_handoff_tokens"]
-    latent_states = communication["latent_state_tokens"]
-    delta = latent_states - text_tokens
-    return {
-        "samples": len(results),
-        "quality": {
-            variant: {metric: _average(values) for metric, values in metrics.items()}
-            for variant, metrics in per_variant.items()
-        },
-        "factuality_note": "supported_claim_rate is a lexical source-overlap proxy inspired by MESA-style source checking; it is not an LLM or human MESA score.",
-        "efficiency": {
-            "text_handoff_tokens": text_tokens,
-            "latent_state_tokens": latent_states,
-            "latent_minus_text_tokens": delta,
-            "latent_minus_text_percent": None if not text_tokens else delta * 100.0 / text_tokens,
-            "mean_prefix_prefill_seconds": _average(communication["prefix_prefill_seconds"]),
-            "mean_prefix_cache_mib": _average([value / 2**20 for value in communication["prefix_cache_bytes"]]),
-        },
-    }
 
 
 def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -> dict[str, Any]:

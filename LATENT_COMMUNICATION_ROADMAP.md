@@ -424,7 +424,6 @@ Because your current priority is embedding, the immediate order is:
 
 ```text
 1. Use Prefix-KV reuse for long-context specialist access.
-2. Use StateBridge hidden-state communication from specialists to the final summarizer.
 3. Compare latent handoffs with a transcript-derived text handoff baseline.
 4. Add random and shuffled latent baselines.
 5. Evaluate communication length, quality, latency, and memory usage together.

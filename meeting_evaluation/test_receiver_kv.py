@@ -52,20 +52,20 @@ class ReceiverKVEvaluationTests(unittest.TestCase):
             root = Path(temporary)
             input_path = root / "meetingbank.jsonl"
             input_path.write_text('{"id":"meeting-1","transcript":"source","summary":"gold"}\n', encoding="utf-8")
-            argv = ["test", "--benchmark", "meetingbank", "--workflow", "receiver_kv",
+            argv = ["test", "--benchmark", "meetingbank",
                     "--input", str(input_path), "--output-dir", str(root / "out"), "--device", "cpu"]
             with patch("sys.argv", argv), patch("meeting_evaluation.test.run_receiver_kv", return_value=[fake]) as runner:
                 main()
             runner.assert_called_once()
             self.assertTrue(next((root / "out").glob("*/meetingbank_receiver_kv.json")))
 
-    def test_receiver_workflow_rejects_qmsum(self):
+    def test_evaluation_rejects_non_meetingbank_benchmark(self):
         from .test import main
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "records.jsonl"
             source.write_text('{"id":"q","context":"x","question":"why","answer":"a"}\n', encoding="utf-8")
-            with patch("sys.argv", ["test", "--benchmark", "qmsum", "--workflow", "receiver_kv", "--input", str(source)]):
-                with self.assertRaisesRegex(ValueError, "MeetingBank only"):
+            with patch("sys.argv", ["test", "--benchmark", "qmsum", "--input", str(source)]):
+                with self.assertRaises(SystemExit):
                     main()
 
 

@@ -1,11 +1,10 @@
 # Receiver-Conditioned KV Meeting Workflow
 
-这是独立的 **training-free 实验工作流**，没有修改旧 StateBridge 工作流。
+这是一个 **training-free 实验工作流**。
 目标是验证：会议摘要是否可以直接利用按接收需求选出的原文 KV，减少
 “专家先写摘要，再压缩专家摘要”的信息瓶颈。
 
-**不是 CacheBack、LatentMAS 或 KVCOMM 的完整复现，不承诺比旧流程更准确。**
-论文比较和设计理由见 [RESEARCH_ZH.md](RESEARCH_ZH.md)。
+**不是 CacheBack、LatentMAS 或 KVCOMM 的完整复现。**
 
 ## 工作流
 
@@ -78,8 +77,6 @@ JSON 保存选中位置索引，便于审计。终端逐角色、逐 receiver �
 `selected_text` **不是**自然语言专家 handoff 基线；`specialist_text` 才是该基线。
 
 评测报告还会列出每个变体的端到端 logical model-token events：一次源 prefill、选择 query、specialist prompt/handoff、最终 receiver prompt/output。它不等于 attention FLOPs、真实服务商账单或 KV 字节数，但可用于比较同一模型下的 token 处理量。
-如果要与旧 StateBridge 比较，须额外运行旧程序，并统一样本、参考、模型、
-输出预算与解码方式；本程序没有伪造一个同名 StateBridge baseline。
 
 - `--role-budget-ratio 0.15`：每角色最多约原前缀的 15%。四角色并集最多约 60%，
   实际有重叠时更少；保留 prompt framing 可能使小输入的实际比例更大。
