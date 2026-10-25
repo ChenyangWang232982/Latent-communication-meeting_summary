@@ -9,6 +9,11 @@ ROLE_QUERIES = {
     "actions": "What tasks were assigned or promised, by whom, with what deadline? Include invitations and follow-up responsibilities.",
     "open_issues": "What remains unresolved, conditional, disputed or dependent on confirmation at the end of the meeting?",
     "context": "What are the main topics, objectives, constraints, numbers and reasons needed to understand this meeting?",
+    "coordination": (
+        "Find forward-looking coordination details that can affect the plan: invitations, attendance confirmation, "
+        "meeting dates, exact times, locations, scheduling changes, and approval dependencies. Preserve the exact "
+        "numbers and whether each detail is confirmed, proposed, or pending."
+    ),
 }
 
 EVENT_QUERY = (
@@ -21,6 +26,7 @@ ROLE_HANDOFF_REQUESTS = {
     "actions": "Extract tasks, promises, owners, deadlines, invitations, and follow-up responsibilities from this meeting. Return a concise factual handoff for another summarizer. Do not infer an owner from a speaker label.",
     "open_issues": "Extract unresolved questions, dependencies, disputes, and pending confirmations from this meeting. Return a concise factual handoff for another summarizer.",
     "context": "Extract the important topics, objectives, constraints, numbers, and reasons needed to understand this meeting. Return a concise factual handoff for another summarizer.",
+    "coordination": "Extract forward-looking coordination details: invitations, attendance confirmation, meeting dates, exact times, locations, scheduling changes, and approval dependencies. Preserve exact values and whether each item is confirmed, proposed, or pending. Return a concise factual handoff for another summarizer.",
 }
 
 SUMMARY_REQUEST = (
@@ -35,7 +41,9 @@ SUMMARY_REQUEST = (
     "an invitation, attendance confirmation, time or location confirmation, or "
     "required approval, as an action item or open issue when it can affect the plan. "
     "Before finalizing, check that supported coordination dependencies are not "
-    "lost merely because they are administrative."
+    "lost merely because they are administrative. Preserve exact supported dates, "
+    "times, locations, and deadlines. Never upgrade a proposed, conditional, or "
+    "pending schedule detail into a confirmed one."
 )
 
 TIMELINE_REQUEST = (

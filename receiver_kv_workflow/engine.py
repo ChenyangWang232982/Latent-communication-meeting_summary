@@ -162,7 +162,7 @@ class ReceiverKVRunner:
                 handoffs, handoff_tokens, specialist_seconds = {}, 0, 0.0
                 specialist_prompt_tokens = sum(len(role_suffix) for role_suffix in specialist_suffixes)
                 for index, ((role, _), suffix_ids) in enumerate(zip(ROLE_HANDOFF_REQUESTS.items(), specialist_suffixes), start=1):
-                    self.progress(f"{record_id}: specialist_text {role} started ({index - 1}/4 complete)")
+                    self.progress(f"{record_id}: specialist_text {role} started ({index - 1}/{len(ROLE_HANDOFF_REQUESTS)} complete)")
                     suffix = self._tensor(suffix_ids)
                     available_output = self.context_limit - len(prefix) - suffix.shape[1]
                     if available_output < 1:
