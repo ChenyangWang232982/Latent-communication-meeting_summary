@@ -11,6 +11,11 @@ ROLE_QUERIES = {
     "context": "What are the main topics, objectives, constraints, numbers and reasons needed to understand this meeting?",
 }
 
+EVENT_QUERY = (
+    "Identify the chronological agenda changes, topic transitions, and consequential meeting events. "
+    "Keep source passages that establish roughly when an event occurred and what changed."
+)
+
 ROLE_HANDOFF_REQUESTS = {
     "decisions": "Extract confirmed decisions, rejections, revisions, and deferrals from this meeting. Return a concise factual handoff for another summarizer. Preserve conditions and later changes.",
     "actions": "Extract tasks, promises, owners, deadlines, invitations, and follow-up responsibilities from this meeting. Return a concise factual handoff for another summarizer. Do not infer an owner from a speaker label.",
@@ -31,6 +36,16 @@ SUMMARY_REQUEST = (
     "required approval, as an action item or open issue when it can affect the plan. "
     "Before finalizing, check that supported coordination dependencies are not "
     "lost merely because they are administrative."
+)
+
+TIMELINE_REQUEST = (
+    "Create a chronological meeting timeline in the transcript's language. "
+    "Represent each event with: Approximate time, Topic, Key development, and only the supported "
+    "Decisions, Actions, or Open issues that belong to that event. "
+    "For Approximate time, give one approximate timestamp when the transcript supports it; otherwise "
+    "use an approximate relative marker such as early, middle, or late meeting. Do not use start/end "
+    "time ranges. Preserve changes, uncertainty, attribution, and pending coordination dependencies. "
+    "Do not invent events or timestamps."
 )
 
 

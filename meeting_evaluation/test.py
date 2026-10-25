@@ -24,7 +24,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
-    parser.add_argument("--receiver-kv-specialist-text-max-new-tokens", type=int, default=384)
     parser.add_argument("--device")
     return parser.parse_args()
 
@@ -42,7 +41,6 @@ def main() -> None:
         span_tokens=args.receiver_kv_span_tokens,
         query_batch_tokens=args.receiver_kv_query_batch_tokens,
         max_new_tokens=args.receiver_kv_max_new_tokens,
-        specialist_text_max_new_tokens=args.receiver_kv_specialist_text_max_new_tokens,
     )
     results = run_receiver_kv(records, receiver_config, num_samples=args.num_samples)
     from .metrics import score_receiver_kv_results

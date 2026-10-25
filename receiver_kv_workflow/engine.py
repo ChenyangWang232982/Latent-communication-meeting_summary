@@ -7,7 +7,7 @@ import math
 import time
 from typing import Callable
 
-from .prompts import ROLE_HANDOFF_REQUESTS, ROLE_QUERIES, following_turn_suffix, prompt_parts, specialist_text_prompt
+from .prompts import EVENT_QUERY, ROLE_HANDOFF_REQUESTS, ROLE_QUERIES, TIMELINE_REQUEST, following_turn_suffix, prompt_parts, specialist_text_prompt
 from .selection import select_spans, union_positions
 
 
@@ -19,7 +19,6 @@ class ReceiverKVConfig:
     span_tokens: int = 32
     query_batch_tokens: int = 8
     max_new_tokens: int = 1024
-    specialist_text_max_new_tokens: int = 384
     seed: int = 7
 
 
@@ -29,7 +28,7 @@ class ReceiverKVRunner:
     def __init__(self, config: ReceiverKVConfig, progress: Callable[[str], None] | None = None) -> None:
         if not 0 < config.role_budget_ratio <= 1:
             raise ValueError("role_budget_ratio must be in (0, 1]")
-        if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens, config.specialist_text_max_new_tokens) < 1:
+        if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens) < 1:
             raise ValueError("Token budgets must be positive")
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
@@ -62,7 +61,7 @@ class ReceiverKVRunner:
     def _tensor(self, ids):
         return self.torch.tensor([ids], device=self.device, dtype=self.torch.long)
 
-    def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...]) -> dict:
+    def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...], timeline: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -74,7 +73,11 @@ class ReceiverKVRunner:
         if not requested or any(name not in valid_variants for name in requested):
             raise ValueError("variants must be routed_kv, full_kv, selected_text and/or specialist_text")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
-        queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in ROLE_QUERIES.items()}
+        timeline_suffixes = [following_turn_suffix(self.tokenizer, transcript, TIMELINE_REQUEST)] if timeline else []
+        query_text = dict(ROLE_QUERIES)
+        if timeline:
+            query_text["events"] = EVENT_QUERY
+        queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
         specialist_suffixes = (
             [following_turn_suffix(self.tokenizer, transcript, request) for request in ROLE_HANDOFF_REQUESTS.values()]
             if "specialist_text" in requested else []
@@ -82,7 +85,8 @@ class ReceiverKVRunner:
         required = len(prefix) + max(
             len(suffix) + self.config.max_new_tokens,
             max(map(len, queries.values())),
-            *(len(role_suffix) + self.config.specialist_text_max_new_tokens for role_suffix in specialist_suffixes),
+            *(len(role_suffix) for role_suffix in specialist_suffixes),
+            *(len(timeline_suffix) + self.config.max_new_tokens for timeline_suffix in timeline_suffixes),
         )
         if required > self.context_limit:
             raise ValueError(
@@ -103,10 +107,10 @@ class ReceiverKVRunner:
             messages, role_metrics = [], {}
             selection_seconds = 0.0
             selection_probe_tokens = 0
-            if any(name in {"routed_kv", "selected_text"} for name in requested):
+            if timeline or any(name in {"routed_kv", "selected_text"} for name in requested):
                 selection_start = time.perf_counter()
                 for index, (role, query) in enumerate(queries.items(), start=1):
-                    self.progress(f"{record_id}: selector {role} started ({index - 1}/4 complete)")
+                    self.progress(f"{record_id}: selector {role} started ({index - 1}/{len(queries)} complete)")
                     scores = query_scores(self.model, source, self._tensor(query), query_batch=self.config.query_batch_tokens)
                     selected = select_spans(scores, budget, span_size=self.config.span_tokens, protected=protected)
                     messages.append(selected)
@@ -160,10 +164,13 @@ class ReceiverKVRunner:
                 for index, ((role, _), suffix_ids) in enumerate(zip(ROLE_HANDOFF_REQUESTS.items(), specialist_suffixes), start=1):
                     self.progress(f"{record_id}: specialist_text {role} started ({index - 1}/4 complete)")
                     suffix = self._tensor(suffix_ids)
+                    available_output = self.context_limit - len(prefix) - suffix.shape[1]
+                    if available_output < 1:
+                        raise ValueError(f"{record_id}: specialist prompt exhausts the model context limit.")
                     specialist_start = time.perf_counter()
                     handoff, generated_tokens, _ = generate(
                         self.model, self.tokenizer, select_cache(source, range(len(prefix))), suffix,
-                        absolute_start=len(prefix), max_new_tokens=self.config.specialist_text_max_new_tokens,
+                        absolute_start=len(prefix), max_new_tokens=available_output,
                         context_limit=self.context_limit,
                     )
                     self._sync()
@@ -205,10 +212,19 @@ class ReceiverKVRunner:
                         "receiver_output_tokens": generated_tokens,
                     },
                 }
+            timeline_answer = None
+            if timeline:
+                timeline_suffix = self._tensor(timeline_suffixes[0])
+                timeline_answer, _, _ = generate(
+                    self.model, self.tokenizer, select_cache(source, selected), timeline_suffix,
+                    absolute_start=len(prefix), max_new_tokens=self.config.max_new_tokens,
+                    context_limit=self.context_limit,
+                )
         return {
             "id": record_id, "answers": answers, "variants": measurements,
             "source_positions": len(prefix), "context_limit": self.context_limit,
             "source_cache_bytes": source_bytes, "prefill_seconds": prefill_seconds,
             "selection_seconds": selection_seconds, "roles": role_metrics,
             "selected_source_positions": selected,
+            "timeline": timeline_answer,
         }

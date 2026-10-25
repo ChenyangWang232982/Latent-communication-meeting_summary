@@ -47,6 +47,10 @@ PowerShell 可以使用以下单行命令，不要复制 Bash 的反斜杠续行
 python -m receiver_kv_workflow.run --transcript input/meeting1.txt --model Qwen/Qwen3-4B --role-budget-ratio 0.15 --max-new-tokens 1024 --variants routed_kv full_kv selected_text specialist_text
 ```
 
+Add `--timeline` to write a separate chronological event timeline. Each event
+contains one approximate time, topic, key development, and any supported
+decisions, actions, or open issues; it does not use start/end time ranges.
+
 有人工参考摘要时追加 `--reference input/meeting1_reference.txt`。当前复用项目的
 英文词级 ROUGE-L，仅表示参考摘要词序重合，不是事实准确率；没有 reference
 则显示 N/A。不要拿当前英文分词评分器评中文摘要。
@@ -58,6 +62,7 @@ output/receiver_kv/时间戳/routed_kv.txt
 output/receiver_kv/时间戳/full_kv.txt
 output/receiver_kv/时间戳/selected_text.txt
 output/receiver_kv/时间戳/specialist_text.txt
+output/receiver_kv/时间戳/timeline.txt  # only with --timeline
 test_result/receiver_kv/时间戳/metrics.txt
 test_result/receiver_kv/时间戳/metrics.json
 ```

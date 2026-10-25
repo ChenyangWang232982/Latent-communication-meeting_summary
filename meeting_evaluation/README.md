@@ -27,7 +27,6 @@ python -m meeting_evaluation.test \
   --receiver-kv-span-tokens 32 \
   --receiver-kv-query-batch-tokens 8 \
   --receiver-kv-max-new-tokens 1024 \
-  --receiver-kv-specialist-text-max-new-tokens 384 \
   --device cuda
 ```
 
