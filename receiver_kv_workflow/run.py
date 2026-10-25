@@ -34,8 +34,6 @@ def arguments():
         parser.error("--role-budget-ratio must be in (0, 1]")
     if min(args.span_tokens, args.query_batch_tokens, args.max_new_tokens) < 1:
         parser.error("Token budgets must be positive")
-    if args.output and "routed_kv" not in args.variants:
-        parser.error("--output requires routed_kv in --variants")
     return args
 
 
@@ -86,9 +84,10 @@ def main():
     else:
         output_dir.mkdir(parents=True)
     metrics_dir.mkdir(parents=True)
+    primary_variant = "routed_kv" if "routed_kv" in answers else next(iter(answers))
     for variant, answer in answers.items():
         if args.output:
-            path = args.output if variant == "routed_kv" else args.output.with_name(
+            path = args.output if variant == primary_variant else args.output.with_name(
                 f"{args.output.stem}.{variant}{args.output.suffix or '.txt'}"
             )
         else:
