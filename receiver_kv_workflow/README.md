@@ -51,6 +51,11 @@ Add `--timeline` to write a separate chronological event timeline. Each event
 contains one approximate time, topic, key development, and any supported
 decisions, actions, or open issues; it does not use start/end time ranges.
 
+For a direct main-summary path compatible with the prior CLI style, use
+`--output output/meeting1.txt`. This writes `routed_kv` to that exact file and
+writes controls as sibling files such as `meeting1.full_kv.txt`; `--timeline`
+similarly writes `meeting1.timeline.txt`.
+
 有人工参考摘要时追加 `--reference input/meeting1_reference.txt`。当前复用项目的
 英文词级 ROUGE-L，仅表示参考摘要词序重合，不是事实准确率；没有 reference
 则显示 N/A。不要拿当前英文分词评分器评中文摘要。

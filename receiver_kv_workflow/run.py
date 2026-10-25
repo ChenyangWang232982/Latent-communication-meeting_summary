@@ -12,6 +12,8 @@ def arguments():
     parser.add_argument("--transcript", type=Path, required=True)
     parser.add_argument("--reference", type=Path, help="Optional human summary; English ROUGE-L only")
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
+    parser.add_argument("--output", type=Path,
+                        help="Write routed_kv directly to this file; controls use sibling files with the same stem")
     parser.add_argument("--output-dir", type=Path, default=Path("output/receiver_kv"))
     parser.add_argument("--metrics-dir", type=Path, default=Path("test_result/receiver_kv"))
     parser.add_argument("--role-budget-ratio", type=float, default=0.15,
@@ -32,6 +34,8 @@ def arguments():
         parser.error("--role-budget-ratio must be in (0, 1]")
     if min(args.span_tokens, args.query_batch_tokens, args.max_new_tokens) < 1:
         parser.error("Token budgets must be positive")
+    if args.output and "routed_kv" not in args.variants:
+        parser.error("--output requires routed_kv in --variants")
     return args
 
 
@@ -77,12 +81,22 @@ def main():
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     output_dir, metrics_dir = args.output_dir / stamp, args.metrics_dir / stamp
-    output_dir.mkdir(parents=True)
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_dir.mkdir(parents=True)
     metrics_dir.mkdir(parents=True)
     for variant, answer in answers.items():
-        (output_dir / f"{variant}.txt").write_text(answer + "\n", encoding="utf-8")
+        if args.output:
+            path = args.output if variant == "routed_kv" else args.output.with_name(
+                f"{args.output.stem}.{variant}{args.output.suffix or '.txt'}"
+            )
+        else:
+            path = output_dir / f"{variant}.txt"
+        path.write_text(answer + "\n", encoding="utf-8")
     if result["timeline"] is not None:
-        (output_dir / "timeline.txt").write_text(result["timeline"] + "\n", encoding="utf-8")
+        timeline_path = args.output.with_name(f"{args.output.stem}.timeline{args.output.suffix or '.txt'}") if args.output else output_dir / "timeline.txt"
+        timeline_path.write_text(result["timeline"] + "\n", encoding="utf-8")
     (metrics_dir / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     rows = ["Receiver-conditioned KV routing (experimental)",
             "variant | ROUGE-L | input positions | KV MiB | positions vs full | total seconds | output tokens | cap-hit"]
@@ -96,7 +110,8 @@ def main():
                     f"{values['generated_tokens']} | {values['output_cap_hit']}")
     rows.extend(["", *report["notes"]])
     (metrics_dir / "metrics.txt").write_text("\n".join(rows) + "\n", encoding="utf-8")
-    log(f"Summaries: {output_dir}; metrics only: {metrics_dir}")
+    summary_location = args.output.parent if args.output else output_dir
+    log(f"Summaries: {summary_location}; metrics only: {metrics_dir}")
 
 
 if __name__ == "__main__":
