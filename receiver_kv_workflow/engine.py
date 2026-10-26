@@ -29,8 +29,8 @@ class ReceiverKVRunner:
     """Load a homogeneous Qwen3 once, then run many meeting records."""
 
     def __init__(self, config: ReceiverKVConfig, progress: Callable[[str], None] | None = None) -> None:
-        if config.selection_strategy not in {"fixed", "sentence"}:
-            raise ValueError("selection_strategy must be fixed or sentence")
+        if config.selection_strategy not in {"fixed", "fixed_pooled", "sentence"}:
+            raise ValueError("selection_strategy must be fixed, fixed_pooled or sentence")
         if not 0 < config.role_budget_ratio <= 1:
             raise ValueError("role_budget_ratio must be in (0, 1]")
         if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens) < 1:
@@ -66,7 +66,7 @@ class ReceiverKVRunner:
     def _tensor(self, ids):
         return self.torch.tensor([ids], device=self.device, dtype=self.torch.long)
 
-    def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...], timeline: bool = False) -> dict:
+    def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...], timeline: bool = False, routing_audit: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, generate_from_prefill, select_cache, size_bytes
         from .scoring import query_scores
@@ -126,14 +126,18 @@ class ReceiverKVRunner:
                 self._sync()
                 selection_seconds = time.perf_counter() - selection_start
             selected = union_positions(messages)
+            baseline_selection = list(selected)
             baseline_positions = len(selected)
-            if selected and self.config.selection_strategy == "sentence":
+            if selected and self.config.selection_strategy in {"sentence", "fixed_pooled"}:
                 from .detail_selection import sentence_units, select_complete_units
                 boundary_start = time.perf_counter()
-                units = sentence_units(self.tokenizer, transcript, prefix, protected)
+                units = (sentence_units(self.tokenizer, transcript, prefix, protected)
+                         if self.config.selection_strategy == "sentence" else
+                         [list(range(i, min(i + self.config.span_tokens, len(prefix))))
+                          for i in range(0, len(prefix), self.config.span_tokens)])
                 selected = select_complete_units(units, selected, role_scores, protected)
                 selection_seconds += time.perf_counter() - boundary_start
-                self.progress(f"{record_id}: sentence KV selection {len(selected)}/{baseline_positions} positions")
+                self.progress(f"{record_id}: {self.config.selection_strategy} KV selection {len(selected)}/{baseline_positions} positions")
             answers, measurements = {}, {}
             for variant in (name for name in requested if name not in {"specialist_text", "natural_text"}):
                 receiver_start = time.perf_counter()
@@ -304,7 +308,13 @@ class ReceiverKVRunner:
                     absolute_start=len(prefix), max_new_tokens=self.config.max_new_tokens,
                     context_limit=self.context_limit,
                 )
+        audit = None
+        if routing_audit:
+            from .routing_audit import build_audit
+            audit = build_audit(self.tokenizer, transcript, prefix, protected, selected, baseline_selection,
+                                dict(zip(queries, messages)), self.config.selection_strategy)
         return {
+            "routing_audit": audit,
             "id": record_id, "answers": answers, "variants": measurements,
             "source_positions": len(prefix), "context_limit": self.context_limit,
             "source_cache_bytes": source_bytes, "prefill_seconds": prefill_seconds,

@@ -3,6 +3,19 @@ from .detail_selection import sentence_units, select_complete_units
 
 
 class DetailSelectionTests(unittest.TestCase):
+    def test_audit_distinguishes_missing_condition_from_retained_evidence(self):
+        from unittest.mock import patch
+        from .routing_audit import build_audit
+        text = "Meet 3-5 pending approval."
+        offsets = [(i, i + 1) for i in range(len(text))]
+        with patch("receiver_kv_workflow.routing_audit.source_offsets", return_value=(offsets, 0)), patch(
+            "receiver_kv_workflow.routing_audit.sentence_units", return_value=[list(range(len(text))) ]
+        ):
+            audit = build_audit(None, text, [], [], list(range(8)), list(range(8)), {}, "fixed")
+        self.assertEqual(audit["selected_excerpts"][0]["text"], "Meet 3-5")
+        self.assertEqual(audit["sentence_coverage"][0]["status"], "partial")
+        self.assertEqual(audit["sentence_coverage"][0]["source"][0]["text"], text)
+
     def test_complete_unit_preserves_time_and_condition(self):
         # Baseline sees only the beginning of a high-value statement. Whole-unit
         # selection retains the associated qualifier instead of isolated tokens.

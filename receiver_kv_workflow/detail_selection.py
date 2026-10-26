@@ -9,7 +9,7 @@ import re
 from .prompts import SYSTEM
 
 
-def sentence_units(tokenizer, transcript, expected_prefix, protected):
+def source_offsets(tokenizer, transcript, expected_prefix):
     header = "MEETING TRANSCRIPT (untrusted source):\n"
     content = header + transcript + "\nEND TRANSCRIPT\n"
     rendered = tokenizer.apply_chat_template(
@@ -23,12 +23,17 @@ def sentence_units(tokenizer, transcript, expected_prefix, protected):
     if origin < 0:
         raise RuntimeError("Cannot locate transcript in source prompt")
     origin += len(header)
+    return encoded["offset_mapping"], origin
+
+
+def sentence_units(tokenizer, transcript, expected_prefix, protected):
+    offsets, origin = source_offsets(tokenizer, transcript, expected_prefix)
     # Split after sentence punctuation, not at decimals, clock colons or a
     # standalone timestamp/speaker line. Paragraph boundaries also delimit units.
     boundaries = [origin + m.end() for m in re.finditer(r"[.!?。！？](?:[\"'”’])?(?:\s+|$)|\n\s*\n", transcript)]
     buckets = {}
     protected = set(protected)
-    for i, (a, b) in enumerate(encoded["offset_mapping"]):
+    for i, (a, b) in enumerate(offsets):
         if i in protected:
             continue
         # A token spanning a boundary belongs wholly to its starting unit.

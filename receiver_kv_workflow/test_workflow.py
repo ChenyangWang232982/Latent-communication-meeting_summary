@@ -155,7 +155,7 @@ class QwenCacheTests(unittest.TestCase):
             (root / "meeting.txt").write_text("Alice: I will send the draft on Friday. Bob: Agreed.", encoding="utf-8")
             command = ["run", "--transcript", str(root / "meeting.txt"), "--model", str(model_dir),
                        "--device", "cpu", "--max-new-tokens", "2", "--role-budget-ratio", "0.7",
-                       "--selection-strategy", "sentence",
+                       "--selection-strategy", "sentence", "--routing-audit",
                        "--timeline", "--output", str(root / "meeting_output.txt"), "--metrics-dir", str(root / "metrics")]
             with patch("sys.argv", command):
                 main()
@@ -166,6 +166,10 @@ class QwenCacheTests(unittest.TestCase):
             self.assertTrue((root / "meeting_output.timeline.txt").is_file())
             self.assertIsNone(report["variants"]["routed_kv"]["rouge_l_f1"])
             self.assertNotIn("answers", report)
+            audit = json.loads((root / "meeting_output.audit.json").read_text(encoding="utf-8"))
+            self.assertEqual(audit["selected_positions"], len(report["selected_source_positions"]))
+            self.assertTrue((root / "meeting_output.audit.txt").is_file())
+            self.assertNotIn("sentence_coverage", report)
             self.assertEqual(report["settings"]["selection_strategy"], "sentence")
             self.assertLessEqual(len(report["selected_source_positions"]), report["baseline_selected_positions"])
 

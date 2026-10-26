@@ -19,7 +19,8 @@ def arguments():
     parser.add_argument("--role-budget-ratio", type=float, default=0.15,
                         help="Source positions per role; union can reach four times this ratio")
     parser.add_argument("--span-tokens", type=int, default=32)
-    parser.add_argument("--selection-strategy", choices=["fixed", "sentence"], default="fixed")
+    parser.add_argument("--selection-strategy", choices=["fixed", "fixed_pooled", "sentence"], default="fixed")
+    parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--max-new-tokens", type=int, default=1024,
@@ -55,7 +56,8 @@ def main():
         max_new_tokens=args.max_new_tokens, seed=args.seed,
         selection_strategy=args.selection_strategy,
     ), progress=log)
-    result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline)
+    result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline,
+                        routing_audit=args.routing_audit)
     answers = result["answers"]
     report = {
         "method": "Receiver-conditioned KV routing, CacheBack-inspired, NOT paper reproduction",
@@ -88,6 +90,14 @@ def main():
         output_dir.mkdir(parents=True)
     metrics_dir.mkdir(parents=True)
     primary_variant = "routed_kv" if "routed_kv" in answers else next(iter(answers))
+    if args.routing_audit:
+        from .routing_audit import render_audit
+        audit_base = args.output.with_suffix("") if args.output else output_dir / "routing"
+        audit_text = audit_base.with_name(audit_base.name + ".audit.txt")
+        audit_json = audit_base.with_name(audit_base.name + ".audit.json")
+        audit_text.write_text(render_audit(result["routing_audit"]), encoding="utf-8")
+        audit_json.write_text(json.dumps(result["routing_audit"], ensure_ascii=False, indent=2), encoding="utf-8")
+        log(f"Routing audit: {audit_text}")
     for variant, answer in answers.items():
         if args.output:
             path = args.output if variant == primary_variant else args.output.with_name(

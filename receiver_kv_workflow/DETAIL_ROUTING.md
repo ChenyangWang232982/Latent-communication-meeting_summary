@@ -1,5 +1,27 @@
 # Boundary-aware routed KV experiment
 
+## Routing diagnosis and controlled comparison
+
+`receiver_kv_workflow.run --routing-audit` writes separate `.audit.txt` and
+`.audit.json` beside the content output. It contains exact selected source
+excerpts, zero-based half-open source token and transcript character intervals,
+per-role fixed selections, differences from fixed, and complete/partial/dropped
+sentence coverage. Dropped source is explicitly diagnostic context, never model
+input. Audit rendering occurs after generation and is excluded from inference
+timings. Metrics files do not contain this source text.
+
+Compare `fixed`, `fixed_pooled`, and `sentence`:
+- fixed: original per-role fixed spans, partial last span allowed, then union.
+- fixed_pooled: globally pooled role scores, whole fixed spans only.
+- sentence: same pooled scoring, budget ceiling and whole-unit policy as
+  fixed_pooled, but delimiter-based sentence units.
+
+`fixed_pooled` versus `sentence` isolates the unit boundaries more closely.
+`fixed` versus `fixed_pooled` changes both pooling and whole-unit selection, so
+it is not a pure pooling ablation. Actual counts can differ below the same ceiling.
+No prompts are changed. First inspect whether the desired fact and its conditions
+are retained, then compare full_kv to distinguish selection loss from generation.
+
 Use `--selection-strategy sentence` on either `receiver_kv_workflow.run`
 or `meeting_evaluation.test`. Default `fixed` preserves the old selector.
 
