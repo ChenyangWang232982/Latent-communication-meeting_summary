@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--receiver-kv-role-budget-ratio", type=float, default=0.15)
     parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
     parser.add_argument("--selection-strategy", choices=["fixed", "fixed_pooled", "sentence", "speaker"], default="fixed")
-    parser.add_argument("--speaker-neighbor-blocks", type=int, default=2)
+    parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
     parser.add_argument("--device")

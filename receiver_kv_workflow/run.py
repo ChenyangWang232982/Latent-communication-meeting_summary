@@ -20,7 +20,7 @@ def arguments():
                         help="Source positions per role; union can reach four times this ratio")
     parser.add_argument("--span-tokens", type=int, default=32)
     parser.add_argument("--selection-strategy", choices=["fixed", "fixed_pooled", "sentence", "speaker"], default="fixed")
-    parser.add_argument("--speaker-neighbor-blocks", type=int, default=2,
+    parser.add_argument("--speaker-neighbor-blocks", type=int, default=1,
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--query-batch-tokens", type=int, default=8,

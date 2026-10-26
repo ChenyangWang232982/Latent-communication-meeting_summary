@@ -75,8 +75,8 @@ formatting, not speaker recognition or semantic inference.
 
 The selector first scores whole blocks using pooled role attention and selects
 seed blocks within the original per-role fixed-selection union budget. It then
-retains the two preceding and two following whole speaker blocks around every
-seed (`--speaker-neighbor-blocks`, default `2`). Context expansion can exceed
+retains the preceding and following whole speaker block around every seed
+(`--speaker-neighbor-blocks`, default `1`). Context expansion can exceed
 the seed budget, so the final payload is reported separately from seed positions.
 No extra model pass is added. Whole blocks that do not fit the seed budget are
 skipped; no speaker block is subdivided. Audit coverage is labelled SPEAKER_BLOCK

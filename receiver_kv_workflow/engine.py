@@ -23,7 +23,7 @@ class ReceiverKVConfig:
     max_new_tokens: int = 1024
     seed: int = 7
     selection_strategy: str = "fixed"
-    speaker_neighbor_blocks: int = 2
+    speaker_neighbor_blocks: int = 1
 
 
 class ReceiverKVRunner:
