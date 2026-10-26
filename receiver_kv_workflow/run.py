@@ -19,7 +19,7 @@ def arguments():
     parser.add_argument("--role-budget-ratio", type=float, default=0.15,
                         help="Source positions per role; union can reach four times this ratio")
     parser.add_argument("--span-tokens", type=int, default=32)
-    parser.add_argument("--selection-strategy", choices=["fixed", "fixed_pooled", "sentence"], default="fixed")
+    parser.add_argument("--selection-strategy", choices=["fixed", "fixed_pooled", "sentence", "speaker"], default="fixed")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")

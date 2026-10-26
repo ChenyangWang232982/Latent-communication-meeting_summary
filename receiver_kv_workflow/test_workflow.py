@@ -152,16 +152,20 @@ class QwenCacheTests(unittest.TestCase):
             tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="<unk>", eos_token="<eos>")
             tokenizer.chat_template = "{% for m in messages %}{{m['role'] + ': ' + m['content'] + '\n'}}{% endfor %}{% if add_generation_prompt %}assistant: {% endif %}"
             tokenizer.save_pretrained(model_dir)
-            (root / "meeting.txt").write_text("Alice: I will send the draft on Friday. Bob: Agreed.", encoding="utf-8")
+            (root / "meeting.txt").write_text("Alice: I will send the draft.\nAlice: On Friday.\nBob: Agreed.", encoding="utf-8")
             command = ["run", "--transcript", str(root / "meeting.txt"), "--model", str(model_dir),
                        "--device", "cpu", "--max-new-tokens", "2", "--role-budget-ratio", "0.7",
-                       "--selection-strategy", "sentence", "--routing-audit",
+                       "--selection-strategy", "speaker", "--routing-audit",
                        "--timeline", "--output", str(root / "meeting_output.txt"), "--metrics-dir", str(root / "metrics")]
             with patch("sys.argv", command):
                 main()
             report = json.loads(next((root / "metrics").glob("*/metrics.json")).read_text())
             self.assertEqual(set(report["variants"]), {"routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"})
             self.assertTrue((root / "meeting_output.txt").is_file())
+            audit = json.loads((root / "meeting_output.audit.json").read_text())
+            self.assertEqual(audit["coverage_unit"], "speaker_block")
+            self.assertEqual(len(audit["sentence_coverage"]), 2)
+            self.assertTrue(all(item["status"] != "partial" for item in audit["sentence_coverage"]))
             self.assertTrue((root / "meeting_output.full_kv.txt").is_file())
             self.assertTrue((root / "meeting_output.timeline.txt").is_file())
             self.assertIsNone(report["variants"]["routed_kv"]["rouge_l_f1"])
@@ -170,7 +174,7 @@ class QwenCacheTests(unittest.TestCase):
             self.assertEqual(audit["selected_positions"], len(report["selected_source_positions"]))
             self.assertTrue((root / "meeting_output.audit.txt").is_file())
             self.assertNotIn("sentence_coverage", report)
-            self.assertEqual(report["settings"]["selection_strategy"], "sentence")
+            self.assertEqual(report["settings"]["selection_strategy"], "speaker")
             self.assertLessEqual(len(report["selected_source_positions"]), report["baseline_selected_positions"])
 
 

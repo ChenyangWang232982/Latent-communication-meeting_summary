@@ -62,6 +62,25 @@ runs only its intended path and includes selection time in pipeline accounting.
 
 # Spoken repairs and summary detail preservation
 
+## Speaker blocks
+
+Use `--selection-strategy speaker` in the content runner or MeetingBank evaluation.
+Speaker blocks are constructed before source prefill and attention scoring.
+Consecutive records with the same normalized speaker label form one block;
+a return to that speaker after another speaker starts a separate block.
+Supported line-start labels include `Alice: text`, `[10:30] Alice: text`, and
+`Alice (Team)  1:10:30` followed by text. Unlabelled preamble is a separate block;
+inputs without recognized labels fail explicitly. This parser relies on transcript
+formatting, not speaker recognition or semantic inference.
+
+The selector scores whole blocks using pooled role attention. As with sentence,
+its budget is the original per-role fixed-selection union size: a role ratio of
+0.30 is NOT a global 30% retention cap. No extra model pass is added. Whole blocks
+that do not fit are skipped; no speaker block is subdivided. This can underfill
+the budget for long turns. Audit coverage is labelled SPEAKER_BLOCK (the JSON
+`sentence_coverage` key is retained for compatibility, with `coverage_unit`).
+Selected text and natural text use the same chosen source positions.
+
 Sentence units keep adjacent explicit self-corrections (for example, "failed.
 Sorry, executed.") together. This lexical heuristic prevents selecting the
 retracted phrase without its correction. The combined unit must fit the existing

@@ -29,8 +29,8 @@ class ReceiverKVRunner:
     """Load a homogeneous Qwen3 once, then run many meeting records."""
 
     def __init__(self, config: ReceiverKVConfig, progress: Callable[[str], None] | None = None) -> None:
-        if config.selection_strategy not in {"fixed", "fixed_pooled", "sentence"}:
-            raise ValueError("selection_strategy must be fixed, fixed_pooled or sentence")
+        if config.selection_strategy not in {"fixed", "fixed_pooled", "sentence", "speaker"}:
+            raise ValueError("selection_strategy must be fixed, fixed_pooled, sentence or speaker")
         if not 0 < config.role_budget_ratio <= 1:
             raise ValueError("role_budget_ratio must be in (0, 1]")
         if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens) < 1:
@@ -98,6 +98,14 @@ class ReceiverKVRunner:
                 f"{record_id}: context requires {required} positions but model supports {self.context_limit}; no text was truncated."
             )
         budget = max(len(protected), math.ceil(len(prefix) * self.config.role_budget_ratio))
+        speaker_blocks = None
+        block_seconds = 0.0
+        if self.config.selection_strategy == "speaker":
+            from .speaker_blocks import speaker_units
+            block_start = time.perf_counter()
+            speaker_blocks = speaker_units(self.tokenizer, transcript, prefix, protected)
+            block_seconds = time.perf_counter() - block_start
+            self.progress(f"{record_id}: prepared {len(speaker_blocks)} consecutive speaker blocks")
         self._sync()
         prefill_start = time.perf_counter()
         self.progress(f"{record_id}: full source prefill started")
@@ -128,15 +136,18 @@ class ReceiverKVRunner:
             selected = union_positions(messages)
             baseline_selection = list(selected)
             baseline_positions = len(selected)
-            if selected and self.config.selection_strategy in {"sentence", "fixed_pooled"}:
+            if selected and self.config.selection_strategy in {"sentence", "fixed_pooled", "speaker"}:
                 from .detail_selection import sentence_units, select_complete_units
                 boundary_start = time.perf_counter()
-                units = (sentence_units(self.tokenizer, transcript, prefix, protected)
-                         if self.config.selection_strategy == "sentence" else
-                         [list(range(i, min(i + self.config.span_tokens, len(prefix))))
-                          for i in range(0, len(prefix), self.config.span_tokens)])
+                if speaker_blocks is not None:
+                    units = speaker_blocks
+                elif self.config.selection_strategy == "sentence":
+                    units = sentence_units(self.tokenizer, transcript, prefix, protected)
+                else:
+                    units = [list(range(i, min(i + self.config.span_tokens, len(prefix))))
+                             for i in range(0, len(prefix), self.config.span_tokens)]
                 selected = select_complete_units(units, selected, role_scores, protected)
-                selection_seconds += time.perf_counter() - boundary_start
+                selection_seconds += time.perf_counter() - boundary_start + block_seconds
                 self.progress(f"{record_id}: {self.config.selection_strategy} KV selection {len(selected)}/{baseline_positions} positions")
             answers, measurements = {}, {}
             for variant in (name for name in requested if name not in {"specialist_text", "natural_text"}):

@@ -27,7 +27,12 @@ def build_audit(tokenizer, transcript, prefix, protected, selected, baseline, ro
         return result
 
     sentences = []
-    for index, unit in enumerate(sentence_units(tokenizer, transcript, prefix, protected)):
+    if strategy == "speaker":
+        from .speaker_blocks import speaker_units
+        units = speaker_units(tokenizer, transcript, prefix, protected)
+    else:
+        units = sentence_units(tokenizer, transcript, prefix, protected)
+    for index, unit in enumerate(units):
         kept = selected.intersection(unit)
         sentences.append({"unit": index, "source_tokens": len(unit), "retained_tokens": len(kept),
                           "status": "full" if len(kept) == len(unit) else "partial" if kept else "dropped",
@@ -38,6 +43,7 @@ def build_audit(tokenizer, transcript, prefix, protected, selected, baseline, ro
             "protected_positions": len(protected), "selected_excerpts": excerpts(selected),
             "added_vs_fixed": excerpts(selected - baseline), "removed_vs_fixed": excerpts(baseline - selected),
             "role_fixed_ranges": {role: contiguous_ranges(set(ids) - protected) for role, ids in role_positions.items()},
+            "coverage_unit": "speaker_block" if strategy == "speaker" else "sentence",
             "sentence_coverage": sentences}
 
 
@@ -48,7 +54,7 @@ def render_audit(audit):
              "", "EXACT SELECTED SOURCE EXCERPTS"]
     for item in audit["selected_excerpts"]:
         lines.extend([f"tokens {item['token_range']}; chars {item['character_range']}", item["text"], ""])
-    lines.append("SENTENCE COVERAGE (includes dropped source for diagnosis)")
+    lines.append(f"{audit.get('coverage_unit', 'sentence').upper()} COVERAGE (includes dropped source for diagnosis)")
     for item in audit["sentence_coverage"]:
         lines.append(f"unit {item['unit']}: {item['status']} {item['retained_tokens']}/{item['source_tokens']} tokens; retained ranges={item['retained_ranges']}")
         lines.extend(part["text"] for part in item["source"])
