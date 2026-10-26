@@ -7,7 +7,8 @@ import math
 import time
 from typing import Callable
 
-from .prompts import EVENT_QUERY, ROLE_HANDOFF_REQUESTS, ROLE_QUERIES, TIMELINE_REQUEST, following_turn_suffix, prompt_parts, specialist_text_prompt
+from .prompts import (EVENT_QUERY, ROLE_HANDOFF_REQUESTS, ROLE_QUERIES, TIMELINE_REQUEST,
+                      following_turn_suffix, prompt_parts, selected_evidence_prompt, specialist_text_prompt)
 from .selection import select_spans, union_positions
 
 
@@ -63,7 +64,7 @@ class ReceiverKVRunner:
 
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...], timeline: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
-        from .cache import forward_tokens, generate, select_cache, size_bytes
+        from .cache import forward_tokens, generate, generate_from_prefill, select_cache, size_bytes
         from .scoring import query_scores
 
         if not transcript.strip():
@@ -124,18 +125,27 @@ class ReceiverKVRunner:
                 receiver_start = time.perf_counter()
                 ids = list(range(len(prefix))) if variant == "full_kv" else selected
                 if variant == "selected_text":
-                    output = forward_tokens(self.model, self._tensor([prefix[i] for i in ids]), None, 0, logits_to_keep=1)
+                    prompt_ids, evidence_tokens, excerpt_count = selected_evidence_prompt(self.tokenizer, transcript, ids)
+                    if len(prompt_ids) + self.config.max_new_tokens > self.context_limit:
+                        raise ValueError(
+                            f"{record_id}: selected evidence plus output reserve exceeds the model context limit; no input was truncated."
+                        )
+                    output = forward_tokens(self.model, self._tensor(prompt_ids), None, 0, logits_to_keep=1)
                     incoming = output.past_key_values
-                    del output
-                    absolute_start, payload_bytes = len(ids), len(ids) * 4
+                    incoming_bytes = size_bytes(incoming)
+                    answer, generated_tokens, output_cap_hit = generate_from_prefill(
+                        self.model, self.tokenizer, output,
+                        next_position=len(prompt_ids), max_new_tokens=self.config.max_new_tokens,
+                    )
+                    absolute_start, payload_bytes = len(prompt_ids), evidence_tokens * 4
                 else:
                     incoming = select_cache(source, ids)
                     absolute_start, payload_bytes = len(prefix), size_bytes(incoming)
-                incoming_bytes = size_bytes(incoming)
-                answer, generated_tokens, output_cap_hit = generate(
-                    self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
-                    max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
-                )
+                    incoming_bytes = size_bytes(incoming)
+                    answer, generated_tokens, output_cap_hit = generate(
+                        self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
+                        max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
+                    )
                 del incoming
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start
@@ -154,10 +164,13 @@ class ReceiverKVRunner:
                         "selection_probe_tokens": selection_probe_tokens if variant != "full_kv" else 0,
                         "specialist_prompt_tokens": 0,
                         "specialist_handoff_tokens": 0,
-                        "receiver_prompt_tokens": len(ids) + len(suffix) if variant == "selected_text" else len(suffix),
+                    "receiver_prompt_tokens": absolute_start if variant == "selected_text" else len(suffix),
                         "receiver_output_tokens": generated_tokens,
                     },
                 }
+                if variant == "selected_text":
+                    measurements[variant]["retrieved_evidence_tokens"] = evidence_tokens
+                    measurements[variant]["retrieved_excerpt_count"] = excerpt_count
             if "specialist_text" in requested:
                 handoffs, handoff_tokens, specialist_seconds = {}, 0, 0.0
                 specialist_prompt_tokens = sum(len(role_suffix) for role_suffix in specialist_suffixes)

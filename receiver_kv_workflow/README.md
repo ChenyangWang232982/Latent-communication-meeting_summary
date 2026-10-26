@@ -48,8 +48,10 @@ python -m receiver_kv_workflow.run --transcript input/meeting1.txt --model Qwen/
 ```
 
 Add `--timeline` to write a separate chronological event timeline. Each event
-contains one approximate time, topic, key development, and any supported
-decisions, actions, or open issues; it does not use start/end time ranges.
+contains one transcript-derived timestamp near the middle of its discussion,
+topic, key development, and any supported decisions, actions, or open issues.
+It does not use start/end ranges or relative labels; unsupported timing is
+written as `time unavailable`.
 
 For a direct path compatible with the prior CLI style, use
 `--output output/meeting1.txt`. When multiple variants run, `routed_kv` uses
@@ -82,7 +84,7 @@ JSON 保存选中位置索引，便于审计。终端逐角色、逐 receiver �
 |---|---|---|
 | routed_kv | 四角色选择并集的原文 KV | 新实验方法 |
 | full_kv | 完整原文 KV | 无选择损失的直接摘要对照 |
-| selected_text | 同一组选中原文 token，重新 prefill | 区分 KV 状态保留与文本重新编码 |
+| selected_text | 将同一组选中位置恢复为带边界的原文证据摘录，再重新 prefill | 文本证据锚点对照：保留时间戳和限定条件，区分 KV 状态保留与文本重新编码 |
 | specialist_text | 四个 specialist 从完整会议生成自然语言 handoff，最终摘要器读取 handoff | 传统多 agent 自然语言通信基线 |
 
 `selected_text` **不是**自然语言专家 handoff 基线；`specialist_text` 才是该基线。

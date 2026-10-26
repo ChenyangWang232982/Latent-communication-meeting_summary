@@ -5,11 +5,41 @@ from .selection import select_spans, union_positions
 
 class SelectionTests(unittest.TestCase):
     def test_summary_prompt_preserves_pending_coordination(self):
-        from .prompts import ROLE_QUERIES, SUMMARY_REQUEST
+        from .prompts import EVENT_QUERY, ROLE_QUERIES, SUMMARY_REQUEST, TIMELINE_REQUEST
         self.assertIn("coordination dependency", SUMMARY_REQUEST)
         self.assertIn("attendance confirmation", SUMMARY_REQUEST)
         self.assertIn("coordination", ROLE_QUERIES)
         self.assertIn("exact times", ROLE_QUERIES["coordination"])
+        self.assertIn("middle of that event's discussion", TIMELINE_REQUEST)
+        self.assertIn("time unavailable", TIMELINE_REQUEST)
+        self.assertIn("middle of each event discussion", EVENT_QUERY)
+
+    def test_selected_evidence_prompt_keeps_verbatim_timestamp_context(self):
+        import re
+        from tokenizers import Tokenizer
+        from tokenizers.models import WordLevel
+        from tokenizers.pre_tokenizers import Whitespace
+        from transformers import PreTrainedTokenizerFast
+        from .prompts import prompt_parts, selected_evidence_prompt
+        template = "{% for m in messages %}{{m['role'] + ': ' + m['content'] + '\\n'}}{% endfor %}{% if add_generation_prompt %}assistant: {% endif %}"
+        transcript = "[10:30] Toufique will send the invitation. Zhang confirmation is pending."
+        # Make a tiny but readable tokenizer for a deterministic offset test.
+        from .prompts import SUMMARY_REQUEST, SYSTEM
+        vocabulary = {"<unk>": 0, "<eos>": 1}
+        for token in re.findall(r"\w+|[^\w\s]", SYSTEM + SUMMARY_REQUEST + transcript + "system user assistant"):
+            vocabulary.setdefault(token, len(vocabulary))
+        backend = Tokenizer(WordLevel(vocabulary, unk_token="<unk>"))
+        backend.pre_tokenizer = Whitespace()
+        tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="<unk>", eos_token="<eos>")
+        tokenizer.chat_template = template
+        prefix, _, _ = prompt_parts(tokenizer, transcript)
+        selected = list(range(len(prefix)))
+        prompt, evidence_tokens, count = selected_evidence_prompt(tokenizer, transcript, selected)
+        rendered = tokenizer.decode(prompt, skip_special_tokens=False)
+        self.assertIn("Toufique will send the invitation", rendered)
+        self.assertIn("Zhang confirmation is pending", rendered)
+        self.assertGreater(evidence_tokens, 0)
+        self.assertGreaterEqual(count, 1)
 
     def test_budget_and_order(self):
         selected = select_spans([0, 1, 9, 8, 0, 0], 4, span_size=2, protected=[0, 5])

@@ -18,7 +18,7 @@ ROLE_QUERIES = {
 
 EVENT_QUERY = (
     "Identify the chronological agenda changes, topic transitions, and consequential meeting events. "
-    "Keep source passages that establish roughly when an event occurred and what changed."
+    "Keep source passages that establish the transcript timestamp nearest the middle of each event discussion and what changed."
 )
 
 ROLE_HANDOFF_REQUESTS = {
@@ -50,10 +50,11 @@ TIMELINE_REQUEST = (
     "Create a chronological meeting timeline in the transcript's language. "
     "Represent each event with: Approximate time, Topic, Key development, and only the supported "
     "Decisions, Actions, or Open issues that belong to that event. "
-    "For Approximate time, give one approximate timestamp when the transcript supports it; otherwise "
-    "use an approximate relative marker such as early, middle, or late meeting. Do not use start/end "
-    "time ranges. Preserve changes, uncertainty, attribution, and pending coordination dependencies. "
-    "Do not invent events or timestamps."
+    "For Approximate time, give one timestamp near the middle of that event's discussion, derived from "
+    "the transcript timestamps. If the transcript does not support a time, write 'time unavailable'. "
+    "Do not use start/end time ranges or relative labels such as early, middle, or late meeting. "
+    "Preserve changes, uncertainty, attribution, and pending coordination dependencies. Do not invent "
+    "events or timestamps."
 )
 
 
@@ -122,3 +123,68 @@ def specialist_text_prompt(tokenizer, handoffs: dict[str, str]) -> list[int]:
         tokenize=False, add_generation_prompt=True, enable_thinking=False,
     )
     return tokenizer.encode(text, add_special_tokens=False)
+
+
+def selected_evidence_prompt(tokenizer, transcript: str, selected_positions: list[int]) -> tuple[list[int], int, int]:
+    """Render selected source positions as readable, verbatim evidence excerpts.
+
+    The selector operates over the tokenized source chat prompt.  This helper maps
+    those positions back to original transcript character ranges before rendering
+    a *new*, valid receiver prompt.  It deliberately does not concatenate sparse
+    token IDs: doing so can fuse unrelated fragments and lose timestamp context.
+    """
+    source_header = "MEETING TRANSCRIPT (untrusted source):\n"
+    content = source_header + transcript + "\nEND TRANSCRIPT\n"
+    source_text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
+        tokenize=False, add_generation_prompt=False, enable_thinking=False,
+    )
+    source_ids = tokenizer.encode(source_text, add_special_tokens=False)
+    offsets = tokenizer(source_text, add_special_tokens=False, return_offsets_mapping=True)
+    if offsets["input_ids"] != source_ids:
+        raise RuntimeError("Tokenizer offset mapping is inconsistent")
+    transcript_start = source_text.find(content) + len(source_header)
+    transcript_end = transcript_start + len(transcript)
+    if transcript_start < len(source_header):
+        raise RuntimeError("Cannot locate transcript in chat template")
+
+    # Add a modest textual margin so a selected phrase remains intelligible and
+    # nearby timestamps / qualifiers survive retrieval.  It is character based
+    # because it is applied after mapping source-token offsets to raw transcript.
+    margin = 96
+    intervals = []
+    for position in sorted(set(selected_positions)):
+        if not 0 <= position < len(source_ids):
+            raise ValueError("Selected source position outside prompt")
+        start, end = offsets["offset_mapping"][position]
+        start, end = max(start, transcript_start), min(end, transcript_end)
+        if start < end:
+            intervals.append((start - transcript_start, end - transcript_start))
+    # Tiny/degenerate tokenizers can spend a protected prompt-floor budget before
+    # reaching source tokens.  A text control must remain runnable in that case;
+    # use the complete transcript rather than emitting a malformed empty prompt.
+    if not intervals:
+        intervals = [(0, len(transcript))]
+    expanded = sorted((max(0, start - margin), min(len(transcript), end + margin)) for start, end in intervals)
+    merged = []
+    for start, end in expanded:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    excerpts = "\n\n".join(
+        f"[Evidence excerpt {index}]\n{transcript[start:end].strip()}"
+        for index, (start, end) in enumerate(merged, start=1)
+        if transcript[start:end].strip()
+    )
+    if not excerpts:
+        raise RuntimeError("Selected evidence excerpts are empty")
+    evidence_content = "RETRIEVED MEETING EVIDENCE (verbatim excerpts):\n" + excerpts + "\nEND EVIDENCE\n"
+    prompt_text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": evidence_content},
+         {"role": "user", "content": SUMMARY_REQUEST}],
+        tokenize=False, add_generation_prompt=True, enable_thinking=False,
+    )
+    prompt_ids = tokenizer.encode(prompt_text, add_special_tokens=False)
+    evidence_tokens = len(tokenizer.encode(excerpts, add_special_tokens=False))
+    return prompt_ids, evidence_tokens, len(merged)
