@@ -166,6 +166,7 @@ class QwenCacheTests(unittest.TestCase):
             self.assertEqual(audit["coverage_unit"], "speaker_block")
             self.assertEqual(len(audit["sentence_coverage"]), 2)
             self.assertTrue(all(item["status"] != "partial" for item in audit["sentence_coverage"]))
+            self.assertEqual(audit["speaker_neighbor_blocks"], 2)
             self.assertTrue((root / "meeting_output.full_kv.txt").is_file())
             self.assertTrue((root / "meeting_output.timeline.txt").is_file())
             self.assertIsNone(report["variants"]["routed_kv"]["rouge_l_f1"])

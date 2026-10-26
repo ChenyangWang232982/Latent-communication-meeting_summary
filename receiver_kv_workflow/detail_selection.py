@@ -94,3 +94,20 @@ def select_complete_units(units, baseline, role_scores, protected):
         if len(selected) + len(unit) <= budget:
             selected.update(unit)
     return sorted(selected)
+
+
+def expand_unit_neighbors(seed_positions, units, protected, radius=2):
+    """Keep complete adjacent units around any selected seed unit.
+
+    This deliberately expands beyond the seed-selection budget. The caller must
+    report the resulting position count as a contextualized receiver payload.
+    """
+    if radius < 0:
+        raise ValueError("Neighbor radius cannot be negative")
+    seed_positions = set(seed_positions)
+    expanded = set(protected)
+    seed_indices = [index for index, unit in enumerate(units) if seed_positions.intersection(unit)]
+    for index in seed_indices:
+        for neighbor in range(max(0, index - radius), min(len(units), index + radius + 1)):
+            expanded.update(units[neighbor])
+    return sorted(expanded)

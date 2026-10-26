@@ -12,10 +12,12 @@ def contiguous_ranges(positions):
     return ranges
 
 
-def build_audit(tokenizer, transcript, prefix, protected, selected, baseline, role_positions, strategy):
+def build_audit(tokenizer, transcript, prefix, protected, selected, baseline, role_positions, strategy,
+                *, seed_selection=None, neighbor_blocks=0):
     offsets, origin = source_offsets(tokenizer, transcript, prefix)
     protected = set(protected)
     selected, baseline = set(selected), set(baseline)
+    seed_selection = set(seed_selection if seed_selection is not None else selected)
 
     def excerpts(positions):
         result = []
@@ -40,6 +42,9 @@ def build_audit(tokenizer, transcript, prefix, protected, selected, baseline, ro
     return {"strategy": strategy, "coordinate_convention": "zero-based half-open; token indices include source chat framing; characters index transcript",
             "note": "Offline audit only. Unselected surrounding text is not sent to routed_kv. A retained passage does not guarantee summary correctness.",
             "selected_positions": len(selected), "baseline_positions": len(baseline),
+            "seed_selected_positions": len(seed_selection),
+            "context_added_positions": len(selected - seed_selection),
+            "speaker_neighbor_blocks": neighbor_blocks if strategy == "speaker" else 0,
             "protected_positions": len(protected), "selected_excerpts": excerpts(selected),
             "added_vs_fixed": excerpts(selected - baseline), "removed_vs_fixed": excerpts(baseline - selected),
             "role_fixed_ranges": {role: contiguous_ranges(set(ids) - protected) for role, ids in role_positions.items()},
@@ -50,10 +55,12 @@ def build_audit(tokenizer, transcript, prefix, protected, selected, baseline, ro
 def render_audit(audit):
     lines = ["KV routing audit (not model input)", f"strategy: {audit['strategy']}",
              audit["coordinate_convention"], audit["note"],
-             f"retained={audit['selected_positions']}; fixed baseline={audit['baseline_positions']}",
+             f"retained={audit['selected_positions']}; seed={audit.get('seed_selected_positions', audit['selected_positions'])}; fixed baseline={audit['baseline_positions']}",
              "", "EXACT SELECTED SOURCE EXCERPTS"]
     for item in audit["selected_excerpts"]:
         lines.extend([f"tokens {item['token_range']}; chars {item['character_range']}", item["text"], ""])
+    if audit["strategy"] == "speaker":
+        lines.append(f"SPEAKER CONTEXT: +/-{audit['speaker_neighbor_blocks']} blocks; added positions={audit['context_added_positions']}")
     lines.append(f"{audit.get('coverage_unit', 'sentence').upper()} COVERAGE (includes dropped source for diagnosis)")
     for item in audit["sentence_coverage"]:
         lines.append(f"unit {item['unit']}: {item['status']} {item['retained_tokens']}/{item['source_tokens']} tokens; retained ranges={item['retained_ranges']}")

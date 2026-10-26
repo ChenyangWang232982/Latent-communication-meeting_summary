@@ -23,6 +23,7 @@ class ReceiverKVConfig:
     max_new_tokens: int = 1024
     seed: int = 7
     selection_strategy: str = "fixed"
+    speaker_neighbor_blocks: int = 2
 
 
 class ReceiverKVRunner:
@@ -35,6 +36,8 @@ class ReceiverKVRunner:
             raise ValueError("role_budget_ratio must be in (0, 1]")
         if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens) < 1:
             raise ValueError("Token budgets must be positive")
+        if config.speaker_neighbor_blocks < 0:
+            raise ValueError("speaker_neighbor_blocks must be non-negative")
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -136,8 +139,9 @@ class ReceiverKVRunner:
             selected = union_positions(messages)
             baseline_selection = list(selected)
             baseline_positions = len(selected)
+            seed_selection = list(selected)
             if selected and self.config.selection_strategy in {"sentence", "fixed_pooled", "speaker"}:
-                from .detail_selection import sentence_units, select_complete_units
+                from .detail_selection import expand_unit_neighbors, sentence_units, select_complete_units
                 boundary_start = time.perf_counter()
                 if speaker_blocks is not None:
                     units = speaker_blocks
@@ -147,8 +151,15 @@ class ReceiverKVRunner:
                     units = [list(range(i, min(i + self.config.span_tokens, len(prefix))))
                              for i in range(0, len(prefix), self.config.span_tokens)]
                 selected = select_complete_units(units, selected, role_scores, protected)
+                seed_selection = list(selected)
+                if self.config.selection_strategy == "speaker" and self.config.speaker_neighbor_blocks:
+                    selected = expand_unit_neighbors(
+                        selected, units, protected, radius=self.config.speaker_neighbor_blocks
+                    )
                 selection_seconds += time.perf_counter() - boundary_start + block_seconds
-                self.progress(f"{record_id}: {self.config.selection_strategy} KV selection {len(selected)}/{baseline_positions} positions")
+                detail = (f" seeds={len(seed_selection)}, +/-{self.config.speaker_neighbor_blocks} blocks"
+                          if self.config.selection_strategy == "speaker" else "")
+                self.progress(f"{record_id}: {self.config.selection_strategy} KV selection {len(selected)}/{baseline_positions} positions{detail}")
             answers, measurements = {}, {}
             for variant in (name for name in requested if name not in {"specialist_text", "natural_text"}):
                 receiver_start = time.perf_counter()
@@ -323,7 +334,9 @@ class ReceiverKVRunner:
         if routing_audit:
             from .routing_audit import build_audit
             audit = build_audit(self.tokenizer, transcript, prefix, protected, selected, baseline_selection,
-                                dict(zip(queries, messages)), self.config.selection_strategy)
+                                dict(zip(queries, messages)), self.config.selection_strategy,
+                                seed_selection=seed_selection,
+                                neighbor_blocks=self.config.speaker_neighbor_blocks)
         return {
             "routing_audit": audit,
             "id": record_id, "answers": answers, "variants": measurements,
@@ -332,6 +345,8 @@ class ReceiverKVRunner:
             "selection_seconds": selection_seconds, "roles": role_metrics,
             "selected_source_positions": selected,
             "selection_strategy": self.config.selection_strategy,
+            "speaker_neighbor_blocks": self.config.speaker_neighbor_blocks,
+            "seed_selected_positions": seed_selection,
             "baseline_selected_positions": baseline_positions,
             "timeline": timeline_answer,
         }

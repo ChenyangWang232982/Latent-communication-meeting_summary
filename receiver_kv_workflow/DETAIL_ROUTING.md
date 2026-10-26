@@ -73,13 +73,15 @@ Supported line-start labels include `Alice: text`, `[10:30] Alice: text`, and
 inputs without recognized labels fail explicitly. This parser relies on transcript
 formatting, not speaker recognition or semantic inference.
 
-The selector scores whole blocks using pooled role attention. As with sentence,
-its budget is the original per-role fixed-selection union size: a role ratio of
-0.30 is NOT a global 30% retention cap. No extra model pass is added. Whole blocks
-that do not fit are skipped; no speaker block is subdivided. This can underfill
-the budget for long turns. Audit coverage is labelled SPEAKER_BLOCK (the JSON
-`sentence_coverage` key is retained for compatibility, with `coverage_unit`).
-Selected text and natural text use the same chosen source positions.
+The selector first scores whole blocks using pooled role attention and selects
+seed blocks within the original per-role fixed-selection union budget. It then
+retains the two preceding and two following whole speaker blocks around every
+seed (`--speaker-neighbor-blocks`, default `2`). Context expansion can exceed
+the seed budget, so the final payload is reported separately from seed positions.
+No extra model pass is added. Whole blocks that do not fit the seed budget are
+skipped; no speaker block is subdivided. Audit coverage is labelled SPEAKER_BLOCK
+(the JSON `sentence_coverage` key is retained for compatibility, with
+`coverage_unit`). Selected text and natural text use the same chosen positions.
 
 Sentence units keep adjacent explicit self-corrections (for example, "failed.
 Sorry, executed.") together. This lexical heuristic prevents selecting the

@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--receiver-kv-role-budget-ratio", type=float, default=0.15)
     parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
     parser.add_argument("--selection-strategy", choices=["fixed", "fixed_pooled", "sentence", "speaker"], default="fixed")
+    parser.add_argument("--speaker-neighbor-blocks", type=int, default=2)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
     parser.add_argument("--device")
@@ -57,7 +58,7 @@ def main() -> None:
         span_tokens=args.receiver_kv_span_tokens,
         query_batch_tokens=args.receiver_kv_query_batch_tokens,
         max_new_tokens=args.receiver_kv_max_new_tokens,
-        selection_strategy=args.selection_strategy,
+        selection_strategy=args.selection_strategy, speaker_neighbor_blocks=args.speaker_neighbor_blocks,
     )
     results = run_receiver_kv(records, receiver_config, num_samples=args.num_samples, variants=tuple(args.variants))
     from .metrics import score_receiver_kv_results

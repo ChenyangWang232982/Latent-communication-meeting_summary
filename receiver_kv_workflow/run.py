@@ -20,6 +20,8 @@ def arguments():
                         help="Source positions per role; union can reach four times this ratio")
     parser.add_argument("--span-tokens", type=int, default=32)
     parser.add_argument("--selection-strategy", choices=["fixed", "fixed_pooled", "sentence", "speaker"], default="fixed")
+    parser.add_argument("--speaker-neighbor-blocks", type=int, default=2,
+                        help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
@@ -34,7 +36,7 @@ def arguments():
     args = parser.parse_args()
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
-    if min(args.span_tokens, args.query_batch_tokens, args.max_new_tokens) < 1:
+    if min(args.span_tokens, args.query_batch_tokens, args.max_new_tokens) < 1 or args.speaker_neighbor_blocks < 0:
         parser.error("Token budgets must be positive")
     return args
 
@@ -54,7 +56,7 @@ def main():
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         max_new_tokens=args.max_new_tokens, seed=args.seed,
-        selection_strategy=args.selection_strategy,
+        selection_strategy=args.selection_strategy, speaker_neighbor_blocks=args.speaker_neighbor_blocks,
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline,
                         routing_audit=args.routing_audit)
@@ -67,7 +69,8 @@ def main():
         "selection_seconds": result["selection_seconds"], "roles": result["roles"],
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens, "max_new_tokens": args.max_new_tokens,
-                     "timeline": args.timeline, "selection_strategy": args.selection_strategy},
+                     "timeline": args.timeline, "selection_strategy": args.selection_strategy,
+                     "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
@@ -81,6 +84,7 @@ def main():
     for variant, answer in answers.items():
         report["variants"][variant]["rouge_l_f1"] = rouge_l_f1(answer, reference) if reference else None
     report["selected_source_positions"] = result["selected_source_positions"]
+    report["seed_selected_positions"] = result["seed_selected_positions"]
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     output_dir, metrics_dir = args.output_dir / stamp, args.metrics_dir / stamp

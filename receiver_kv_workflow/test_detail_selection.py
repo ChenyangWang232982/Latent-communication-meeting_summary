@@ -1,8 +1,16 @@
 import unittest
-from .detail_selection import sentence_boundaries, sentence_units, select_complete_units
+from .detail_selection import expand_unit_neighbors, sentence_boundaries, sentence_units, select_complete_units
 
 
 class DetailSelectionTests(unittest.TestCase):
+    def test_neighbor_expansion_includes_two_complete_units_each_side(self):
+        units = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12]]
+        selected = expand_unit_neighbors([7, 8], units, [0], radius=2)
+        self.assertEqual(selected, [0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+
+    def test_neighbor_expansion_clamps_at_document_ends(self):
+        units = [[1], [2], [3], [4]]
+        self.assertEqual(expand_unit_neighbors([1], units, [0], radius=2), [0, 1, 2, 3])
     def test_repair_is_kept_with_retracted_phrase(self):
         for repair in ("Sorry, how it executes.", "Sorry. How it executes.",
                        "I mean, how it executes."):
