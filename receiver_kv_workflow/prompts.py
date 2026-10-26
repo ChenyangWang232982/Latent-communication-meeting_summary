@@ -125,8 +125,19 @@ def specialist_text_prompt(tokenizer, handoffs: dict[str, str]) -> list[int]:
     return tokenizer.encode(text, add_special_tokens=False)
 
 
-def selected_evidence_prompt(tokenizer, transcript: str, selected_positions: list[int]) -> tuple[list[int], int, int]:
-    """Render selected source positions as readable, verbatim evidence excerpts.
+def natural_text_prompt(tokenizer, handoff: str) -> list[int]:
+    """Build the receiver prompt for the one-sender natural-language control."""
+    content = "NATURAL-LANGUAGE MEETING HANDOFF (untrusted intermediate report):\n" + handoff.strip() + "\nEND HANDOFF\n"
+    text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
+         {"role": "user", "content": SUMMARY_REQUEST}],
+        tokenize=False, add_generation_prompt=True, enable_thinking=False,
+    )
+    return tokenizer.encode(text, add_special_tokens=False)
+
+
+def selected_evidence_excerpts(tokenizer, transcript: str, selected_positions: list[int]) -> tuple[str, int, int]:
+    """Recover selected source positions as readable, verbatim evidence excerpts.
 
     The selector operates over the tokenized source chat prompt.  This helper maps
     those positions back to original transcript character ranges before rendering
@@ -179,6 +190,13 @@ def selected_evidence_prompt(tokenizer, transcript: str, selected_positions: lis
     )
     if not excerpts:
         raise RuntimeError("Selected evidence excerpts are empty")
+    evidence_tokens = len(tokenizer.encode(excerpts, add_special_tokens=False))
+    return excerpts, evidence_tokens, len(merged)
+
+
+def selected_evidence_prompt(tokenizer, transcript: str, selected_positions: list[int]) -> tuple[list[int], int, int]:
+    """Build the direct-receiver prompt for selected verbatim evidence."""
+    excerpts, evidence_tokens, excerpt_count = selected_evidence_excerpts(tokenizer, transcript, selected_positions)
     evidence_content = "RETRIEVED MEETING EVIDENCE (verbatim excerpts):\n" + excerpts + "\nEND EVIDENCE\n"
     prompt_text = tokenizer.apply_chat_template(
         [{"role": "system", "content": SYSTEM}, {"role": "user", "content": evidence_content},
@@ -186,5 +204,20 @@ def selected_evidence_prompt(tokenizer, transcript: str, selected_positions: lis
         tokenize=False, add_generation_prompt=True, enable_thinking=False,
     )
     prompt_ids = tokenizer.encode(prompt_text, add_special_tokens=False)
-    evidence_tokens = len(tokenizer.encode(excerpts, add_special_tokens=False))
-    return prompt_ids, evidence_tokens, len(merged)
+    return prompt_ids, evidence_tokens, excerpt_count
+
+
+def natural_sender_prompt(tokenizer, excerpts: str) -> list[int]:
+    """Build the sender prompt for the same-selection natural-language control."""
+    content = "RETRIEVED MEETING EVIDENCE (verbatim excerpts):\n" + excerpts + "\nEND EVIDENCE\n"
+    request = (
+        "Turn only these retrieved meeting evidence excerpts into one concise factual handoff for another summarizer. "
+        "Preserve exact dates, times, names, owners, conditions, uncertainty and pending confirmations. "
+        "Do not add facts from outside the excerpts and do not write the final meeting summary."
+    )
+    text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
+         {"role": "user", "content": request}],
+        tokenize=False, add_generation_prompt=True, enable_thinking=False,
+    )
+    return tokenizer.encode(text, add_special_tokens=False)

@@ -159,7 +159,7 @@ class QwenCacheTests(unittest.TestCase):
             with patch("sys.argv", command):
                 main()
             report = json.loads(next((root / "metrics").glob("*/metrics.json")).read_text())
-            self.assertEqual(set(report["variants"]), {"routed_kv", "full_kv", "selected_text", "specialist_text"})
+            self.assertEqual(set(report["variants"]), {"routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"})
             self.assertTrue((root / "meeting_output.txt").is_file())
             self.assertTrue((root / "meeting_output.full_kv.txt").is_file())
             self.assertTrue((root / "meeting_output.timeline.txt").is_file())

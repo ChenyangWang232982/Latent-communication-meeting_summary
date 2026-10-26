@@ -54,7 +54,7 @@ def _average(values: list[float | None]) -> float | None:
 
 def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -> dict[str, Any]:
     """Score the receiver-KV controls without pretending KV bytes are tokens."""
-    variants = ("routed_kv", "full_kv", "selected_text", "specialist_text")
+    variants = ("routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text")
     quality = {name: {"rouge_l_f1": [], "supported_claim_rate": []} for name in variants}
     source_prefill, selection, source_cache = [], [], []
     efficiency = {

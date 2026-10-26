@@ -25,8 +25,8 @@ def arguments():
                         help="Explicit final output reserve; report flags when exhausted")
     parser.add_argument("--timeline", action="store_true",
                         help="Also write a chronological event timeline with one approximate time per event")
-    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "full_kv", "selected_text", "specialist_text"],
-                        default=["routed_kv", "full_kv", "selected_text", "specialist_text"])
+    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"],
+                        default=["routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
@@ -66,7 +66,7 @@ def main():
                      "timeline": args.timeline},
         "variants": result["variants"],
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
-                  "selected_text is selected-source text; specialist_text is generated natural-language specialist handoffs.",
+                  "selected_text is retrieved selected-source text; specialist_text is generated multi-role handoffs; natural_text is one sender-to-one receiver natural-language communication.",
                   "ROUGE-L is lexical reference overlap, not factual accuracy; no reference means N/A.",
                   "Queries are selector instructions, not generated latent reasoning.",
                   "Source prefill processes every token; selection subsequently drops evidence positions.",

@@ -86,6 +86,7 @@ JSON 保存选中位置索引，便于审计。终端逐角色、逐 receiver �
 | full_kv | 完整原文 KV | 无选择损失的直接摘要对照 |
 | selected_text | 将同一组选中位置恢复为带边界的原文证据摘录，再重新 prefill | 文本证据锚点对照：保留时间戳和限定条件，区分 KV 状态保留与文本重新编码 |
 | specialist_text | 四个 specialist 从完整会议生成自然语言 handoff，最终摘要器读取 handoff | 传统多 agent 自然语言通信基线 |
+| natural_text | 与 selected_text 使用完全相同的 KV 选点和原文证据摘录；一个 sender 将证据改写成 handoff，最终 receiver 读取 handoff | 单 sender → 单 receiver 的自然语言通信对照；与 selected_text 的区别仅是通信表示 |
 
 `selected_text` **不是**自然语言专家 handoff 基线；`specialist_text` 才是该基线。
 

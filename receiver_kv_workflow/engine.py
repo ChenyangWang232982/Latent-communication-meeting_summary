@@ -8,7 +8,8 @@ import time
 from typing import Callable
 
 from .prompts import (EVENT_QUERY, ROLE_HANDOFF_REQUESTS, ROLE_QUERIES, TIMELINE_REQUEST,
-                      following_turn_suffix, prompt_parts, selected_evidence_prompt, specialist_text_prompt)
+                      following_turn_suffix, natural_sender_prompt, natural_text_prompt, prompt_parts,
+                      selected_evidence_excerpts, selected_evidence_prompt, specialist_text_prompt)
 from .selection import select_spans, union_positions
 
 
@@ -70,9 +71,9 @@ class ReceiverKVRunner:
         if not transcript.strip():
             raise ValueError(f"Transcript is empty: {record_id}")
         requested = tuple(dict.fromkeys(variants))
-        valid_variants = {"routed_kv", "full_kv", "selected_text", "specialist_text"}
+        valid_variants = {"routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"}
         if not requested or any(name not in valid_variants for name in requested):
-            raise ValueError("variants must be routed_kv, full_kv, selected_text and/or specialist_text")
+            raise ValueError("variants must be routed_kv, full_kv, selected_text, specialist_text and/or natural_text")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
         timeline_suffixes = [following_turn_suffix(self.tokenizer, transcript, TIMELINE_REQUEST)] if timeline else []
         query_text = dict(ROLE_QUERIES)
@@ -108,7 +109,7 @@ class ReceiverKVRunner:
             messages, role_metrics = [], {}
             selection_seconds = 0.0
             selection_probe_tokens = 0
-            if timeline or any(name in {"routed_kv", "selected_text"} for name in requested):
+            if timeline or any(name in {"routed_kv", "selected_text", "natural_text"} for name in requested):
                 selection_start = time.perf_counter()
                 for index, (role, query) in enumerate(queries.items(), start=1):
                     self.progress(f"{record_id}: selector {role} started ({index - 1}/{len(queries)} complete)")
@@ -224,6 +225,58 @@ class ReceiverKVRunner:
                         "receiver_prompt_tokens": receiver_prompt.shape[1],
                         "receiver_output_tokens": generated_tokens,
                     },
+                }
+            if "natural_text" in requested:
+                self.progress(f"{record_id}: natural_text sender started")
+                excerpts, evidence_tokens, excerpt_count = selected_evidence_excerpts(self.tokenizer, transcript, selected)
+                sender_prompt = self._tensor(natural_sender_prompt(self.tokenizer, excerpts))
+                available_output = self.context_limit - sender_prompt.shape[1]
+                if available_output < 1:
+                    raise ValueError(f"{record_id}: natural-language sender prompt exhausts the model context limit.")
+                sender_start = time.perf_counter()
+                handoff, handoff_tokens, _ = generate(
+                    self.model, self.tokenizer, None, sender_prompt,
+                    absolute_start=0, max_new_tokens=available_output,
+                    context_limit=self.context_limit,
+                )
+                self._sync()
+                sender_seconds = time.perf_counter() - sender_start
+                receiver_prompt = self._tensor(natural_text_prompt(self.tokenizer, handoff))
+                if receiver_prompt.shape[1] + self.config.max_new_tokens > self.context_limit:
+                    raise ValueError(
+                        f"{record_id}: natural-language handoff plus output reserve exceeds the model context limit; no input was truncated."
+                    )
+                receiver_start = time.perf_counter()
+                answer, generated_tokens, output_cap_hit = generate(
+                    self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
+                    max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
+                )
+                self._sync()
+                receiver_seconds = time.perf_counter() - receiver_start
+                answers["natural_text"] = answer
+                measurements["natural_text"] = {
+                    "incoming_positions": receiver_prompt.shape[1],
+                    "incoming_cache_bytes": 0,
+                    "logical_payload_bytes": handoff_tokens * 4,
+                    "positions_vs_full_percent": None,
+                    "cache_bytes_vs_full_percent": None,
+                    "specialist_handoff_tokens": handoff_tokens,
+                    "specialist_count": 1,
+                    "specialist_seconds": sender_seconds,
+                    "receiver_seconds": receiver_seconds,
+                    "pipeline_seconds_excluding_model_load": prefill_seconds + sender_seconds + receiver_seconds,
+                    "generated_tokens": generated_tokens,
+                    "output_cap_hit": output_cap_hit,
+                    "token_accounting": {
+                        "source_prefill_tokens": len(prefix),
+                        "selection_probe_tokens": selection_probe_tokens,
+                        "specialist_prompt_tokens": sender_prompt.shape[1],
+                        "specialist_handoff_tokens": handoff_tokens,
+                        "receiver_prompt_tokens": receiver_prompt.shape[1],
+                        "receiver_output_tokens": generated_tokens,
+                    },
+                    "retrieved_evidence_tokens": evidence_tokens,
+                    "retrieved_excerpt_count": excerpt_count,
                 }
             timeline_answer = None
             if timeline:
