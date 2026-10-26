@@ -22,12 +22,15 @@ class ReceiverKVConfig:
     query_batch_tokens: int = 8
     max_new_tokens: int = 1024
     seed: int = 7
+    selection_strategy: str = "fixed"
 
 
 class ReceiverKVRunner:
     """Load a homogeneous Qwen3 once, then run many meeting records."""
 
     def __init__(self, config: ReceiverKVConfig, progress: Callable[[str], None] | None = None) -> None:
+        if config.selection_strategy not in {"fixed", "sentence"}:
+            raise ValueError("selection_strategy must be fixed or sentence")
         if not 0 < config.role_budget_ratio <= 1:
             raise ValueError("role_budget_ratio must be in (0, 1]")
         if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens) < 1:
@@ -107,6 +110,7 @@ class ReceiverKVRunner:
             source_bytes = size_bytes(source)
 
             messages, role_metrics = [], {}
+            role_scores = []
             selection_seconds = 0.0
             selection_probe_tokens = 0
             if timeline or any(name in {"routed_kv", "selected_text", "natural_text"} for name in requested):
@@ -114,6 +118,7 @@ class ReceiverKVRunner:
                 for index, (role, query) in enumerate(queries.items(), start=1):
                     self.progress(f"{record_id}: selector {role} started ({index - 1}/{len(queries)} complete)")
                     scores = query_scores(self.model, source, self._tensor(query), query_batch=self.config.query_batch_tokens)
+                    role_scores.append(scores)
                     selected = select_spans(scores, budget, span_size=self.config.span_tokens, protected=protected)
                     messages.append(selected)
                     role_metrics[role] = {"query_tokens": len(query), "selected_positions": len(selected)}
@@ -121,8 +126,16 @@ class ReceiverKVRunner:
                 self._sync()
                 selection_seconds = time.perf_counter() - selection_start
             selected = union_positions(messages)
+            baseline_positions = len(selected)
+            if selected and self.config.selection_strategy == "sentence":
+                from .detail_selection import sentence_units, select_complete_units
+                boundary_start = time.perf_counter()
+                units = sentence_units(self.tokenizer, transcript, prefix, protected)
+                selected = select_complete_units(units, selected, role_scores, protected)
+                selection_seconds += time.perf_counter() - boundary_start
+                self.progress(f"{record_id}: sentence KV selection {len(selected)}/{baseline_positions} positions")
             answers, measurements = {}, {}
-            for variant in (name for name in requested if name != "specialist_text"):
+            for variant in (name for name in requested if name not in {"specialist_text", "natural_text"}):
                 receiver_start = time.perf_counter()
                 ids = list(range(len(prefix))) if variant == "full_kv" else selected
                 if variant == "selected_text":
@@ -152,7 +165,12 @@ class ReceiverKVRunner:
                 receiver_seconds = time.perf_counter() - receiver_start
                 answers[variant] = answer
                 measurements[variant] = {
-                    "incoming_positions": len(ids), "incoming_cache_bytes": incoming_bytes,
+                    # For selected_text this is the actual re-prefilled receiver
+                    # prompt length, not just the count of source positions used
+                    # to retrieve evidence excerpts.
+                    "incoming_positions": absolute_start if variant == "selected_text" else len(ids),
+                    "selected_source_positions": len(ids) if variant == "selected_text" else None,
+                    "incoming_cache_bytes": incoming_bytes,
                     "logical_payload_bytes": payload_bytes,
                     "positions_vs_full_percent": 100 * (len(ids) - len(prefix)) / len(prefix),
                     "cache_bytes_vs_full_percent": 100 * (incoming_bytes - source_bytes) / source_bytes,
@@ -264,7 +282,7 @@ class ReceiverKVRunner:
                     "specialist_count": 1,
                     "specialist_seconds": sender_seconds,
                     "receiver_seconds": receiver_seconds,
-                    "pipeline_seconds_excluding_model_load": prefill_seconds + sender_seconds + receiver_seconds,
+                    "pipeline_seconds_excluding_model_load": prefill_seconds + selection_seconds + sender_seconds + receiver_seconds,
                     "generated_tokens": generated_tokens,
                     "output_cap_hit": output_cap_hit,
                     "token_accounting": {
@@ -292,5 +310,7 @@ class ReceiverKVRunner:
             "source_cache_bytes": source_bytes, "prefill_seconds": prefill_seconds,
             "selection_seconds": selection_seconds, "roles": role_metrics,
             "selected_source_positions": selected,
+            "selection_strategy": self.config.selection_strategy,
+            "baseline_selected_positions": baseline_positions,
             "timeline": timeline_answer,
         }

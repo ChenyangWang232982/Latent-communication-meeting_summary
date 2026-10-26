@@ -19,6 +19,7 @@ def arguments():
     parser.add_argument("--role-budget-ratio", type=float, default=0.15,
                         help="Source positions per role; union can reach four times this ratio")
     parser.add_argument("--span-tokens", type=int, default=32)
+    parser.add_argument("--selection-strategy", choices=["fixed", "sentence"], default="fixed")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--max-new-tokens", type=int, default=1024,
@@ -52,6 +53,7 @@ def main():
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         max_new_tokens=args.max_new_tokens, seed=args.seed,
+        selection_strategy=args.selection_strategy,
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline)
     answers = result["answers"]
@@ -63,7 +65,8 @@ def main():
         "selection_seconds": result["selection_seconds"], "roles": result["roles"],
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens, "max_new_tokens": args.max_new_tokens,
-                     "timeline": args.timeline},
+                     "timeline": args.timeline, "selection_strategy": args.selection_strategy},
+        "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
                   "selected_text is retrieved selected-source text; specialist_text is generated multi-role handoffs; natural_text is one sender-to-one receiver natural-language communication.",
