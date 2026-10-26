@@ -59,3 +59,17 @@ whether a missing fact is caused by selection or the summarizer itself.
 Related execution fix: natural_text previously entered the generic KV receiver
 loop before its sender/receiver path, generating an unused extra answer. It now
 runs only its intended path and includes selection time in pipeline accounting.
+
+# Spoken repairs and summary detail preservation
+
+Sentence units keep adjacent explicit self-corrections (for example, "failed.
+Sorry, executed.") together. This lexical heuristic prevents selecting the
+retracted phrase without its correction. The combined unit must fit the existing
+position budget; it can be skipped as a whole. Speaker-labelled new turns remain
+separate. This is not a semantic guarantee for every form of spoken correction.
+
+All summary variants share a request to preserve supported owners, dates, both
+endpoints of time ranges and pending conditions, and to resolve explicit
+self-corrections and changed statuses. Compare variants under the same prompt
+version; older runs are not controlled comparisons with this revision. Actual
+summary improvements require model evaluation, not just unit tests.

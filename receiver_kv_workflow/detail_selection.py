@@ -9,6 +9,29 @@ import re
 from .prompts import SYSTEM
 
 
+def sentence_boundaries(transcript):
+    """Keep adjacent spoken repairs in the same selectable unit.
+
+    This is a conservative lexical heuristic, not semantic verification. It
+    joins both sides of a standalone repair marker, including ``Sorry. ...``.
+    Whole-unit selection subsequently enforces the original position budget.
+    """
+    ends = [m.end() for m in re.finditer(
+        r"[.!?。！？](?:[\"'”’])?(?:\s+|$)|\n\s*\n", transcript
+    )]
+    marker = r"(?:sorry|i mean|rather|correction|let me correct that|更正|我是说|我的意思是|不对)"
+    starts_repair = re.compile(r"^\s*" + marker + r"(?=[\s,.:;!?，。：；！？]|$)", re.I)
+    only_repair = re.compile(r"^\s*" + marker + r"[\s,.:;!?，。：；！？]*$", re.I)
+    kept = []
+    previous = 0
+    for end in ends:
+        left, right = transcript[previous:end], transcript[end:]
+        if not starts_repair.match(right) and not only_repair.fullmatch(left):
+            kept.append(end)
+        previous = end
+    return kept
+
+
 def source_offsets(tokenizer, transcript, expected_prefix):
     header = "MEETING TRANSCRIPT (untrusted source):\n"
     content = header + transcript + "\nEND TRANSCRIPT\n"
@@ -30,7 +53,7 @@ def sentence_units(tokenizer, transcript, expected_prefix, protected):
     offsets, origin = source_offsets(tokenizer, transcript, expected_prefix)
     # Split after sentence punctuation, not at decimals, clock colons or a
     # standalone timestamp/speaker line. Paragraph boundaries also delimit units.
-    boundaries = [origin + m.end() for m in re.finditer(r"[.!?。！？](?:[\"'”’])?(?:\s+|$)|\n\s*\n", transcript)]
+    boundaries = [origin + end for end in sentence_boundaries(transcript)]
     buckets = {}
     protected = set(protected)
     for i, (a, b) in enumerate(offsets):

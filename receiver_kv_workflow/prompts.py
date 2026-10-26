@@ -43,7 +43,16 @@ SUMMARY_REQUEST = (
     "Before finalizing, check that supported coordination dependencies are not "
     "lost merely because they are administrative. Preserve exact supported dates, "
     "times, locations, and deadlines. Never upgrade a proposed, conditional, or "
-    "pending schedule detail into a confirmed one."
+    "pending schedule detail into a confirmed one. "
+    "For each supported action or meeting arrangement, keep the task, explicitly assigned owner, "
+    "date, full start-to-end time range, and any approval or attendance condition together. "
+    "Keep both endpoints of a stated time range; do not replace it with only its start time or duration. "
+    "Calendar availability does not by itself confirm attendance or approval. "
+    "Keep these concrete details even when shortening background discussion; omit fields absent from evidence. "
+    "Resolve explicit spoken self-corrections using the corrected wording, and do not report a retracted "
+    "phrase as a fact. A temporary position followed by a deferred decision remains unresolved. "
+    "Before answering, check for contradictory statuses across sections and retain the latest supported "
+    "status with its qualifications."
 )
 
 TIMELINE_REQUEST = (

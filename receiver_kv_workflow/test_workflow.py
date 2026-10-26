@@ -68,7 +68,7 @@ class QwenCacheTests(unittest.TestCase):
         torch.manual_seed(7)
         config = Qwen3Config(vocab_size=64, hidden_size=32, intermediate_size=64,
                             num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2,
-                            head_dim=8, max_position_embeddings=256, eos_token_id=63)
+                            head_dim=8, max_position_embeddings=1024, eos_token_id=63)
         cls.model = Qwen3ForCausalLM(config).eval()
         cls.model.set_attn_implementation("sdpa")
 

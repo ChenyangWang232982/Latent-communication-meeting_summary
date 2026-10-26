@@ -1,8 +1,30 @@
 import unittest
-from .detail_selection import sentence_units, select_complete_units
+from .detail_selection import sentence_boundaries, sentence_units, select_complete_units
 
 
 class DetailSelectionTests(unittest.TestCase):
+    def test_repair_is_kept_with_retracted_phrase(self):
+        for repair in ("Sorry, how it executes.", "Sorry. How it executes.",
+                       "I mean, how it executes."):
+            text = "Show why it failed. " + repair + " Next topic."
+            boundaries = sentence_boundaries(text)
+            self.assertEqual(text[:boundaries[0]], "Show why it failed. " + repair + " ")
+
+    def test_ordinary_sentence_and_new_speaker_remain_separate(self):
+        text = "We will send it. Next topic.\n\nBob: Sorry, I missed that."
+        boundaries = sentence_boundaries(text)
+        self.assertEqual(text[:boundaries[0]], "We will send it. ")
+        self.assertIn(text.index("Bob:"), boundaries)
+
+    def test_repair_group_respects_budget(self):
+        text = "It failed. Sorry, it executed. Next."
+        ends = sentence_boundaries(text)
+        units = [list(range(start, end)) for start, end in zip([0] + ends, ends)]
+        scores = [[9.0 if i < 10 else 1.0 for i in range(len(text))]]
+        selected = select_complete_units(units, list(range(12)), scores, [])
+        self.assertFalse(set(selected) & set(units[0]))
+        self.assertLessEqual(len(selected), 12)
+
     def test_audit_distinguishes_missing_condition_from_retained_evidence(self):
         from unittest.mock import patch
         from .routing_audit import build_audit
