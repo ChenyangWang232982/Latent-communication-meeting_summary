@@ -6,7 +6,10 @@ from .records import MeetingRecord
 from receiver_kv_workflow.engine import ReceiverKVConfig, ReceiverKVRunner
 
 
-def run_receiver_kv(records: list[MeetingRecord], config: ReceiverKVConfig, *, num_samples: int) -> list[dict]:
+def run_receiver_kv(
+    records: list[MeetingRecord], config: ReceiverKVConfig, *, num_samples: int,
+    variants: tuple[str, ...] = ("routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"),
+) -> list[dict]:
     """Batch MeetingBank records while holding one Qwen3 model in GPU memory."""
     selected = records[:num_samples] if num_samples else records
     if not selected:
@@ -16,7 +19,7 @@ def run_receiver_kv(records: list[MeetingRecord], config: ReceiverKVConfig, *, n
     results = []
     for index, record in enumerate(selected, start=1):
         print(f"[receiver_kv] record {index}/{total}: {record.id}", flush=True)
-        result = runner.run(record.id, record.context, variants=("routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"))
+        result = runner.run(record.id, record.context, variants=variants)
         result["gold_answer"] = record.answer
         results.append(result)
     return results

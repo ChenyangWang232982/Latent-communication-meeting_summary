@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from .metrics import score_receiver_kv_results
-from .report import write_receiver_kv_reports
+from .report import write_receiver_kv_communication_reports, write_receiver_kv_reports
 
 
 def result(record_id="meeting-1"):
@@ -44,6 +44,16 @@ class ReceiverKVEvaluationTests(unittest.TestCase):
             self.assertIn("routed_kv", text)
             self.assertNotIn("Alice", text)
             self.assertNotIn("answers", json.dumps(payload))
+
+    def test_communication_report_has_no_quality_or_summary_text(self):
+        metrics = score_receiver_kv_results([result()], {"meeting-1": "Alice will send the draft Friday."}, include_quality=False)
+        self.assertNotIn("quality", metrics)
+        with tempfile.TemporaryDirectory() as temporary:
+            text_path, json_path = write_receiver_kv_communication_reports(
+                Path(temporary), "meetingbank", metrics, {"workflow": "receiver_kv"}
+            )
+            self.assertIn("Communication Token", text_path.read_text(encoding="utf-8"))
+            self.assertNotIn("Alice", json_path.read_text(encoding="utf-8"))
 
     def test_meetingbank_entrypoint_uses_receiver_workflow(self):
         from .records import MeetingRecord

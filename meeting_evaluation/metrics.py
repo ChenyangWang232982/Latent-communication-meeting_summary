@@ -52,7 +52,9 @@ def _average(values: list[float | None]) -> float | None:
     return mean(valid) if valid else None
 
 
-def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[str, str]) -> dict[str, Any]:
+def score_receiver_kv_results(
+    results: list[dict[str, Any]], source_by_id: dict[str, str], *, include_quality: bool = True,
+) -> dict[str, Any]:
     """Score the receiver-KV controls without pretending KV bytes are tokens."""
     variants = ("routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text")
     quality = {name: {"rouge_l_f1": [], "supported_claim_rate": []} for name in variants}
@@ -74,13 +76,14 @@ def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[
         for name in variants:
             if name not in result["answers"]:
                 continue
-            answer = result["answers"][name]
-            scores = [rouge_l_f1(answer, str(reference)) for reference in references]
-            valid = [score for score in scores if score is not None]
-            quality[name]["rouge_l_f1"].append(max(valid) if valid else None)
-            quality[name]["supported_claim_rate"].append(
-                source_overlap_support(answer, source)["supported_claim_rate"]
-            )
+            if include_quality:
+                answer = result["answers"][name]
+                scores = [rouge_l_f1(answer, str(reference)) for reference in references]
+                valid = [score for score in scores if score is not None]
+                quality[name]["rouge_l_f1"].append(max(valid) if valid else None)
+                quality[name]["supported_claim_rate"].append(
+                    source_overlap_support(answer, source)["supported_claim_rate"]
+                )
             measurement = result["variants"][name]
             data = efficiency[name]
             data["incoming_positions"].append(measurement["incoming_positions"])
@@ -96,11 +99,8 @@ def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[
             for field in ("source_prefill_tokens", "selection_probe_tokens", "specialist_prompt_tokens",
                           "receiver_prompt_tokens", "receiver_output_tokens"):
                 data[field].append(accounting.get(field, 0))
-    return {
+    report = {
         "samples": len(results),
-        "quality": {name: {metric: _average(values) for metric, values in metrics.items()}
-                    for name, metrics in quality.items()},
-        "factuality_note": "supported_claim_rate is a lexical source-overlap proxy inspired by MESA-style source checking; it is not an LLM or human MESA score.",
         "efficiency": {
             "mean_source_prefill_seconds": _average(source_prefill),
             "mean_selection_seconds": _average(selection),
@@ -151,4 +151,12 @@ def score_receiver_kv_results(results: list[dict[str, Any]], source_by_id: dict[
             "count input/output token events, not attention FLOPs, wall-clock cost, or provider billing."
         ),
     }
+    if include_quality:
+        report["quality"] = {name: {metric: _average(values) for metric, values in metrics.items()}
+                             for name, metrics in quality.items()}
+        report["factuality_note"] = (
+            "supported_claim_rate is a lexical source-overlap proxy inspired by MESA-style source checking; "
+            "it is not an LLM or human MESA score."
+        )
+    return report
 
