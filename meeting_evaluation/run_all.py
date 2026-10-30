@@ -1,4 +1,4 @@
-"""Run the configured MeetingBank receiver-KV evaluation in one process."""
+"""Run the four-domain speaker-block receiver-KV evaluation suite."""
 
 from __future__ import annotations
 
@@ -10,17 +10,25 @@ from datetime import datetime
 from pathlib import Path
 
 
-DEFAULT_MEETINGBANK = Path("input/meetingbank_test.jsonl")
+DEFAULT_INPUTS = {
+    "ami": Path("input/ami_test.jsonl"),
+    "icsi": Path("input/icsi_test.jsonl"),
+    "qmsum_committee": Path("input/qmsum_committee_test.jsonl"),
+    "meetingbank": Path("input/meetingbank_speaker_test.jsonl"),
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--meetingbank", type=Path, default=DEFAULT_MEETINGBANK)
+    for benchmark, path in DEFAULT_INPUTS.items():
+        parser.add_argument(f"--{benchmark.replace('_', '-')}", dest=benchmark, type=Path, default=path)
     parser.add_argument("--output-dir", type=Path, default=Path("test_result"))
-    parser.add_argument("--num-samples", type=int, default=8)
+    parser.add_argument("--num-samples", type=int, default=25)
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--receiver-kv-role-budget-ratio", type=float, default=0.15)
     parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
+    parser.add_argument("--selection-strategy", choices=["speaker", "sentence", "fixed", "fixed_pooled"], default="speaker")
+    parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
     parser.add_argument("--device")
@@ -32,10 +40,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def test_command(input_path: Path, args: argparse.Namespace) -> list[str]:
+def test_command(benchmark: str, input_path: Path, args: argparse.Namespace) -> list[str]:
     command = [
         sys.executable, "-m", "meeting_evaluation.test",
-        "--benchmark", "meetingbank",
+        "--benchmark", benchmark,
         "--input", str(input_path),
         "--output-dir", str(args.output_dir),
         "--num-samples", str(args.num_samples),
@@ -46,6 +54,8 @@ def test_command(input_path: Path, args: argparse.Namespace) -> list[str]:
     command.extend([
         "--receiver-kv-role-budget-ratio", str(args.receiver_kv_role_budget_ratio),
         "--receiver-kv-span-tokens", str(args.receiver_kv_span_tokens),
+        "--selection-strategy", args.selection_strategy,
+        "--speaker-neighbor-blocks", str(args.speaker_neighbor_blocks),
         "--receiver-kv-query-batch-tokens", str(args.receiver_kv_query_batch_tokens),
         "--receiver-kv-max-new-tokens", str(args.receiver_kv_max_new_tokens),
     ])
@@ -58,7 +68,7 @@ def main() -> None:
     # themselves extend past the boundary into the next minute.
     run_environment = os.environ.copy()
     run_environment["MEETING_EVAL_RUN_ID"] = datetime.now().strftime("%Y%m%d_%H%M")
-    jobs = [("meetingbank", args.meetingbank)]
+    jobs = [(benchmark, getattr(args, benchmark)) for benchmark in DEFAULT_INPUTS]
     missing = [f"{name}: {path}" for name, path in jobs if not path.is_file()]
     if missing and not args.skip_missing:
         raise FileNotFoundError(
@@ -72,7 +82,7 @@ def main() -> None:
             print(f"Skipping {benchmark}: input not found: {input_path}", flush=True)
             continue
         print(f"\n=== Running {benchmark} ===", flush=True)
-        subprocess.run(test_command(input_path, args), check=True, env=run_environment)
+        subprocess.run(test_command(benchmark, input_path, args), check=True, env=run_environment)
         completed.append(benchmark)
     if not completed:
         raise RuntimeError("No benchmark was run.")

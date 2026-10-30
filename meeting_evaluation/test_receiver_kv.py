@@ -67,14 +67,14 @@ class ReceiverKVEvaluationTests(unittest.TestCase):
             runner.assert_called_once()
             self.assertTrue(next((root / "out").glob("*/meetingbank_receiver_kv.json")))
 
-    def test_evaluation_rejects_non_meetingbank_benchmark(self):
+    def test_evaluation_accepts_prepared_speaker_benchmark(self):
         from .test import main
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "records.jsonl"
-            source.write_text('{"id":"q","context":"x","question":"why","answer":"a"}\n', encoding="utf-8")
-            with patch("sys.argv", ["test", "--benchmark", "qmsum", "--input", str(source)]):
-                with self.assertRaises(SystemExit):
-                    main()
+            source.write_text('{"id":"meeting-1","context":"x","question":"why","answer":"a"}\n', encoding="utf-8")
+            argv = ["test", "--benchmark", "ami", "--input", str(source), "--output-dir", str(Path(temporary) / "out")]
+            with patch("sys.argv", argv), patch("meeting_evaluation.test.run_receiver_kv", return_value=[result()]):
+                main()
 
 
 if __name__ == "__main__":

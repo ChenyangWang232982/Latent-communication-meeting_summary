@@ -26,6 +26,18 @@ class MeetingBankPreparationTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 export_rows([], output, max_records=0, overwrite=False)
 
+    def test_diarized_turns_are_rendered_for_speaker_selection(self):
+        rows = [{"uid": "Town_6", "turns": [
+            {"speaker": "Chair", "content": "Open the meeting."},
+            {"speaker": "Member", "content": "I support this."},
+        ], "summary": "The chair opened and a member supported."}]
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "meetingbank_speaker_test.jsonl"
+            written, _, _ = export_rows(rows, output, max_records=25, overwrite=False, require_speakers=True)
+            self.assertEqual(written, 1)
+            record = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(record["transcript"], "Chair: Open the meeting.\nMember: I support this.")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,7 +15,7 @@ from receiver_kv_workflow.engine import ReceiverKVConfig
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--benchmark", choices=["meetingbank"], default="meetingbank")
+    parser.add_argument("--benchmark", choices=["ami", "icsi", "qmsum_committee", "meetingbank"], default="meetingbank")
     parser.add_argument("--input", type=Path, required=True, help="Normalized MeetingBank JSONL input.")
     parser.add_argument("--output-dir", type=Path, default=Path("test_result"))
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
@@ -45,7 +45,9 @@ def main() -> None:
     elif set(args.variants) != all_variants:
         raise ValueError("A quality evaluation requires all receiver-KV variants.")
     paths = RunPaths(args.input, args.output_dir)
-    records = load_records(args.benchmark, paths.input_path, None)
+    # Every prepared benchmark uses the same normalized JSONL schema. The
+    # benchmark name identifies the reported domain, not a different loader.
+    records = load_records("jsonl", paths.input_path, None)
     source_by_id = {record.id: record.context for record in records[: args.num_samples] if args.num_samples}
     if not source_by_id:
         source_by_id = {record.id: record.context for record in records}

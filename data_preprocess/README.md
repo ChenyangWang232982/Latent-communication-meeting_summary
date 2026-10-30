@@ -1,46 +1,83 @@
-# Data Preparation
+# Speaker-Labelled Benchmark Preparation
+
+The speaker-block workflow requires a transcript in which every turn begins
+with a speaker label. The controlled evaluation suite uses four non-overlapping
+domains, with 25 meetings per domain by default:
+
+| Evaluation name | Source | Required export |
+|---|---|---|
+| `ami` | QMSum Product / AMI | `input/ami_test.jsonl` |
+| `icsi` | QMSum Academic / ICSI | `input/icsi_test.jsonl` |
+| `qmsum_committee` | QMSum Committee only | `input/qmsum_committee_test.jsonl` |
+| `meetingbank` | Raw diarized MeetingBank export | `input/meetingbank_speaker_test.jsonl` |
+
+QMSum already includes AMI, ICSI, and committee meetings. Do not additionally
+evaluate a combined QMSum set: that would duplicate AMI and ICSI.
+
+## QMSum domains
+
+Clone the official repository, then export exactly 25 general-summary meetings
+from each domain. The adapter preserves the official `speaker` field as lines
+such as `Alice: utterance`.
+
+```bash
+git clone https://github.com/Yale-LILY/QMSum.git external/QMSum
+
+python -m data_preprocess.prepare_qmsum \
+  --input external/QMSum/data/Product/all \
+  --output input/ami_test.jsonl \
+  --max-records 25
+
+python -m data_preprocess.prepare_qmsum \
+  --input external/QMSum/data/Academic/all \
+  --output input/icsi_test.jsonl \
+  --max-records 25
+
+python -m data_preprocess.prepare_qmsum \
+  --input external/QMSum/data/Committee/all \
+  --output input/qmsum_committee_test.jsonl \
+  --max-records 25
+```
+
+The domain test splits may contain fewer than 25 distinct meetings (notably
+ICSI), so this controlled training-free comparison samples 25 distinct meetings
+from each domain's official `all` file with seed 7. It is a balanced comparative
+sample, not a claim of an official held-out test score. Use `--overwrite` only
+when deliberately rebuilding an existing export.
 
 ## MeetingBank
 
-Downloads the official Hugging Face text split and normalizes it for
-`meeting_evaluation`:
-
-```bash
-python -m data_preprocess.prepare_meetingbank
-```
-
-The default is `huuuyeah/meetingbank`, split `test`, and writes:
-
-```text
-input/meetingbank_test.jsonl
-input/meetingbank_test.jsonl.report.json
-```
-
-The JSONL contains only the normalized fields used by the evaluation harness:
+The ordinary Hugging Face MeetingBank split consolidates turns into one text
+paragraph, so it cannot validly support speaker-block selection. Use a raw,
+diarized local JSON/JSONL export with records shaped like:
 
 ```json
-{"id":"MeetingBank UID","transcript":"...","summary":"..."}
+{"uid":"Town_6", "turns":[{"speaker":"Chair", "content":"Open the meeting."}], "summary":"..."}
 ```
 
-The source data provides `id`, `uid`, `transcript`, and `summary`; `uid` is
-preferred as the stable record ID. The converter does not download audio or
-video.
-
-Useful variations:
+Then run:
 
 ```bash
-# Small smoke-test export.
-python -m data_preprocess.prepare_meetingbank --max-records 8
-
-# Rebuild an existing export deliberately.
-python -m data_preprocess.prepare_meetingbank --overwrite
-
-# Use a data-disk Hugging Face cache.
-python -m data_preprocess.prepare_meetingbank --cache-dir /root/autodl-tmp/hf-cache/datasets
+python -m data_preprocess.prepare_meetingbank \
+  --input external/meetingbank_diarized.jsonl \
+  --output input/meetingbank_speaker_test.jsonl \
+  --max-records 25 \
+  --require-speakers
 ```
 
-It requires the `datasets` Python package. The generated JSONL is suitable for:
+`--require-speakers` intentionally rejects rows lacking turn-level labels rather
+than silently converting them into an invalid speaker benchmark.
+
+## Run all four domains
 
 ```bash
-python -m meeting_evaluation.test --benchmark meetingbank --workflow receiver_kv --input input/meetingbank_test.jsonl
+python -m meeting_evaluation.run_all \
+  --num-samples 25 \
+  --selection-strategy speaker \
+  --speaker-neighbor-blocks 1 \
+  --receiver-kv-role-budget-ratio 0.25 \
+  --model Qwen/Qwen3-4B \
+  --device cuda
 ```
+
+Use `--skip-missing` while only some prepared datasets are available.
