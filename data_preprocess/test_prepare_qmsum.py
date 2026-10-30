@@ -24,9 +24,12 @@ class QMSumPreparationTests(unittest.TestCase):
         self.assertEqual(records[0]["id"], "m1")
         self.assertEqual(records[0]["transcript"], "Alice: We need a decision.\nBob: I agree.")
 
-    def test_rejects_missing_speaker_labels(self):
-        with self.assertRaises(ValueError):
-            speaker_transcript([{"content": "No speaker."}])
+    def test_rejects_nonempty_turn_without_speaker_and_skips_empty_turn(self):
+        self.assertEqual(speaker_transcript([{"content": "No speaker."}]), "")
+        self.assertEqual(
+            speaker_transcript([{"speaker": "Alice", "content": "Hello."}, {"speaker": "", "content": ""}]),
+            "Alice: Hello.",
+        )
 
     def test_reads_all_directory_of_individual_meetings(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -64,8 +64,14 @@ def speaker_transcript(turns: Any) -> str:
             continue
         speaker = _text(turn.get("speaker") or turn.get("role"))
         content = _text(turn.get("content") or turn.get("text") or turn.get("utterance"))
-        if not speaker or not content:
-            raise ValueError("QMSum speaker workflow requires every retained turn to have speaker and content.")
+        # Some source files contain empty annotation artefacts. They carry no
+        # evidence and can be skipped. A nonempty unlabelled turn, however,
+        # would invalidate a speaker-block experiment, so reject that meeting
+        # rather than inventing a speaker ID.
+        if not content:
+            continue
+        if not speaker:
+            return ""
         lines.append(f"{speaker}: {content}")
     return "\n".join(lines)
 
