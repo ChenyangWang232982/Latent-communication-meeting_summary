@@ -1,6 +1,9 @@
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
-from .prepare_qmsum import normalize, speaker_transcript
+from .prepare_qmsum import _read, normalize, speaker_transcript
 
 
 class QMSumPreparationTests(unittest.TestCase):
@@ -24,6 +27,13 @@ class QMSumPreparationTests(unittest.TestCase):
     def test_rejects_missing_speaker_labels(self):
         with self.assertRaises(ValueError):
             speaker_transcript([{"content": "No speaker."}])
+
+    def test_reads_all_directory_of_individual_meetings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "all"
+            root.mkdir()
+            (root / "meeting.json").write_text(json.dumps({"meeting_id": "m1"}), encoding="utf-8")
+            self.assertEqual(_read(root), [{"meeting_id": "m1"}])
 
 
 if __name__ == "__main__":

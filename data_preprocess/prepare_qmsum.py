@@ -24,7 +24,7 @@ from typing import Any, Iterable
 DEFAULT_QUESTION = "Create an evidence-grounded meeting summary covering the most important facts."
 
 
-def _read(path: Path) -> list[dict[str, Any]]:
+def _read_one(path: Path) -> list[dict[str, Any]]:
     content = path.read_text(encoding="utf-8").strip()
     if not content:
         raise ValueError(f"Input is empty: {path}")
@@ -34,6 +34,21 @@ def _read(path: Path) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         raise ValueError("Expected an official QMSum JSON/JSONL meeting collection.")
     return [row for row in raw if isinstance(row, dict)]
+
+
+def _read(path: Path) -> list[dict[str, Any]]:
+    """Read either a QMSum JSON/JSONL collection or an ``all/`` directory."""
+    if path.is_file():
+        return _read_one(path)
+    if not path.is_dir():
+        raise FileNotFoundError(f"QMSum input does not exist: {path}")
+    files = sorted(candidate for candidate in path.rglob("*") if candidate.suffix.lower() in {".json", ".jsonl"})
+    if not files:
+        raise ValueError(f"No JSON/JSONL meeting files found below: {path}")
+    rows = []
+    for candidate in files:
+        rows.extend(_read_one(candidate))
+    return rows
 
 
 def _text(value: Any) -> str:
@@ -112,7 +127,8 @@ def write(records: list[dict[str, str]], output: Path, *, overwrite: bool) -> No
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, required=True, help="Official QMSum domain JSON or JSONL file.")
+    parser.add_argument("--input", type=Path, required=True,
+                        help="Official QMSum domain JSON/JSONL file or its all/ directory.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-records", type=int, default=25)
     parser.add_argument("--seed", type=int, default=7, help="Deterministic meeting-level sample seed.")
