@@ -22,7 +22,7 @@ def write_receiver_kv_reports(output_dir: Path, benchmark: str, metrics: dict[st
         f"Samples: {metrics['samples']}", "", "Quality (mean)",
         "variant         ROUGE-L F1    source-support proxy",
     ]
-    for variant in ("routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"):
+    for variant in ("routed_kv", "specialist_text"):
         result = metrics["quality"][variant]
         rouge = result["rouge_l_f1"]
         lines.append(f"{variant:<15} {'N/A' if rouge is None else f'{rouge:.4f}':<13} {result['supported_claim_rate']:.4f}")
@@ -32,7 +32,7 @@ def write_receiver_kv_reports(output_dir: Path, benchmark: str, metrics: dict[st
               f"KV selection probes: {efficiency['mean_selection_seconds']:.3f}s",
               f"full source KV cache: {efficiency['mean_full_source_cache_mib']:.1f} MiB",
               "", "variant | receiver positions | receiver KV MiB | generated handoff tokens | logical payload bytes | specialist sec | receiver sec | pipeline sec | output tokens | cap hits"]
-    for variant in ("routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"):
+    for variant in ("routed_kv", "specialist_text"):
         result = efficiency["variants"][variant]
         lines.append(
             f"{variant} | {result['mean_incoming_positions']:.1f} | {result['mean_incoming_cache_mib']:.1f} | "
@@ -42,7 +42,7 @@ def write_receiver_kv_reports(output_dir: Path, benchmark: str, metrics: dict[st
         )
     lines += ["", "Logical model-token events per sample (mean)",
               "variant | source prefill | selection probes | specialist prompts | specialist handoffs | receiver prompt | receiver output | total input | total output | total"]
-    for variant in ("routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"):
+    for variant in ("routed_kv", "specialist_text"):
         result = efficiency["variants"][variant]
         lines.append(
             f"{variant} | {result['mean_source_prefill_tokens']:.1f} | {result['mean_selection_probe_tokens']:.1f} | "
@@ -69,7 +69,7 @@ def write_receiver_kv_communication_reports(
                "configuration": configuration, "metrics": metrics}
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     efficiency = metrics["efficiency"]
-    variants = ("routed_kv", "selected_text", "natural_text", "specialist_text")
+    variants = ("routed_kv", "specialist_text")
     lines = [
         "Meeting Communication Token Evaluation", f"Benchmark: {benchmark}",
         f"Samples: {metrics['samples']}",
@@ -88,7 +88,7 @@ def write_receiver_kv_communication_reports(
             f"{result['mean_pipeline_seconds_excluding_model_load']:.3f} | {result['mean_generated_tokens']:.1f} | {result['output_cap_hits']}"
         )
     lines += ["", "Logical model-token events per sample (mean)",
-              "variant | source prefill | selection probes | sender prompt | natural handoff | receiver prompt | receiver output | total input | total output | total"]
+              "variant | source prefill | selection probes | sender prompt | text handoff | receiver prompt | receiver output | total input | total output | total"]
     for variant in variants:
         result = efficiency["variants"][variant]
         lines.append(

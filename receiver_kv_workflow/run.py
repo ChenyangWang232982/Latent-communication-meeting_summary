@@ -13,7 +13,7 @@ def arguments():
     parser.add_argument("--reference", type=Path, help="Optional human summary; English ROUGE-L only")
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--output", type=Path,
-                        help="Write routed_kv directly to this file; controls use sibling files with the same stem")
+                        help="Write routed_kv directly to this file; specialist_text uses a sibling file")
     parser.add_argument("--output-dir", type=Path, default=Path("output/receiver_kv"))
     parser.add_argument("--metrics-dir", type=Path, default=Path("test_result/receiver_kv"))
     parser.add_argument("--role-budget-ratio", type=float, default=0.15,
@@ -29,8 +29,8 @@ def arguments():
                         help="Explicit final output reserve; report flags when exhausted")
     parser.add_argument("--timeline", action="store_true",
                         help="Also write a chronological event timeline with one approximate time per event")
-    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"],
-                        default=["routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"])
+    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
+                        default=["routed_kv", "specialist_text"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
@@ -74,7 +74,7 @@ def main():
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
-                  "selected_text is retrieved selected-source text; specialist_text is generated multi-role handoffs; natural_text is one sender-to-one receiver natural-language communication.",
+                  "routed_kv and specialist_text use the identical selected source positions; only the specialist-to-receiver communication representation differs.",
                   "ROUGE-L is lexical reference overlap, not factual accuracy; no reference means N/A.",
                   "Queries are selector instructions, not generated latent reasoning.",
                   "Source prefill processes every token; selection subsequently drops evidence positions.",

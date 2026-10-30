@@ -27,8 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
     parser.add_argument("--device")
-    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"],
-                        default=["routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"])
+    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
+                        default=["routed_kv", "specialist_text"])
     parser.add_argument("--communication-metrics-only", action="store_true",
                         help="Discard summaries and write only token, cache and execution measurements.")
     return parser.parse_args()
@@ -36,14 +36,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    all_variants = {"routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"}
-    communication_variants = {"routed_kv", "selected_text", "specialist_text", "natural_text"}
+    all_variants = {"routed_kv", "specialist_text"}
     if args.communication_metrics_only:
-        if "full_kv" in args.variants:
-            args.variants = [name for name in args.variants if name != "full_kv"]
-        if set(args.variants) != communication_variants:
+        if set(args.variants) != all_variants:
             raise ValueError(
-                "--communication-metrics-only requires routed_kv, selected_text, natural_text and specialist_text."
+                "--communication-metrics-only requires routed_kv and specialist_text."
             )
     elif set(args.variants) != all_variants:
         raise ValueError("A quality evaluation requires all receiver-KV variants.")

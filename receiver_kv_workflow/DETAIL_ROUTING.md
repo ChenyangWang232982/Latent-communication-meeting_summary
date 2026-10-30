@@ -20,7 +20,7 @@ Compare `fixed`, `fixed_pooled`, and `sentence`:
 `fixed` versus `fixed_pooled` changes both pooling and whole-unit selection, so
 it is not a pure pooling ablation. Actual counts can differ below the same ceiling.
 No prompts are changed. First inspect whether the desired fact and its conditions
-are retained, then compare full_kv to distinguish selection loss from generation.
+are retained before comparing routed-KV and matched text communication.
 
 Use `--selection-strategy sentence` on either `receiver_kv_workflow.run`
 or `meeting_evaluation.test`. Default `fixed` preserves the old selector.
@@ -53,12 +53,7 @@ Research basis:
 Evaluate exact meeting details (owner, date, complete time range, approval status)
 against source evidence on held-out meetings; ROUGE alone cannot establish detail
 preservation. Compare fixed/sentence at identical model, input, ratio and output
-cap. The new strategy can use fewer KV positions. Also compare full_kv to determine
-whether a missing fact is caused by selection or the summarizer itself.
-
-Related execution fix: natural_text previously entered the generic KV receiver
-loop before its sender/receiver path, generating an unused extra answer. It now
-runs only its intended path and includes selection time in pipeline accounting.
+cap. The new strategy can use fewer KV positions.
 
 # Spoken repairs and summary detail preservation
 
@@ -83,14 +78,11 @@ skipped; no speaker block is subdivided. Audit coverage is labelled SPEAKER_BLOC
 (the JSON `sentence_coverage` key is retained for compatibility, with
 `coverage_unit`). Selected text and natural text use the same chosen positions.
 
-Sentence units keep adjacent explicit self-corrections (for example, "failed.
-Sorry, executed.") together. This lexical heuristic prevents selecting the
-retracted phrase without its correction. The combined unit must fit the existing
-position budget; it can be skipped as a whole. Speaker-labelled new turns remain
-separate. This is not a semantic guarantee for every form of spoken correction.
+Sentence selection uses ordinary punctuation and paragraph boundaries only; it
+does not contain special handling for lexical repair markers such as "sorry" or
+"I mean". Speaker-labelled new turns remain separate.
 
 All summary variants share a request to preserve supported owners, dates, both
-endpoints of time ranges and pending conditions, and to resolve explicit
-self-corrections and changed statuses. Compare variants under the same prompt
+endpoints of time ranges and pending conditions. Compare variants under the same prompt
 version; older runs are not controlled comparisons with this revision. Actual
 summary improvements require model evaluation, not just unit tests.

@@ -21,14 +21,6 @@ EVENT_QUERY = (
     "Keep source passages that establish the transcript timestamp nearest the middle of each event discussion and what changed."
 )
 
-ROLE_HANDOFF_REQUESTS = {
-    "decisions": "Extract confirmed decisions, rejections, revisions, and deferrals from this meeting. Return a concise factual handoff for another summarizer. Preserve conditions and later changes.",
-    "actions": "Extract tasks, promises, owners, deadlines, invitations, and follow-up responsibilities from this meeting. Return a concise factual handoff for another summarizer. Do not infer an owner from a speaker label.",
-    "open_issues": "Extract unresolved questions, dependencies, disputes, and pending confirmations from this meeting. Return a concise factual handoff for another summarizer.",
-    "context": "Extract the important topics, objectives, constraints, numbers, and reasons needed to understand this meeting. Return a concise factual handoff for another summarizer.",
-    "coordination": "Extract forward-looking coordination details: invitations, attendance confirmation, meeting dates, exact times, locations, scheduling changes, and approval dependencies. Preserve exact values and whether each item is confirmed, proposed, or pending. Return a concise factual handoff for another summarizer.",
-}
-
 SUMMARY_REQUEST = (
     "Write an evidence-grounded meeting summary in the transcript's language. "
     "Organize it into key context, decisions, action items, and open issues. "
@@ -120,23 +112,9 @@ def following_turn_suffix(tokenizer, transcript: str, request: str) -> list[int]
     return full[len(prefix):]
 
 
-def specialist_text_prompt(tokenizer, handoffs: dict[str, str]) -> list[int]:
-    """Build the ordinary-text receiver prompt for the specialist baseline."""
-    reports = "\n\n".join(
-        f"[{role}]\n{handoff.strip()}" for role, handoff in handoffs.items() if handoff.strip()
-    )
-    content = "SPECIALIST HANDOFFS (untrusted intermediate reports):\n" + reports + "\nEND HANDOFFS\n"
-    text = tokenizer.apply_chat_template(
-        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
-         {"role": "user", "content": SUMMARY_REQUEST}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=False,
-    )
-    return tokenizer.encode(text, add_special_tokens=False)
-
-
-def natural_text_prompt(tokenizer, handoff: str) -> list[int]:
-    """Build the receiver prompt for the one-sender natural-language control."""
-    content = "NATURAL-LANGUAGE MEETING HANDOFF (untrusted intermediate report):\n" + handoff.strip() + "\nEND HANDOFF\n"
+def specialist_text_prompt(tokenizer, handoff: str) -> list[int]:
+    """Build the receiver prompt for the matched natural-language control."""
+    content = "SELECTED-EVIDENCE TEXT HANDOFF (untrusted intermediate report):\n" + handoff.strip() + "\nEND HANDOFF\n"
     text = tokenizer.apply_chat_template(
         [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
          {"role": "user", "content": SUMMARY_REQUEST}],
@@ -168,10 +146,6 @@ def selected_evidence_excerpts(tokenizer, transcript: str, selected_positions: l
     if transcript_start < len(source_header):
         raise RuntimeError("Cannot locate transcript in chat template")
 
-    # Add a modest textual margin so a selected phrase remains intelligible and
-    # nearby timestamps / qualifiers survive retrieval.  It is character based
-    # because it is applied after mapping source-token offsets to raw transcript.
-    margin = 96
     intervals = []
     for position in sorted(set(selected_positions)):
         if not 0 <= position < len(source_ids):
@@ -185,10 +159,12 @@ def selected_evidence_excerpts(tokenizer, transcript: str, selected_positions: l
     # use the complete transcript rather than emitting a malformed empty prompt.
     if not intervals:
         intervals = [(0, len(transcript))]
-    expanded = sorted((max(0, start - margin), min(len(transcript), end + margin)) for start, end in intervals)
     merged = []
-    for start, end in expanded:
-        if merged and start <= merged[-1][1]:
+    for start, end in sorted(intervals):
+        # Adjacent tokenizer offsets can be separated only by whitespace. Keep
+        # such words in one readable excerpt without adding any unselected
+        # source content or a contextual margin.
+        if merged and (start <= merged[-1][1] or transcript[merged[-1][1]:start].isspace()):
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
             merged.append((start, end))
@@ -203,21 +179,8 @@ def selected_evidence_excerpts(tokenizer, transcript: str, selected_positions: l
     return excerpts, evidence_tokens, len(merged)
 
 
-def selected_evidence_prompt(tokenizer, transcript: str, selected_positions: list[int]) -> tuple[list[int], int, int]:
-    """Build the direct-receiver prompt for selected verbatim evidence."""
-    excerpts, evidence_tokens, excerpt_count = selected_evidence_excerpts(tokenizer, transcript, selected_positions)
-    evidence_content = "RETRIEVED MEETING EVIDENCE (verbatim excerpts):\n" + excerpts + "\nEND EVIDENCE\n"
-    prompt_text = tokenizer.apply_chat_template(
-        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": evidence_content},
-         {"role": "user", "content": SUMMARY_REQUEST}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=False,
-    )
-    prompt_ids = tokenizer.encode(prompt_text, add_special_tokens=False)
-    return prompt_ids, evidence_tokens, excerpt_count
-
-
-def natural_sender_prompt(tokenizer, excerpts: str) -> list[int]:
-    """Build the sender prompt for the same-selection natural-language control."""
+def specialist_sender_prompt(tokenizer, excerpts: str) -> list[int]:
+    """Build a text sender over exactly the positions selected for routed KV."""
     content = "RETRIEVED MEETING EVIDENCE (verbatim excerpts):\n" + excerpts + "\nEND EVIDENCE\n"
     request = (
         "Turn only these retrieved meeting evidence excerpts into one concise factual handoff for another summarizer. "

@@ -14,13 +14,13 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("time unavailable", TIMELINE_REQUEST)
         self.assertIn("middle of each event discussion", EVENT_QUERY)
 
-    def test_selected_evidence_prompt_keeps_verbatim_timestamp_context(self):
+    def test_selected_evidence_excerpts_keep_verbatim_timestamp_context(self):
         import re
         from tokenizers import Tokenizer
         from tokenizers.models import WordLevel
         from tokenizers.pre_tokenizers import Whitespace
         from transformers import PreTrainedTokenizerFast
-        from .prompts import prompt_parts, selected_evidence_prompt
+        from .prompts import prompt_parts, selected_evidence_excerpts
         template = "{% for m in messages %}{{m['role'] + ': ' + m['content'] + '\\n'}}{% endfor %}{% if add_generation_prompt %}assistant: {% endif %}"
         transcript = "[10:30] Toufique will send the invitation. Zhang confirmation is pending."
         # Make a tiny but readable tokenizer for a deterministic offset test.
@@ -34,10 +34,9 @@ class SelectionTests(unittest.TestCase):
         tokenizer.chat_template = template
         prefix, _, _ = prompt_parts(tokenizer, transcript)
         selected = list(range(len(prefix)))
-        prompt, evidence_tokens, count = selected_evidence_prompt(tokenizer, transcript, selected)
-        rendered = tokenizer.decode(prompt, skip_special_tokens=False)
-        self.assertIn("Toufique will send the invitation", rendered)
-        self.assertIn("Zhang confirmation is pending", rendered)
+        excerpts, evidence_tokens, count = selected_evidence_excerpts(tokenizer, transcript, selected)
+        self.assertIn("Toufique will send the invitation", excerpts)
+        self.assertIn("Zhang confirmation is pending", excerpts)
         self.assertGreater(evidence_tokens, 0)
         self.assertGreaterEqual(count, 1)
 
@@ -129,7 +128,7 @@ class QwenCacheTests(unittest.TestCase):
             generate(self.model, Tokenizer(), self.source, self.torch.tensor([[5]]),
                      absolute_start=8, max_new_tokens=3, context_limit=10)
 
-    def test_local_cli_all_variants(self):
+    def test_local_cli_matched_communication_variants(self):
         import json
         from pathlib import Path
         import tempfile
@@ -160,14 +159,14 @@ class QwenCacheTests(unittest.TestCase):
             with patch("sys.argv", command):
                 main()
             report = json.loads(next((root / "metrics").glob("*/metrics.json")).read_text())
-            self.assertEqual(set(report["variants"]), {"routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"})
+            self.assertEqual(set(report["variants"]), {"routed_kv", "specialist_text"})
             self.assertTrue((root / "meeting_output.txt").is_file())
             audit = json.loads((root / "meeting_output.audit.json").read_text())
             self.assertEqual(audit["coverage_unit"], "speaker_block")
             self.assertEqual(len(audit["sentence_coverage"]), 2)
             self.assertTrue(all(item["status"] != "partial" for item in audit["sentence_coverage"]))
             self.assertEqual(audit["speaker_neighbor_blocks"], 1)
-            self.assertTrue((root / "meeting_output.full_kv.txt").is_file())
+            self.assertTrue((root / "meeting_output.specialist_text.txt").is_file())
             self.assertTrue((root / "meeting_output.timeline.txt").is_file())
             self.assertIsNone(report["variants"]["routed_kv"]["rouge_l_f1"])
             self.assertNotIn("answers", report)

@@ -38,13 +38,13 @@ python -m receiver_kv_workflow.run \
   --model Qwen/Qwen3-4B \
   --role-budget-ratio 0.15 \
   --max-new-tokens 1024 \
-  --variants routed_kv full_kv selected_text specialist_text
+  --variants routed_kv specialist_text
 ```
 
 PowerShell 可以使用以下单行命令，不要复制 Bash 的反斜杠续行：
 
 ```powershell
-python -m receiver_kv_workflow.run --transcript input/meeting1.txt --model Qwen/Qwen3-4B --role-budget-ratio 0.15 --max-new-tokens 1024 --variants routed_kv full_kv selected_text specialist_text
+python -m receiver_kv_workflow.run --transcript input/meeting1.txt --model Qwen/Qwen3-4B --role-budget-ratio 0.15 --max-new-tokens 1024 --variants routed_kv specialist_text
 ```
 
 Add `--timeline` to write a separate chronological event timeline. Each event
@@ -55,7 +55,7 @@ written as `time unavailable`.
 
 For a direct path compatible with the prior CLI style, use
 `--output output/meeting1.txt`. When multiple variants run, `routed_kv` uses
-that exact path and controls use sibling files such as `meeting1.full_kv.txt`.
+that exact path and the text control uses a sibling file such as `meeting1.specialist_text.txt`.
 When one variant runs, that variant uses the exact `--output` path. `--timeline`
 similarly writes `meeting1.timeline.txt`.
 
@@ -67,8 +67,6 @@ similarly writes `meeting1.timeline.txt`.
 
 ```text
 output/receiver_kv/时间戳/routed_kv.txt
-output/receiver_kv/时间戳/full_kv.txt
-output/receiver_kv/时间戳/selected_text.txt
 output/receiver_kv/时间戳/specialist_text.txt
 output/receiver_kv/时间戳/timeline.txt  # only with --timeline
 test_result/receiver_kv/时间戳/metrics.txt
@@ -82,13 +80,8 @@ JSON 保存选中位置索引，便于审计。终端逐角色、逐 receiver �
 
 | 模式 | 最终接收方收到什么 | 用途 |
 |---|---|---|
-| routed_kv | 四角色选择并集的原文 KV | 新实验方法 |
-| full_kv | 完整原文 KV | 无选择损失的直接摘要对照 |
-| selected_text | 将同一组选中位置恢复为带边界的原文证据摘录，再重新 prefill | 文本证据锚点对照：保留时间戳和限定条件，区分 KV 状态保留与文本重新编码 |
-| specialist_text | 四个 specialist 从完整会议生成自然语言 handoff，最终摘要器读取 handoff | 传统多 agent 自然语言通信基线 |
-| natural_text | 与 selected_text 使用完全相同的 KV 选点和原文证据摘录；一个 sender 将证据改写成 handoff，最终 receiver 读取 handoff | 单 sender → 单 receiver 的自然语言通信对照；与 selected_text 的区别仅是通信表示 |
-
-`selected_text` **不是**自然语言专家 handoff 基线；`specialist_text` 才是该基线。
+| routed_kv | 角色查询选择的原文 KV | 主方法：在 KV / hidden-state 空间传递证据 |
+| specialist_text | 相同选中位置先生成一次自然语言 handoff，再交给 receiver | 与主方法只有通信表示不同的自然语言对照 |
 
 评测报告还会列出每个变体的端到端 logical model-token events：一次源 prefill、选择 query、specialist prompt/handoff、最终 receiver prompt/output。它不等于 attention FLOPs、真实服务商账单或 KV 字节数，但可用于比较同一模型下的 token 处理量。
 
@@ -101,10 +94,7 @@ JSON 保存选中位置索引，便于审计。终端逐角色、逐 receiver �
   不丢原文、不建立多块 summary。
 - `--max-new-tokens 1024`：显式最终输出预算。触及上限报告 `output_cap_hit=true`，
   不把被截断的摘要默认为正常完成。可增大，但需给输出留上下文空间。
-- `--variants full_kv`：只跑完整 KV 对照，跳过选择器。
-
-建议先测 `0.15 / 0.25 / 1.0`，再按质量调整，别一开始追求 90% 删除。
-`1.0` 使 routed_kv 与 full_kv 接收相同缓存，用于一致性检查。
+建议先测 `0.15 / 0.25 / 0.30`，再按质量调整，别一开始追求 90% 删除。
 
 ## 实现边界
 

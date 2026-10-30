@@ -6,7 +6,7 @@ summaries are not copied into the evaluation report.
 
 ```text
 MeetingBank JSONL -> full-source KV prefill -> receiver-conditioned routing
-                 -> routed/full/text/specialist controls -> metric report
+                 -> routed-KV / matched-text communication -> metric report
 ```
 
 Prepare a normalized MeetingBank test set first:
@@ -30,14 +30,13 @@ python -m meeting_evaluation.test \
   --device cuda
 ```
 
-The report compares four controls:
+The report compares two communication representations under the same source
+selection, prompt, model, and output budget:
 
 | Variant | Receiver input |
 |---|---|
 | `routed_kv` | Receiver-conditioned selected source KV positions |
-| `full_kv` | Full source KV cache |
-| `selected_text` | The same selected source positions re-prefilled as text |
-| `specialist_text` | Generated natural-language specialist handoffs |
+| `specialist_text` | The same selected source positions rewritten once as a natural-language handoff |
 
 Reports are written to `test_result/YYYYMMDD_HHMM/meetingbank_receiver_kv.txt`
 and `.json`. They include ROUGE-L, a lexical source-support proxy, cache and

@@ -7,9 +7,9 @@ import math
 import time
 from typing import Callable
 
-from .prompts import (EVENT_QUERY, ROLE_HANDOFF_REQUESTS, ROLE_QUERIES, TIMELINE_REQUEST,
-                      following_turn_suffix, natural_sender_prompt, natural_text_prompt, prompt_parts,
-                      selected_evidence_excerpts, selected_evidence_prompt, specialist_text_prompt)
+from .prompts import (EVENT_QUERY, ROLE_QUERIES, TIMELINE_REQUEST, following_turn_suffix,
+                      prompt_parts, selected_evidence_excerpts, specialist_sender_prompt,
+                      specialist_text_prompt)
 from .selection import select_spans, union_positions
 
 
@@ -71,29 +71,24 @@ class ReceiverKVRunner:
 
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...], timeline: bool = False, routing_audit: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
-        from .cache import forward_tokens, generate, generate_from_prefill, select_cache, size_bytes
+        from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
 
         if not transcript.strip():
             raise ValueError(f"Transcript is empty: {record_id}")
         requested = tuple(dict.fromkeys(variants))
-        valid_variants = {"routed_kv", "full_kv", "selected_text", "specialist_text", "natural_text"}
+        valid_variants = {"routed_kv", "specialist_text"}
         if not requested or any(name not in valid_variants for name in requested):
-            raise ValueError("variants must be routed_kv, full_kv, selected_text, specialist_text and/or natural_text")
+            raise ValueError("variants must be routed_kv and/or specialist_text")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
         timeline_suffixes = [following_turn_suffix(self.tokenizer, transcript, TIMELINE_REQUEST)] if timeline else []
         query_text = dict(ROLE_QUERIES)
         if timeline:
             query_text["events"] = EVENT_QUERY
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
-        specialist_suffixes = (
-            [following_turn_suffix(self.tokenizer, transcript, request) for request in ROLE_HANDOFF_REQUESTS.values()]
-            if "specialist_text" in requested else []
-        )
         required = len(prefix) + max(
             len(suffix) + self.config.max_new_tokens,
             max(map(len, queries.values())),
-            *(len(role_suffix) for role_suffix in specialist_suffixes),
             *(len(timeline_suffix) + self.config.max_new_tokens for timeline_suffix in timeline_suffixes),
         )
         if required > self.context_limit:
@@ -124,7 +119,7 @@ class ReceiverKVRunner:
             role_scores = []
             selection_seconds = 0.0
             selection_probe_tokens = 0
-            if timeline or any(name in {"routed_kv", "selected_text", "natural_text"} for name in requested):
+            if timeline or requested:
                 selection_start = time.perf_counter()
                 for index, (role, query) in enumerate(queries.items(), start=1):
                     self.progress(f"{record_id}: selector {role} started ({index - 1}/{len(queries)} complete)")
@@ -161,81 +156,54 @@ class ReceiverKVRunner:
                           if self.config.selection_strategy == "speaker" else "")
                 self.progress(f"{record_id}: {self.config.selection_strategy} KV selection {len(selected)}/{baseline_positions} positions{detail}")
             answers, measurements = {}, {}
-            for variant in (name for name in requested if name not in {"specialist_text", "natural_text"}):
+            if "routed_kv" in requested:
                 receiver_start = time.perf_counter()
-                ids = list(range(len(prefix))) if variant == "full_kv" else selected
-                if variant == "selected_text":
-                    prompt_ids, evidence_tokens, excerpt_count = selected_evidence_prompt(self.tokenizer, transcript, ids)
-                    if len(prompt_ids) + self.config.max_new_tokens > self.context_limit:
-                        raise ValueError(
-                            f"{record_id}: selected evidence plus output reserve exceeds the model context limit; no input was truncated."
-                        )
-                    output = forward_tokens(self.model, self._tensor(prompt_ids), None, 0, logits_to_keep=1)
-                    incoming = output.past_key_values
-                    incoming_bytes = size_bytes(incoming)
-                    answer, generated_tokens, output_cap_hit = generate_from_prefill(
-                        self.model, self.tokenizer, output,
-                        next_position=len(prompt_ids), max_new_tokens=self.config.max_new_tokens,
-                    )
-                    absolute_start, payload_bytes = len(prompt_ids), evidence_tokens * 4
-                else:
-                    incoming = select_cache(source, ids)
-                    absolute_start, payload_bytes = len(prefix), size_bytes(incoming)
-                    incoming_bytes = size_bytes(incoming)
-                    answer, generated_tokens, output_cap_hit = generate(
-                        self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
-                        max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
-                    )
+                ids = selected
+                incoming = select_cache(source, ids)
+                absolute_start, payload_bytes = len(prefix), size_bytes(incoming)
+                incoming_bytes = size_bytes(incoming)
+                answer, generated_tokens, output_cap_hit = generate(
+                    self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
+                    max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
+                )
                 del incoming
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start
-                answers[variant] = answer
-                measurements[variant] = {
-                    # For selected_text this is the actual re-prefilled receiver
-                    # prompt length, not just the count of source positions used
-                    # to retrieve evidence excerpts.
-                    "incoming_positions": absolute_start if variant == "selected_text" else len(ids),
-                    "selected_source_positions": len(ids) if variant == "selected_text" else None,
+                answers["routed_kv"] = answer
+                measurements["routed_kv"] = {
+                    "incoming_positions": len(ids),
+                    "selected_source_positions": None,
                     "incoming_cache_bytes": incoming_bytes,
                     "logical_payload_bytes": payload_bytes,
                     "positions_vs_full_percent": 100 * (len(ids) - len(prefix)) / len(prefix),
                     "cache_bytes_vs_full_percent": 100 * (incoming_bytes - source_bytes) / source_bytes,
                     "receiver_seconds": receiver_seconds,
-                    "pipeline_seconds_excluding_model_load": prefill_seconds + receiver_seconds + (
-                        0 if variant == "full_kv" else selection_seconds),
+                    "pipeline_seconds_excluding_model_load": prefill_seconds + selection_seconds + receiver_seconds,
                     "generated_tokens": generated_tokens, "output_cap_hit": output_cap_hit,
                     "token_accounting": {
                         "source_prefill_tokens": len(prefix),
-                        "selection_probe_tokens": selection_probe_tokens if variant != "full_kv" else 0,
+                        "selection_probe_tokens": selection_probe_tokens,
                         "specialist_prompt_tokens": 0,
                         "specialist_handoff_tokens": 0,
-                    "receiver_prompt_tokens": absolute_start if variant == "selected_text" else len(suffix),
+                        "receiver_prompt_tokens": len(suffix),
                         "receiver_output_tokens": generated_tokens,
                     },
                 }
-                if variant == "selected_text":
-                    measurements[variant]["retrieved_evidence_tokens"] = evidence_tokens
-                    measurements[variant]["retrieved_excerpt_count"] = excerpt_count
             if "specialist_text" in requested:
-                handoffs, handoff_tokens, specialist_seconds = {}, 0, 0.0
-                specialist_prompt_tokens = sum(len(role_suffix) for role_suffix in specialist_suffixes)
-                for index, ((role, _), suffix_ids) in enumerate(zip(ROLE_HANDOFF_REQUESTS.items(), specialist_suffixes), start=1):
-                    self.progress(f"{record_id}: specialist_text {role} started ({index - 1}/{len(ROLE_HANDOFF_REQUESTS)} complete)")
-                    suffix = self._tensor(suffix_ids)
-                    available_output = self.context_limit - len(prefix) - suffix.shape[1]
-                    if available_output < 1:
-                        raise ValueError(f"{record_id}: specialist prompt exhausts the model context limit.")
-                    specialist_start = time.perf_counter()
-                    handoff, generated_tokens, _ = generate(
-                        self.model, self.tokenizer, select_cache(source, range(len(prefix))), suffix,
-                        absolute_start=len(prefix), max_new_tokens=available_output,
-                        context_limit=self.context_limit,
-                    )
-                    self._sync()
-                    specialist_seconds += time.perf_counter() - specialist_start
-                    handoffs[role] = handoff
-                    handoff_tokens += generated_tokens
-                receiver_prompt = self._tensor(specialist_text_prompt(self.tokenizer, handoffs))
+                self.progress(f"{record_id}: specialist_text sender started")
+                excerpts, evidence_tokens, excerpt_count = selected_evidence_excerpts(self.tokenizer, transcript, selected)
+                sender_prompt = self._tensor(specialist_sender_prompt(self.tokenizer, excerpts))
+                available_output = min(self.config.max_new_tokens, self.context_limit - sender_prompt.shape[1])
+                if available_output < 1:
+                    raise ValueError(f"{record_id}: specialist text sender prompt exhausts the model context limit.")
+                specialist_start = time.perf_counter()
+                handoff, handoff_tokens, _ = generate(
+                    self.model, self.tokenizer, None, sender_prompt,
+                    absolute_start=0, max_new_tokens=available_output, context_limit=self.context_limit,
+                )
+                self._sync()
+                specialist_seconds = time.perf_counter() - specialist_start
+                receiver_prompt = self._tensor(specialist_text_prompt(self.tokenizer, handoff))
                 if receiver_prompt.shape[1] + self.config.max_new_tokens > self.context_limit:
                     raise ValueError(
                         f"{record_id}: specialist handoffs plus output reserve exceed the model context limit; no input was truncated."
@@ -250,65 +218,16 @@ class ReceiverKVRunner:
                 answers["specialist_text"] = answer
                 measurements["specialist_text"] = {
                     "incoming_positions": receiver_prompt.shape[1],
-                    "incoming_cache_bytes": 0,
-                    "logical_payload_bytes": handoff_tokens * 4,
-                    "positions_vs_full_percent": None,
-                    "cache_bytes_vs_full_percent": None,
-                    "specialist_handoff_tokens": handoff_tokens,
-                    "specialist_count": len(handoffs),
-                    "specialist_seconds": specialist_seconds,
-                    "receiver_seconds": receiver_seconds,
-                    "pipeline_seconds_excluding_model_load": prefill_seconds + specialist_seconds + receiver_seconds,
-                    "generated_tokens": generated_tokens,
-                    "output_cap_hit": output_cap_hit,
-                    "token_accounting": {
-                        "source_prefill_tokens": len(prefix),
-                        "selection_probe_tokens": 0,
-                        "specialist_prompt_tokens": specialist_prompt_tokens,
-                        "specialist_handoff_tokens": handoff_tokens,
-                        "receiver_prompt_tokens": receiver_prompt.shape[1],
-                        "receiver_output_tokens": generated_tokens,
-                    },
-                }
-            if "natural_text" in requested:
-                self.progress(f"{record_id}: natural_text sender started")
-                excerpts, evidence_tokens, excerpt_count = selected_evidence_excerpts(self.tokenizer, transcript, selected)
-                sender_prompt = self._tensor(natural_sender_prompt(self.tokenizer, excerpts))
-                available_output = self.context_limit - sender_prompt.shape[1]
-                if available_output < 1:
-                    raise ValueError(f"{record_id}: natural-language sender prompt exhausts the model context limit.")
-                sender_start = time.perf_counter()
-                handoff, handoff_tokens, _ = generate(
-                    self.model, self.tokenizer, None, sender_prompt,
-                    absolute_start=0, max_new_tokens=available_output,
-                    context_limit=self.context_limit,
-                )
-                self._sync()
-                sender_seconds = time.perf_counter() - sender_start
-                receiver_prompt = self._tensor(natural_text_prompt(self.tokenizer, handoff))
-                if receiver_prompt.shape[1] + self.config.max_new_tokens > self.context_limit:
-                    raise ValueError(
-                        f"{record_id}: natural-language handoff plus output reserve exceeds the model context limit; no input was truncated."
-                    )
-                receiver_start = time.perf_counter()
-                answer, generated_tokens, output_cap_hit = generate(
-                    self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
-                    max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
-                )
-                self._sync()
-                receiver_seconds = time.perf_counter() - receiver_start
-                answers["natural_text"] = answer
-                measurements["natural_text"] = {
-                    "incoming_positions": receiver_prompt.shape[1],
+                    "selected_source_positions": len(selected),
                     "incoming_cache_bytes": 0,
                     "logical_payload_bytes": handoff_tokens * 4,
                     "positions_vs_full_percent": None,
                     "cache_bytes_vs_full_percent": None,
                     "specialist_handoff_tokens": handoff_tokens,
                     "specialist_count": 1,
-                    "specialist_seconds": sender_seconds,
+                    "specialist_seconds": specialist_seconds,
                     "receiver_seconds": receiver_seconds,
-                    "pipeline_seconds_excluding_model_load": prefill_seconds + selection_seconds + sender_seconds + receiver_seconds,
+                    "pipeline_seconds_excluding_model_load": prefill_seconds + selection_seconds + specialist_seconds + receiver_seconds,
                     "generated_tokens": generated_tokens,
                     "output_cap_hit": output_cap_hit,
                     "token_accounting": {

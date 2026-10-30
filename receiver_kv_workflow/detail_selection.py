@@ -10,26 +10,15 @@ from .prompts import SYSTEM
 
 
 def sentence_boundaries(transcript):
-    """Keep adjacent spoken repairs in the same selectable unit.
+    """Return ordinary punctuation and paragraph sentence boundaries.
 
-    This is a conservative lexical heuristic, not semantic verification. It
-    joins both sides of a standalone repair marker, including ``Sorry. ...``.
-    Whole-unit selection subsequently enforces the original position budget.
+    Sentence selection deliberately does not infer, merge, or expand spoken
+    self-corrections.  Those lexical rules made the selected payload depend on
+    particular surface words rather than routing scores.
     """
-    ends = [m.end() for m in re.finditer(
+    return [m.end() for m in re.finditer(
         r"[.!?。！？](?:[\"'”’])?(?:\s+|$)|\n\s*\n", transcript
     )]
-    marker = r"(?:sorry|i mean|rather|correction|let me correct that|更正|我是说|我的意思是|不对)"
-    starts_repair = re.compile(r"^\s*" + marker + r"(?=[\s,.:;!?，。：；！？]|$)", re.I)
-    only_repair = re.compile(r"^\s*" + marker + r"[\s,.:;!?，。：；！？]*$", re.I)
-    kept = []
-    previous = 0
-    for end in ends:
-        left, right = transcript[previous:end], transcript[end:]
-        if not starts_repair.match(right) and not only_repair.fullmatch(left):
-            kept.append(end)
-        previous = end
-    return kept
 
 
 def source_offsets(tokenizer, transcript, expected_prefix):
