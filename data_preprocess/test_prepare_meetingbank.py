@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from .prepare_meetingbank import export_rows
+from .prepare_meetingbank import _official_meetingbank_rows, export_rows
 
 
 class MeetingBankPreparationTests(unittest.TestCase):
@@ -37,6 +37,30 @@ class MeetingBankPreparationTests(unittest.TestCase):
             self.assertEqual(written, 1)
             record = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(record["transcript"], "Chair: Open the meeting.\nMember: I support this.")
+
+    def test_official_root_joins_split_to_diarized_item_turns(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            metadata = root / "Metadata"
+            (metadata / "Splits").mkdir(parents=True)
+            (metadata / "MeetingBank.json").write_text(json.dumps({
+                "Town_1": {"itemInfo": {"Agenda A": {"transcripts": [
+                    {"speaker": 2, "text": "We approve the proposal."},
+                    {"speaker": 3, "text": "I agree."},
+                ]}}
+            }}), encoding="utf-8")
+            (metadata / "Splits" / "test.json").write_text(json.dumps({
+                "id": "Town_1_Agenda A", "summary": "The proposal was approved."
+            }) + "\n", encoding="utf-8")
+            rows = _official_meetingbank_rows(root, "test")
+            self.assertEqual(rows, [{
+                "uid": "Town_1_Agenda A",
+                "summary": "The proposal was approved.",
+                "turns": [
+                    {"speaker": "Speaker_2", "content": "We approve the proposal."},
+                    {"speaker": "Speaker_3", "content": "I agree."},
+                ],
+            }])
 
 
 if __name__ == "__main__":

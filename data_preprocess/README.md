@@ -9,7 +9,7 @@ domains, with 25 meetings per domain by default:
 | `ami` | QMSum Product / AMI | `input/ami_test.jsonl` |
 | `icsi` | QMSum Academic / ICSI | `input/icsi_test.jsonl` |
 | `qmsum_committee` | QMSum Committee only | `input/qmsum_committee_test.jsonl` |
-| `meetingbank` | Raw diarized MeetingBank export | `input/meetingbank_speaker_test.jsonl` |
+| `meetingbank` | Official diarized MeetingBank package | `input/meetingbank_speaker_test.jsonl` |
 
 QMSum already includes AMI, ICSI, and committee meetings. Do not additionally
 evaluate a combined QMSum set: that would duplicate AMI and ICSI.
@@ -48,18 +48,14 @@ when deliberately rebuilding an existing export.
 ## MeetingBank
 
 The ordinary Hugging Face MeetingBank split consolidates turns into one text
-paragraph, so it cannot validly support speaker-block selection. Use a raw,
-diarized local JSON/JSONL export with records shaped like:
-
-```json
-{"uid":"Town_6", "turns":[{"speaker":"Chair", "content":"Open the meeting."}], "summary":"..."}
-```
-
-Then run:
+paragraph, so it cannot validly support speaker-block selection. Download and
+extract the official MeetingBank package first. The adapter directly joins its
+official split records with the matching diarized `itemInfo.transcripts`; no
+hand-built `meetingbank_diarized.jsonl` is needed.
 
 ```bash
 python -m data_preprocess.prepare_meetingbank \
-  --input external/meetingbank_diarized.jsonl \
+  --input external/MeetingBank \
   --output input/meetingbank_speaker_test.jsonl \
   --max-records 25 \
   --require-speakers

@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import random
 import tempfile
 from typing import Any, Iterable, Mapping
 
@@ -35,10 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--split", default="test", help="MeetingBank split, normally test, validation, or train.")
     parser.add_argument("--input", type=Path,
-                        help="Optional local JSON/JSONL export. Use this for raw diarized MeetingBank turns.")
+                        help="Optional local JSON/JSONL export or official MeetingBank root directory.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--cache-dir", type=Path, help="Optional Hugging Face datasets cache directory.")
     parser.add_argument("--max-records", type=int, default=0, help="0 exports the entire split; a positive value exports that many records.")
+    parser.add_argument("--seed", type=int, default=7,
+                        help="Deterministic sampling seed when --max-records is positive.")
     parser.add_argument("--require-speakers", action="store_true",
                         help="Require structured speaker-labelled turns; needed for --selection-strategy speaker.")
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing output JSONL deliberately.")
@@ -56,7 +59,12 @@ def _speaker_transcript(value: Any) -> str:
     for turn in value:
         if not isinstance(turn, Mapping):
             return ""
-        speaker = text(turn.get("speaker") or turn.get("role") or turn.get("speaker_id"))
+        speaker_value = turn.get("speaker")
+        if speaker_value is None:
+            speaker_value = turn.get("role")
+        if speaker_value is None:
+            speaker_value = turn.get("speaker_id")
+        speaker = text(str(speaker_value)) if speaker_value is not None else ""
         content = text(turn.get("content") or turn.get("text") or turn.get("utterance"))
         if not speaker or not content:
             return ""
@@ -123,12 +131,73 @@ def _read_local(path: Path) -> list[dict[str, Any]]:
     return [row for row in raw if isinstance(row, dict)]
 
 
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _official_meetingbank_rows(root: Path, split: str) -> list[dict[str, Any]]:
+    """Load official segment summaries with their speaker-diarized item transcript.
+
+    The official split files are JSONL despite their ``.json`` extension.  Their
+    IDs are formed as ``<meeting id>_<item id>``, matching ``itemInfo`` entries
+    in ``Metadata/MeetingBank.json``.
+    """
+    metadata_path = root / "Metadata" / "MeetingBank.json"
+    split_path = root / "Metadata" / "Splits" / f"{split}.json"
+    if not metadata_path.is_file() or not split_path.is_file():
+        raise FileNotFoundError(
+            "Official MeetingBank root must contain Metadata/MeetingBank.json and "
+            f"Metadata/Splits/{split}.json: {root}"
+        )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    diarized: dict[str, list[dict[str, Any]]] = {}
+    for meeting_id, meeting in metadata.items():
+        if not isinstance(meeting, Mapping):
+            continue
+        for item_id, item in (meeting.get("itemInfo") or {}).items():
+            if not isinstance(item, Mapping):
+                continue
+            turns = item.get("transcripts")
+            transcript = _speaker_transcript(turns)
+            if transcript:
+                diarized[f"{meeting_id}_{item_id}"] = [
+                    {"speaker": f"Speaker_{turn.get('speaker')}", "content": text(turn.get("text"))}
+                    for turn in turns
+                    if isinstance(turn, Mapping) and text(turn.get("text")) and turn.get("speaker") is not None
+                ]
+
+    rows = []
+    for row in _read_jsonl(split_path):
+        record_id = text(row.get("id"))
+        turns = diarized.get(record_id)
+        summary = text(row.get("summary"))
+        if turns and summary:
+            rows.append({"uid": record_id, "turns": turns, "summary": summary})
+    return rows
+
+
+def _sample(rows: list[dict[str, Any]], max_records: int, seed: int) -> list[dict[str, Any]]:
+    if max_records <= 0 or len(rows) <= max_records:
+        return rows
+    return random.Random(seed).sample(rows, max_records)
+
+
 def main() -> None:
     args = parse_args()
     if args.input:
-        rows = _read_local(args.input)
+        if args.input.is_dir():
+            rows = _official_meetingbank_rows(args.input, args.split)
+            rows = _sample(rows, args.max_records, args.seed)
+            max_records = 0
+            print(
+                f"Loaded official diarized MeetingBank split={args.split}: {len(rows)} selected rows "
+                f"from {args.input}", flush=True,
+            )
+        else:
+            rows = _read_local(args.input)
+            max_records = args.max_records
+            print(f"Loaded local MeetingBank export: {args.input} ({len(rows)} rows)", flush=True)
         dataset_name = str(args.input)
-        print(f"Loaded local MeetingBank export: {args.input} ({len(rows)} rows)", flush=True)
     else:
         try:
             from datasets import load_dataset
@@ -136,9 +205,10 @@ def main() -> None:
             raise RuntimeError("Missing dependency: install datasets (for example: pip install datasets).") from error
         rows = load_dataset(args.dataset, split=args.split, cache_dir=str(args.cache_dir) if args.cache_dir else None)
         dataset_name = args.dataset
+        max_records = args.max_records
         print(f"Loaded {args.dataset} split={args.split}: {len(rows)} rows", flush=True)
     written, skipped, columns = export_rows(
-        rows, args.output, max_records=args.max_records, overwrite=args.overwrite,
+        rows, args.output, max_records=max_records, overwrite=args.overwrite,
         require_speakers=args.require_speakers,
     )
     report = PreparationReport(
