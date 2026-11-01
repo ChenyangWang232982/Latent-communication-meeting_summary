@@ -1,29 +1,26 @@
 # Meeting Evaluation
 
-This package evaluates the receiver-conditioned KV meeting workflow on
-MeetingBank. It writes metric reports only; source transcripts and generated
-summaries are not copied into the evaluation report.
+This package evaluates the receiver-conditioned KV workflow on speaker-labelled
+meeting benchmarks. Reports contain metrics only; they do not copy source
+transcripts or generated summaries.
 
 ```text
 MeetingBank JSONL -> full-source KV prefill -> receiver-conditioned routing
                  -> routed-KV / matched-text communication -> metric report
 ```
 
-Prepare a normalized MeetingBank test set first:
-
-```bash
-python -m data_preprocess.prepare_meetingbank --max-records 8
-```
+Prepare benchmark JSONL files with `data_preprocess/README.md` first.
 
 Run the evaluation:
 
 ```bash
 python -m meeting_evaluation.test \
-  --input input/meetingbank_test.jsonl \
+  --benchmark meetingbank \
+  --input input/meetingbank_speaker_test.jsonl \
   --output-dir test_result \
-  --num-samples 8 \
+  --num-samples 25 \
   --model Qwen/Qwen3-4B \
-  --receiver-kv-role-budget-ratio 0.15 \
+  --receiver-kv-role-budget-ratio 0.25 \
   --receiver-kv-span-tokens 32 \
   --receiver-kv-query-batch-tokens 8 \
   --receiver-kv-max-new-tokens 1024 \
@@ -46,5 +43,5 @@ and token counts are intentionally reported separately.
 Run the available benchmark command:
 
 ```bash
-python -m meeting_evaluation.run_all --num-samples 8
+python -m meeting_evaluation.run_all --num-samples 25
 ```

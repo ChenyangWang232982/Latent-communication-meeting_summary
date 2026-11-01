@@ -2,7 +2,7 @@
 import bisect
 import re
 
-from .detail_selection import source_offsets
+from .source_mapping import source_offsets
 
 _NAME = r"[^\W\d_][\w .,'’()\-]{0,99}?"
 _TIME = r"\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?"
@@ -41,6 +41,44 @@ def speaker_ranges(transcript):
         end = turns[i + 1][0] if i + 1 < len(turns) else len(transcript)
         blocks.append({"speaker": speaker, "start": start, "end": end})
     return blocks
+
+
+def select_complete_blocks(blocks, baseline, role_scores, protected):
+    """Select complete speaker blocks without exceeding the seed budget."""
+    budget = len(baseline)
+    selected = set(protected)
+    if len(selected) > budget:
+        raise ValueError("Protected positions exceed selection budget")
+    if not role_scores:
+        return sorted(selected)
+    length = len(role_scores[0])
+    pooled = [0.0] * length
+    for scores in role_scores:
+        if len(scores) != length:
+            raise ValueError("Role score lengths differ")
+        scale = sum(scores)
+        if scale > 0:
+            pooled = [max(a, b / scale) for a, b in zip(pooled, scores)]
+    candidates = [sorted(set(block) - selected) for block in blocks]
+    candidates = [block for block in candidates if block]
+    candidates.sort(key=lambda block: (-sum(pooled[i] for i in block) / len(block), block[0]))
+    for block in candidates:
+        if len(selected) + len(block) <= budget:
+            selected.update(block)
+    return sorted(selected)
+
+
+def expand_neighbor_blocks(seed_positions, blocks, protected, radius=1):
+    """Retain complete adjacent speaker blocks around every selected seed block."""
+    if radius < 0:
+        raise ValueError("Neighbor radius cannot be negative")
+    seeds = set(seed_positions)
+    expanded = set(protected)
+    for index, block in enumerate(blocks):
+        if seeds.intersection(block):
+            for neighbor in range(max(0, index - radius), min(len(blocks), index + radius + 1)):
+                expanded.update(blocks[neighbor])
+    return sorted(expanded)
 
 
 def speaker_units(tokenizer, transcript, prefix, protected):

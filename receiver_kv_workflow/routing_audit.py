@@ -1,5 +1,5 @@
 """Offline source-coordinate audit. Its text is never included in model input."""
-from .detail_selection import source_offsets, sentence_units
+from .source_mapping import source_offsets
 
 
 def contiguous_ranges(positions):
@@ -29,26 +29,23 @@ def build_audit(tokenizer, transcript, prefix, protected, selected, baseline, ro
         return result
 
     sentences = []
-    if strategy == "speaker":
-        from .speaker_blocks import speaker_units
-        units = speaker_units(tokenizer, transcript, prefix, protected)
-    else:
-        units = sentence_units(tokenizer, transcript, prefix, protected)
+    from .speaker_blocks import speaker_units
+    units = speaker_units(tokenizer, transcript, prefix, protected)
     for index, unit in enumerate(units):
         kept = selected.intersection(unit)
         sentences.append({"unit": index, "source_tokens": len(unit), "retained_tokens": len(kept),
                           "status": "full" if len(kept) == len(unit) else "partial" if kept else "dropped",
                           "source": excerpts(unit), "retained_ranges": contiguous_ranges(kept)})
-    return {"strategy": strategy, "coordinate_convention": "zero-based half-open; token indices include source chat framing; characters index transcript",
+    return {"strategy": "speaker", "coordinate_convention": "zero-based half-open; token indices include source chat framing; characters index transcript",
             "note": "Offline audit only. Unselected surrounding text is not sent to routed_kv. A retained passage does not guarantee summary correctness.",
             "selected_positions": len(selected), "baseline_positions": len(baseline),
             "seed_selected_positions": len(seed_selection),
             "context_added_positions": len(selected - seed_selection),
-            "speaker_neighbor_blocks": neighbor_blocks if strategy == "speaker" else 0,
+            "speaker_neighbor_blocks": neighbor_blocks,
             "protected_positions": len(protected), "selected_excerpts": excerpts(selected),
             "added_vs_fixed": excerpts(selected - baseline), "removed_vs_fixed": excerpts(baseline - selected),
             "role_fixed_ranges": {role: contiguous_ranges(set(ids) - protected) for role, ids in role_positions.items()},
-            "coverage_unit": "speaker_block" if strategy == "speaker" else "sentence",
+            "coverage_unit": "speaker_block",
             "sentence_coverage": sentences}
 
 

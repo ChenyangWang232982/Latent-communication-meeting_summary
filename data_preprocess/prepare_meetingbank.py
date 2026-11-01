@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7,
                         help="Deterministic sampling seed when --max-records is positive.")
     parser.add_argument("--require-speakers", action="store_true",
-                        help="Require structured speaker-labelled turns; needed for --selection-strategy speaker.")
+                        help="Require structured speaker-labelled turns for the speaker-block workflow.")
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing output JSONL deliberately.")
     return parser.parse_args()
 

@@ -2,44 +2,11 @@
 
 # PyTorch CUDA 12.8 wheels. Matches cloud environments with PyTorch 2.8 + CUDA 12.8.
 torch==2.8.0+cu128
-torchvision==0.23.0+cu128
-torchaudio==2.8.0+cu128
 
 # HuggingFace model stack.
 transformers>=4.51.0
-huggingface_hub>=0.24.0
 datasets>=2.20.0
-accelerate>=0.33.0
-evaluate>=0.4.2
 tokenizers
 sentencepiece
 protobuf
 safetensors
-
-# Audio preprocessing.
-librosa
-soundfile
-scipy
-
-# Training and experiment utilities.
-numpy
-pandas
-scikit-learn
-tqdm
-einops
-tensorboard
-wandb
-rich
-langgraph>=0.2.0
-
-# Metrics.
-rouge-score
-sacrebleu
-bert-score
-
-# Notebook / development.
-matplotlib
-seaborn
-jupyterlab
-ipykernel
-pytest

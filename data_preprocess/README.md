@@ -69,7 +69,6 @@ than silently converting them into an invalid speaker benchmark.
 ```bash
 python -m meeting_evaluation.run_all \
   --num-samples 25 \
-  --selection-strategy speaker \
   --speaker-neighbor-blocks 1 \
   --receiver-kv-role-budget-ratio 0.25 \
   --model Qwen/Qwen3-4B \

@@ -19,7 +19,6 @@ def arguments():
     parser.add_argument("--role-budget-ratio", type=float, default=0.15,
                         help="Source positions per role; union can reach four times this ratio")
     parser.add_argument("--span-tokens", type=int, default=32)
-    parser.add_argument("--selection-strategy", choices=["fixed", "fixed_pooled", "sentence", "speaker"], default="fixed")
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1,
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
@@ -56,7 +55,7 @@ def main():
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         max_new_tokens=args.max_new_tokens, seed=args.seed,
-        selection_strategy=args.selection_strategy, speaker_neighbor_blocks=args.speaker_neighbor_blocks,
+        speaker_neighbor_blocks=args.speaker_neighbor_blocks,
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline,
                         routing_audit=args.routing_audit)
@@ -69,7 +68,7 @@ def main():
         "selection_seconds": result["selection_seconds"], "roles": result["roles"],
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens, "max_new_tokens": args.max_new_tokens,
-                     "timeline": args.timeline, "selection_strategy": args.selection_strategy,
+                     "timeline": args.timeline, "selection_strategy": "speaker",
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],

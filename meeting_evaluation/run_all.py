@@ -27,7 +27,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--receiver-kv-role-budget-ratio", type=float, default=0.15)
     parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
-    parser.add_argument("--selection-strategy", choices=["speaker", "sentence", "fixed", "fixed_pooled"], default="speaker")
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
@@ -54,7 +53,6 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace) -> 
     command.extend([
         "--receiver-kv-role-budget-ratio", str(args.receiver_kv_role_budget_ratio),
         "--receiver-kv-span-tokens", str(args.receiver_kv_span_tokens),
-        "--selection-strategy", args.selection_strategy,
         "--speaker-neighbor-blocks", str(args.speaker_neighbor_blocks),
         "--receiver-kv-query-batch-tokens", str(args.receiver_kv_query_batch_tokens),
         "--receiver-kv-max-new-tokens", str(args.receiver_kv_max_new_tokens),
