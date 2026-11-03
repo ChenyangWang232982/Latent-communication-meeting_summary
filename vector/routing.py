@@ -28,6 +28,15 @@ class SemanticRouter:
         self.model = AutoModel.from_pretrained(model).to(device).eval()
         if getattr(self.model.config, 'model_type', None) != 'qwen3':
             raise ValueError('This embedding adapter requires a Qwen3 embedding model, such as Qwen/Qwen3-Embedding-0.6B')
+        # Recover the single-sequence suffix from the tokenizer's public API.
+        # Qwen3-Embedding appends <|endoftext|> (not necessarily eos_token_id).
+        # Transformers 5 no longer exposes build_inputs_with_special_tokens.
+        self.special_suffix = self.tokenizer('', add_special_tokens=True)['input_ids']
+        probe = 'Meeting context: verify tokenization.'
+        raw_probe = self.tokenizer(probe, add_special_tokens=False)['input_ids']
+        processed_probe = self.tokenizer(probe, add_special_tokens=True)['input_ids']
+        if processed_probe != raw_probe + self.special_suffix:
+            raise ValueError('Unsupported Qwen3 embedding tokenizer special-token template')
         self.device = device
         self.name = model
         self.limit = min(MAX_WINDOW_TOKENS, self.tokenizer.model_max_length,
@@ -43,7 +52,7 @@ class SemanticRouter:
         torch = self.torch
         if not texts:
             raise ValueError('Cannot encode an empty list of speaker blocks')
-        capacity = self.limit - self.tokenizer.num_special_tokens_to_add(False)
+        capacity = self.limit - len(self.special_suffix)
         if capacity < 1:
             raise ValueError('Embedding context has no space for block text')
         windows, owners, weights = [], [], []
@@ -51,7 +60,7 @@ class SemanticRouter:
             ids = self.tokenizer.encode(text, add_special_tokens=False)
             for start in range(0, max(1, len(ids)), capacity):
                 chunk = ids[start:start + capacity]
-                input_ids = self.tokenizer.build_inputs_with_special_tokens(chunk)
+                input_ids = chunk + self.special_suffix
                 if not input_ids:
                     if self.tokenizer.eos_token_id is None:
                         raise ValueError('Embedding tokenizer requires an EOS token to encode an empty block')
