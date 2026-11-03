@@ -46,7 +46,7 @@ def structured_valid(text):
 
 @torch.inference_mode()
 def run_specialist(model, tokenizer, source, selected, suffix, absolute_start, context_limit, device):
-    """Return the suffix + generated-token cache; exclude original source and EOS."""
+    """Return role prompt and generated-token cache, including the terminal token."""
     cache = select_cache(source, selected)
     shared_len = len(selected)
     if absolute_start + len(suffix) >= context_limit:
@@ -63,6 +63,10 @@ def run_specialist(model, tokenizer, source, selected, suffix, absolute_start, c
         token = output.logits[:, -1].argmax(dim=-1).view(1, 1)
         value = int(token.item())
         if value in eos:
+            # A sampled terminal token is not yet represented in past_key_values.
+            # Materialize it so that the next concatenated segment has a boundary.
+            output = forward_tokens(model, token, output.past_key_values, position, logits_to_keep=1)
+            position += 1
             stopped = True
             break
         generated.append(value)
@@ -70,7 +74,7 @@ def run_specialist(model, tokenizer, source, selected, suffix, absolute_start, c
         position += 1
     if not stopped:
         raise ValueError('Specialist output reached model context limit; cannot produce a complete handoff')
-    segment = select_cache(output.past_key_values, range(shared_len, shared_len + len(suffix) + len(generated)))
+    segment = select_cache(output.past_key_values, range(shared_len, shared_len + len(suffix) + len(generated) + 1))
     text = tokenizer.decode(generated, skip_special_tokens=True)
     return segment, text, len(generated), len(generated) + 1, position
 
@@ -103,7 +107,7 @@ def run_multi(runner, transcript, source, selected, prefix):
         runner._sync()
         handoffs[role] = text
         stats[role] = {'prompt_tokens': len(suffix), 'output_tokens': generated_tokens,
-                       'content_tokens': content_tokens, 'kv_positions': len(suffix) + content_tokens,
+                       'content_tokens': content_tokens, 'kv_positions': len(suffix) + generated_tokens,
                        'kv_bytes': size_bytes(segment), 'absolute_start': position,
                        'absolute_end_exclusive': next_position, 'valid_json': structured_valid(text),
                        'seconds': time.perf_counter() - started}
@@ -125,7 +129,8 @@ def run_multi(runner, transcript, source, selected, prefix):
     started = time.perf_counter()
     answer, tokens, cap_hit, counts = generate(
         model, tokenizer, cache, runner._tensor(prompt_ids), absolute_start=position,
-        context_limit=limit, enable_thinking=False)
+        context_limit=limit, enable_thinking=False,
+        progress_callback=lambda count: runner.progress(f'multi-specialist: summary generated {count} tokens'))
     runner._sync()
     return answer, handoffs, {'roles': stats, 'incoming_positions': incoming_positions,
         'incoming_cache_bytes': incoming_bytes, 'receiver_prompt_tokens': len(prompt_ids),

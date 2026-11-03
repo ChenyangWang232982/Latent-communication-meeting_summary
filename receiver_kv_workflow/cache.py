@@ -43,7 +43,8 @@ def forward_tokens(model, ids, cache, absolute_start, **kwargs):
 
 
 @torch.inference_mode()
-def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit, enable_thinking=False):
+def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit, enable_thinking=False,
+                          progress_callback=None):
     """Decode after a caller has already prefetched a complete receiver prompt."""
     eos = model.generation_config.eos_token_id
     eos = set(eos if isinstance(eos, list) else [eos])
@@ -57,6 +58,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
         token = output.logits[:, -1].argmax(dim=-1).view(1, 1)
         value = token.item()
         generated.append(value)
+        if progress_callback is not None and len(generated) % 64 == 0:
+            progress_callback(len(generated))
         if value in eos:
             stopped = True
             break
@@ -91,7 +94,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
 
 
 @torch.inference_mode()
-def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, enable_thinking=False):
+def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, enable_thinking=False,
+             progress_callback=None):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
@@ -99,6 +103,6 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, 
     answer, generated, cap_hit, counts = generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
-        enable_thinking=enable_thinking,
+        enable_thinking=enable_thinking, progress_callback=progress_callback,
     )
     return answer, generated, cap_hit, counts
