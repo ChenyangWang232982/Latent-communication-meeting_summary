@@ -98,7 +98,7 @@ class SemanticRouter:
             'embedding_window_limit': self.limit,
         }
 
-    def rank(self, texts, attention, anchor_ids, weight):
+    def rank(self, texts, attention, anchor_ids, weight, *, return_vectors=False):
         started = time.perf_counter()
         vectors, stats = self.encode(texts)
         semantic, matches = [], []
@@ -118,4 +118,4 @@ class SemanticRouter:
                      blocks=[{'block_id': i, 'attention': attention[i], 'cosine': semantic[i],
                               'nearest_seed_block': matches[i], 'combined_score': scores[i]}
                              for i in range(len(texts))])
-        return scores, stats
+        return (scores, stats, vectors) if return_vectors else (scores, stats)

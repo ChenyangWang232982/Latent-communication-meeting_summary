@@ -301,3 +301,6 @@ For implementation details, see [receiver_kv_workflow/README.md](receiver_kv_wor
 See [vector/README.md](vector/README.md) for embedding model download,
 `--vector-routing`, inference/evaluation commands and accounting details.
 向量模块辅助选择发言块，最终仍传原始 KV；默认不启用，便于保留原方法对照。
+
+For optional per-topic decision evolution, see [decision_tracking/README.md](decision_tracking/README.md).
+按议题关联发言并生成决策演变的可选流程见上述说明。
