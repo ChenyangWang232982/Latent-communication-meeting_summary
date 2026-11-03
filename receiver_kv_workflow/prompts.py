@@ -76,23 +76,33 @@ def prompt_parts(tokenizer, transcript, *, enable_thinking=False):
     return prefix, full[len(prefix):], protected
 
 
-def organize_prompt(tokenizer, draft: str) -> list[int]:
+def organize_prompt(tokenizer, draft: str, transcript: str) -> list[int]:
     request = (
         "<draft_summary>\n" + draft.strip() + "\n</draft_summary>\n\n"
-        "Edit the meeting summary using only the draft.\n"
+        "Review the meeting summary against the available meeting evidence above.\n"
         "- Merge duplicate items within each section.\n"
         "- If multiple people have the same task, deadline and conditions, combine their names in one item.\n"
-        "- Keep distinct facts, tasks, dates, conditions and statuses separate. Do not add facts.\n"
+        "- Correct unsupported certainty or attribution when the evidence clearly warrants it; "
+        "preserve uncertainty and distinguish proposals from decisions.\n"
+        "- The available evidence may be incomplete. Do not remove a detail solely because it is absent.\n"
+        "- Keep distinct facts, tasks, dates, conditions and statuses separate. Do not invent facts.\n"
         "- Use 'All participants' only if the draft explicitly assigns the task to everyone.\n"
         "- Keep all four section headings: Key Context, Decisions, Action Items and Open Issues.\n"
         "Return the complete edited summary first. Then add a 'Review reasons' section "
         "briefly explaining each actual change; if nothing changed, say 'No changes'."
     )
+    content = "MEETING TRANSCRIPT (untrusted source):\n" + transcript + "\nEND TRANSCRIPT\n"
+    source_messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}]
+    prefix_text = tokenizer.apply_chat_template(
+        source_messages, tokenize=False, add_generation_prompt=False, enable_thinking=False)
     text = tokenizer.apply_chat_template(
-        [{"role": "system", "content": "You edit a meeting summary using only the draft."},
-         {"role": "user", "content": request}],
+        source_messages + [{"role": "user", "content": request}],
         tokenize=False, add_generation_prompt=True, enable_thinking=False)
-    return tokenizer.encode(text, add_special_tokens=False)
+    prefix_ids = tokenizer.encode(prefix_text, add_special_tokens=False)
+    full_ids = tokenizer.encode(text, add_special_tokens=False)
+    if full_ids[:len(prefix_ids)] != prefix_ids:
+        raise RuntimeError("Review chat template does not preserve the source prefix")
+    return full_ids[len(prefix_ids):]
 
 
 def specialist_text_prompt(tokenizer, handoff: str, *, enable_thinking=False) -> list[int]:

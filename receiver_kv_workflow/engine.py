@@ -286,18 +286,20 @@ class ReceiverKVRunner:
                 if not draft.strip():
                     review_result = {'status': 'skipped', 'reason': 'The draft summary is empty.'}
                 else:
-                    organize_ids = organize_prompt(self.tokenizer, draft)
-                    if len(organize_ids) >= self.context_limit:
-                        review_result = {'status': 'skipped', 'reason': 'Organization prompt leaves no output room; draft preserved.'}
+                    organize_ids = organize_prompt(self.tokenizer, draft, transcript)
+                    if len(prefix) + len(organize_ids) >= self.context_limit:
+                        review_result = {'status': 'skipped', 'reason': 'Source positions and review prompt leave no output room; draft preserved.'}
                     else:
-                        self.progress(f"{record_id}: draft-only summary organization started")
+                        self.progress(f"{record_id}: evidence-based summary review started ({len(selected)} source KV positions)")
                         self._sync()
                         start = time.perf_counter()
                         self.torch.manual_seed(self.config.review_seed)
+                        review_cache = select_cache(source, selected)
                         response, tokens, cap_hit, counts = generate(
-                            self.model, self.tokenizer, None, self._tensor(organize_ids),
-                            absolute_start=0, context_limit=self.context_limit, enable_thinking=False,
+                            self.model, self.tokenizer, review_cache, self._tensor(organize_ids),
+                            absolute_start=len(prefix), context_limit=self.context_limit, enable_thinking=False,
                             temperature=self.config.review_temperature, top_p=self.config.review_top_p)
+                        del review_cache
                         self._sync()
                         seconds = time.perf_counter() - start
                         organized, reasons = split_review_response(response)
@@ -314,7 +316,7 @@ class ReceiverKVRunner:
                                 'seed': self.config.review_seed, 'seconds': seconds,
                                 'temperature': self.config.review_temperature,
                                 'top_p': self.config.review_top_p,
-                                'source_kv_positions': 0, 'review_reasons_present': bool(reasons),
+                                'source_kv_positions': len(selected), 'review_reasons_present': bool(reasons),
                                 'possibly_missing_sections': missing_sections(draft, organized),
                                 'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit'],
                             }

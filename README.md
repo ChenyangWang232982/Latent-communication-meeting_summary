@@ -94,7 +94,7 @@ python -m receiver_kv_workflow.run \
 
 此时自然语言版本写入 `output/meeting1.specialist_text.txt`。也可以添加 `--routing-audit` 输出被选中的原文范围等审计文件。审计文件可能包含会议原文，请按原文的敏感程度保存。
 
-添加 `--review` 后，同一模型先仅根据初稿合并重复行动项，再使用 Qwen3 embedding 按整理后的条目检索原文发言块，将选中 KV 与整理稿交给模型核查。每条取最相近的两个块，按 `--speaker-neighbor-blocks` 扩展并合并重叠位置。`--output output/meeting1.txt` 保留初稿，另外输出 `meeting1.reviewed.txt`、`meeting1.reviewed.organized.txt` 和 `meeting1.reviewed.changes.txt`。变更记录包含文本差异及候选原文片段，不代表逐条已核验的引用。未启用 `--vector-routing` 时审校也会加载 `--embedding-model`。若任一步截断或缺少初稿中已有的标准章节，则跳过审校并保留初稿；章节检查不保证章内每一项完整。
+添加 `--review` 后，同一模型将摘要初稿与摘要阶段选中的原文 KV 一起用于整理和核查，不另做证据检索。选中 KV 可能遗漏原文内容，模型核查不能保证事实正确。`--output output/meeting1.txt` 保留初稿，另输出 `meeting1.reviewed.txt` 和 `meeting1.reviewed.changes.txt`，其中后者包含文本差异和模型给出的理由。审校输出为空或生成到上下文上限时会跳过审校并保留初稿；章节缺失仅在指标中提示。
 
 证据核查阶段要求模型说明每处修改的理由和证据依据；程序不再要求 JSON 或逐条匹配格式。能识别的理由会写入变更记录，否则记录未识别到独立理由。理由和依据由模型生成，并未独立验证，也不能保证模型为每处修改提供理由；第一步整理的变化仍以文本差异记录。
 
@@ -248,7 +248,7 @@ To generate the natural-language control as well, replace `--variants routed_kv`
 
 The text control is then written to `output/meeting1.specialist_text.txt`. Add `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
 
-With `--review`, the same model organizes and deduplicates all four summary sections using only the draft, preserving distinct facts, owners, dates and statuses. It does not receive source KV or fact-check. The draft remains at `--output`; `.reviewed.txt` contains the organized summary, and `.reviewed.changes.txt` contains textual differences and any detected reasons. Empty or truncated output is skipped and the draft preserved.
+With `--review`, the same model receives the draft and a fresh copy of the source KV selected for the summary. It organizes the four sections and checks the draft against that selected evidence, without a separate retrieval step. The evidence can be incomplete and model review does not guarantee factual accuracy. The draft remains at `--output`; `.reviewed.txt` contains the reviewed summary, and `.reviewed.changes.txt` contains textual differences and any detected reasons. Empty or truncated output is skipped and the draft preserved; missing sections are reported in metrics.
 
 The model is asked to explain each change, but reasons can be missing or inaccurate; use the textual diff for review.
 

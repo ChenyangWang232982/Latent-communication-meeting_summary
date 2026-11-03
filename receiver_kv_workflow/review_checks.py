@@ -28,7 +28,7 @@ def split_review_response(response):
 
 def change_log(draft, organized, reasons):
     lines = ['Summary organization change log',
-             'Textual differences and model-provided reasons; no source fact checking.', '',
+             'Textual differences and model-provided reasons; evidence review is not independently verified.', '',
              *difflib.unified_diff(draft.splitlines(), organized.splitlines(),
                                    fromfile='draft', tofile='organized', lineterm=''),
              '', 'Model-provided reasons (not independently verified):']
