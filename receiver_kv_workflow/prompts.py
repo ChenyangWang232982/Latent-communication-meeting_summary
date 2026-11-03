@@ -79,17 +79,14 @@ def prompt_parts(tokenizer, transcript, *, enable_thinking=False):
 def organize_prompt(tokenizer, draft: str) -> list[int]:
     request = (
         "<draft_summary>\n" + draft.strip() + "\n</draft_summary>\n\n"
-        "Edit the draft using only its own text. Review every item in Key Context, Decisions, "
-        "Action Items and Open Issues for genuinely duplicate information. Merge duplicates "
-        "only when their meaning and status match; retain all distinct facts, actions, owners, "
-        "dates, times, conditions and uncertainty. An issue may appear in multiple sections "
-        "when those entries express different context, decisions, actions or open questions. "
-        "For different owners with identical responsibilities, deadlines and conditions, "
-        "combine their names without adding any owner. Use 'All participants' only if the "
-        "draft explicitly states that everyone is responsible. Do not correct facts, infer "
-        "missing details, or invent information. Preserve all four section headings and every "
-        "distinct item. Return the complete organized summary first. After it, write a section "
-        "headed 'Review reasons' explaining each change; if unchanged, say so."
+        "Edit the meeting summary using only the draft.\n"
+        "- Merge duplicate items within each section.\n"
+        "- If multiple people have the same task, deadline and conditions, combine their names in one item.\n"
+        "- Keep distinct facts, tasks, dates, conditions and statuses separate. Do not add facts.\n"
+        "- Use 'All participants' only if the draft explicitly assigns the task to everyone.\n"
+        "- Keep all four section headings: Key Context, Decisions, Action Items and Open Issues.\n"
+        "Return the complete edited summary first. Then add a 'Review reasons' section "
+        "briefly explaining each actual change; if nothing changed, say 'No changes'."
     )
     text = tokenizer.apply_chat_template(
         [{"role": "system", "content": "You edit a meeting summary using only the draft."},
