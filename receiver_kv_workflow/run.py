@@ -24,7 +24,7 @@ def arguments():
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1,
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
-    parser.add_argument("--review", action="store_true", help="Edit the draft for consistency, duplicates and organization using only the draft")
+    parser.add_argument("--review", action="store_true", help="Retrieve draft-related speaker blocks and review using their KV cache")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
@@ -149,6 +149,12 @@ def main():
                         f"seconds={review['seconds']:.2f} | source KV positions={review['source_kv_positions']} | "
                         f"cap-hit={review['output_cap_hit']} | draft cap-hit={review['draft_output_cap_hit']}")
             rows.append(f"Generation seeds: summary={args.seed} | review={review['seed']} | decoding=greedy")
+            retrieval = review['retrieval']
+            rows.append(f"Review retrieval: draft items={retrieval['item_count']} | "
+                        f"matched blocks={retrieval['matched_block_count']}/{retrieval['speaker_block_count']} | "
+                        f"top blocks per item={retrieval['matches_per_item']} | "
+                        f"neighbors=+/-{retrieval['neighbor_blocks']} | "
+                        f"embedding tokens={retrieval['embedding_input_tokens']} | seconds={retrieval['seconds']:.2f}")
             rows.append(f"Review comparison: same text as draft={review['same_text_as_draft']}")
         else:
             rows.append(f"Review skipped: {review['reason']}")

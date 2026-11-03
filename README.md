@@ -94,7 +94,7 @@ python -m receiver_kv_workflow.run \
 
 此时自然语言版本写入 `output/meeting1.specialist_text.txt`。也可以添加 `--routing-audit` 输出被选中的原文范围等审计文件。审计文件可能包含会议原文，请按原文的敏感程度保存。
 
-添加 `--review` 可使用同一模型对摘要初稿进行复核、去重和条目位置调整。审校只接收初稿，不接收原文或原文 KV，无法核验事实。`--output output/meeting1.txt` 保留初稿，审校稿写入 `output/meeting1.reviewed.txt`，额外的输入、输出 token 和耗时单独记录在指标文件中。上下文不足时会跳过审校并保留初稿。
+添加 `--review` 后，程序使用 Qwen3 embedding 按摘要条目检索原文发言块，每条取相似度最高的两个块并按 `--speaker-neighbor-blocks` 扩展，合并重叠位置后将对应原文 KV、摘要初稿和去重指令交给同一模型。未启用 `--vector-routing` 时，审校仍会加载 `--embedding-model`。这是单一行动项去重任务，不是逐条事实核验，也不会为每条结论输出引用。`--output output/meeting1.txt` 保留初稿，审校稿写入 `output/meeting1.reviewed.txt`；检索及审校的额外成本记录在指标文件中。上下文不足时会跳过审校并保留初稿。
 
 默认关闭思考模式；添加 `--enable-thinking` 仅对最终摘要模型开启。两次对照请使用相同输入、参数和随机种子，并设置不同的 `--output`。思考内容不会写入摘要，运行指标单独记录 thinking/answer token；若思考未结束，摘要为空并标记不完整。思考和答案共用模型剩余上下文空间。
 
@@ -246,7 +246,7 @@ To generate the natural-language control as well, replace `--variants routed_kv`
 
 The text control is then written to `output/meeting1.specialist_text.txt`. Add `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
 
-Add `--review` to check the draft for internal consistency, merge duplicates, and organize its items using the same model. The editor receives only the draft, not the transcript or source KV, and cannot fact-check it. With `--output output/meeting1.txt`, the draft remains at that path and the edited version is saved as `output/meeting1.reviewed.txt`. Review time and token costs are recorded separately. If the review prompt exceeds the available context, review is skipped and the draft is preserved.
+With `--review`, Qwen3 embeddings retrieve the two most similar source speaker blocks per draft item, expand them by `--speaker-neighbor-blocks`, and merge overlapping source positions. Their original KV, the draft and an action-item deduplication request are sent to the same model. Review loads `--embedding-model` even without `--vector-routing`. This is not claim-by-claim fact checking and does not produce per-claim citations. With `--output output/meeting1.txt`, the draft remains there and the edit is saved as `output/meeting1.reviewed.txt`. Retrieval and review costs are recorded separately. If the review prompt exceeds the available context, review is skipped and the draft is preserved.
 
 Thinking is off by default. Add `--enable-thinking` to enable it for the final summary receiver. Use identical input, settings and seed and separate output paths for comparison. Reasoning text is not saved in the summary; metrics separately count thinking and answer tokens. An unfinished thinking section produces an empty summary and is flagged as incomplete. Thinking and the answer share the remaining model context.
 
