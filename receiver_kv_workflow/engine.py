@@ -76,7 +76,7 @@ class ReceiverKVRunner:
         return self.torch.tensor([ids], device=self.device, dtype=self.torch.long)
 
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...],
-            routing_audit: bool = False, review: bool = False) -> dict:
+            routing_audit: bool = False, review: bool = False, review_debug: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes, token_fingerprint
         from .scoring import query_scores
@@ -89,6 +89,8 @@ class ReceiverKVRunner:
             raise ValueError("variants must be routed_kv and/or specialist_text")
         if review and 'routed_kv' not in requested:
             raise ValueError('Summary review requires the routed_kv variant')
+        if review_debug and not review:
+            raise ValueError('Review debug requires review')
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript, enable_thinking=self.config.enable_thinking)
         query_text = dict(ROLE_QUERIES)
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
@@ -309,6 +311,36 @@ class ReceiverKVRunner:
                                       f"same generated tokens={review_result['same_generated_tokens_as_draft']}")
                         if cap_hit:
                             self.progress(f"{record_id}: warning: reviewed summary reached context limit")
+                        if review_debug:
+                            debug_ids = review_suffix(self.tokenizer, transcript, draft, debug_edit=True)
+                            if len(prefix) + len(debug_ids) >= self.context_limit:
+                                review_result['debug'] = {'status': 'skipped', 'reason': 'Diagnostic prompt leaves no output room.'}
+                            else:
+                                debug_results = {}
+                                for name, use_cache in (('without_kv', False), ('with_kv', True)):
+                                    self.progress(f"{record_id}: review diagnostic {name} started")
+                                    self._sync()
+                                    start = time.perf_counter()
+                                    debug_cache = select_cache(source, selected) if use_cache else None
+                                    debug_answer, debug_tokens, debug_cap, debug_counts = generate(
+                                        self.model, self.tokenizer, debug_cache, self._tensor(debug_ids),
+                                        absolute_start=len(prefix), context_limit=self.context_limit,
+                                        enable_thinking=False)
+                                    del debug_cache
+                                    self._sync()
+                                    debug_results[name] = {
+                                        'answer': debug_answer, 'output_tokens': debug_tokens,
+                                        'output_cap_hit': debug_cap, 'generation_counts': debug_counts,
+                                        'same_text_as_draft': debug_answer == draft,
+                                        'seconds': time.perf_counter() - start,
+                                    }
+                                review_result['debug'] = {
+                                    'status': 'completed', 'prompt_tokens': len(debug_ids),
+                                    'prompt_token_sha256': token_fingerprint(debug_ids),
+                                    'absolute_start': len(prefix), 'source_kv_positions': len(selected),
+                                    'same_text_between_conditions': debug_results['without_kv']['answer'] == debug_results['with_kv']['answer'],
+                                    'conditions': debug_results,
+                                }
         audit = None
         if routing_audit:
             from .routing_audit import build_audit

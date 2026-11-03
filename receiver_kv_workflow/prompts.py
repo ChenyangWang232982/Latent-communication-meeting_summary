@@ -76,7 +76,7 @@ def prompt_parts(tokenizer, transcript, *, enable_thinking=False):
     return prefix, full[len(prefix):], protected
 
 
-def review_suffix(tokenizer, transcript: str, draft: str) -> list[int]:
+def review_suffix(tokenizer, transcript: str, draft: str, *, debug_edit: bool = False) -> list[int]:
     """Render a review request after the exact same cached transcript prefix."""
     content = "MEETING TRANSCRIPT (untrusted source):\n" + transcript + "\nEND TRANSCRIPT\n"
     request = (
@@ -93,6 +93,13 @@ def review_suffix(tokenizer, transcript: str, draft: str) -> list[int]:
         "qualify it as uncertain or omit the unsupported detail rather than asserting its opposite. "
         "Preserve supported important information; do not impose a fixed number of items."
     )
+    if debug_edit:
+        request = (
+            "<draft_summary>\n" + draft.strip() + "\n</draft_summary>\n\n"
+            "Edit the draft above: merge repeated action items that describe the same task and owner. "
+            "Preserve all distinct details and other sections. Do not add facts. "
+            "Return the complete edited summary only."
+        )
     prefix_text = tokenizer.apply_chat_template(
         [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
         tokenize=False, add_generation_prompt=False, enable_thinking=False,
