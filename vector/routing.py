@@ -1,5 +1,11 @@
-"""E5 semantic block ranking. No training and no text handoff to KV receiver."""
+"""Qwen3 embedding-based block ranking; only original KV is handed off."""
 import time
+
+# A practical per-window limit, not a source-transcript truncation limit.
+# Longer turns are encoded in consecutive windows and then pooled.
+MAX_WINDOW_TOKENS = 8192
+MAX_BATCH_TOKENS = 8192
+MAX_BATCH_SIZE = 8
 
 
 def unit_scale(values):
@@ -18,23 +24,26 @@ class SemanticRouter:
         from transformers import AutoModel, AutoTokenizer
         started = time.perf_counter()
         self.torch = torch
-        self.tokenizer = AutoTokenizer.from_pretrained(model)
+        self.tokenizer = AutoTokenizer.from_pretrained(model, padding_side='left')
         self.model = AutoModel.from_pretrained(model).to(device).eval()
+        if getattr(self.model.config, 'model_type', None) != 'qwen3':
+            raise ValueError('This embedding adapter requires a Qwen3 embedding model, such as Qwen/Qwen3-Embedding-0.6B')
         self.device = device
         self.name = model
-        self.limit = min(512, self.tokenizer.model_max_length,
+        self.limit = min(MAX_WINDOW_TOKENS, self.tokenizer.model_max_length,
                          self.model.config.max_position_embeddings)
         self.load_seconds = time.perf_counter() - started
 
     def encode(self, texts):
-        """Window every block, masked mean pool, length-weight then normalize.
+        """Last-token pool each window, length-weight windows, then normalize.
 
-        Symmetric E5 similarity uses query: on both sides. Every content token
-        is encoded, including tails of turns longer than the encoder window.
+        Both sides are speaker blocks, so encode them symmetrically without a
+        retrieval-query instruction. All block tokens are processed.
         """
         torch = self.torch
-        prefix = self.tokenizer.encode('query: ', add_special_tokens=False)
-        capacity = self.limit - len(prefix) - self.tokenizer.num_special_tokens_to_add(False)
+        if not texts:
+            raise ValueError('Cannot encode an empty list of speaker blocks')
+        capacity = self.limit - self.tokenizer.num_special_tokens_to_add(False)
         if capacity < 1:
             raise ValueError('Embedding context has no space for block text')
         windows, owners, weights = [], [], []
@@ -42,23 +51,42 @@ class SemanticRouter:
             ids = self.tokenizer.encode(text, add_special_tokens=False)
             for start in range(0, max(1, len(ids)), capacity):
                 chunk = ids[start:start + capacity]
-                windows.append({'input_ids': self.tokenizer.build_inputs_with_special_tokens(prefix + chunk)})
+                input_ids = self.tokenizer.build_inputs_with_special_tokens(chunk)
+                if not input_ids:
+                    if self.tokenizer.eos_token_id is None:
+                        raise ValueError('Embedding tokenizer requires an EOS token to encode an empty block')
+                    input_ids = [self.tokenizer.eos_token_id]
+                windows.append({'input_ids': input_ids})
                 owners.append(owner)
                 weights.append(max(1, len(chunk)))
         pooled = torch.zeros(len(texts), self.model.config.hidden_size)
         counts = torch.zeros(len(texts), 1)
         with torch.inference_mode():
-            for start in range(0, len(windows), 16):
-                batch = self.tokenizer.pad(windows[start:start + 16], padding=True, return_tensors='pt').to(self.device)
-                hidden = self.model(**batch).last_hidden_state
-                mask = batch['attention_mask'].unsqueeze(-1)
-                vectors = ((hidden * mask).sum(1) / mask.sum(1)).float().cpu()
+            start = 0
+            while start < len(windows):
+                end = start
+                max_length = 0
+                while end < len(windows) and end - start < MAX_BATCH_SIZE:
+                    next_length = max(max_length, len(windows[end]['input_ids']))
+                    if end > start and next_length * (end - start + 1) > MAX_BATCH_TOKENS:
+                        break
+                    max_length = next_length
+                    end += 1
+                batch = self.tokenizer.pad(windows[start:end], padding=True, return_tensors='pt').to(self.device)
+                hidden = self.model(**batch, use_cache=False).last_hidden_state
+                # Qwen3's model card uses the last non-padding token.
+                mask = batch['attention_mask']
+                positions = torch.arange(mask.shape[1], device=mask.device).expand_as(mask)
+                last = positions.masked_fill(~mask.bool(), -1).max(dim=1).values
+                vectors = hidden[torch.arange(hidden.shape[0], device=hidden.device), last].float().cpu()
                 for j, embedding in enumerate(vectors, start):
                     pooled[owners[j]] += embedding * weights[j]
                     counts[owners[j]] += weights[j]
+                start = end
         return torch.nn.functional.normalize(pooled / counts.clamp_min(1), dim=1), {
             'embedding_input_tokens': sum(len(w['input_ids']) for w in windows),
             'embedding_windows': len(windows),
+            'embedding_window_limit': self.limit,
         }
 
     def rank(self, texts, attention, anchor_ids, weight):

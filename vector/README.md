@@ -10,31 +10,35 @@ a published routing algorithm. No vector database is needed.
 
 ## Model / 模型
 
-Default: `intfloat/multilingual-e5-small`, an existing multilingual embedding
-encoder (not a new 2025–2026 method). Uses Transformers already required by this
-project, no sentence-transformers dependency. CPU is the default to avoid
-competing with Qwen for GPU memory. The implementation is E5-specific: changing
-to an encoder requiring different pooling or prefixes needs a separate adapter.
+Default: `Qwen/Qwen3-Embedding-0.6B`, a multilingual embedding model. Uses
+Transformers already required by this project; no sentence-transformers
+dependency. CPU is the default to avoid competing with the summarization model
+for GPU memory; this model can take more memory and time than E5-small. The
+adapter uses Qwen3-specific pooling and is not an E5 adapter.
 
-Model instructions: https://huggingface.co/intfloat/multilingual-e5-small
+Model instructions: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
 
 ```bash
-python -m vector.download --output models/multilingual-e5-small
+python -m vector.download
 ```
 
 Downloads weights/tokenizer via Hugging Face; no model execution or training.
-Alternatively pass `--embedding-model intfloat/multilingual-e5-small` to download
-through Transformers on first use. Local model directories are ignored by Git.
+The default local path is `models/Qwen3-Embedding-0.6B`. Alternatively pass
+`--embedding-model Qwen/Qwen3-Embedding-0.6B` to download through Transformers
+on first use. Local model directories are ignored by Git.
 
 ## Algorithm / 方法
 
 1. Existing source prefill and role attention probes remain unchanged.
 2. Existing attention selection produces seed speaker blocks.
-3. Encode every speaker block with `query: ` for symmetric E5 similarity.
-   Blocks exceeding the 512-position encoder window are split into token windows;
-   masked mean pooling per window, content-length weighted block pooling, then
-   L2 normalization. All content tokens are processed; windowing can still lose
-   long-range semantic relations within a very long turn.
+3. Encode every speaker block symmetrically as text without a retrieval query
+   instruction. Pool the last non-padding hidden state from each window, in line
+   with the Qwen3 model card. Blocks exceeding the practical 8192-token window
+   are split into consecutive windows, combined using content-length weights,
+   then L2 normalized. The model supports 32K positions; the smaller window
+   bounds per-call resource use and is not a transcript truncation limit. All
+   content tokens are processed, but windowing can lose long-range relationships
+   within a very long turn. Pooling multiple windows is a workflow heuristic.
 4. Each block gets the maximum cosine similarity to an attention seed **other
    than itself**, including distant seeds. No iteration or extra LLM generation.
 5. Min-max normalize attention block scores and similarity scores separately.
@@ -61,7 +65,7 @@ python -m receiver_kv_workflow.run \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
-  --embedding-model models/multilingual-e5-small \
+  --embedding-model models/Qwen3-Embedding-0.6B \
   --embedding-device cpu \
   --vector-weight 0.3 \
   --variants routed_kv \
@@ -81,7 +85,7 @@ python -m meeting_evaluation.test \
   --receiver-kv-role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
-  --embedding-model models/multilingual-e5-small \
+  --embedding-model models/Qwen3-Embedding-0.6B \
   --variants routed_kv specialist_text \
   --device cuda
 ```

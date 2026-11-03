@@ -23,7 +23,7 @@ class ReceiverKVConfig:
     seed: int = 7
     speaker_neighbor_blocks: int = 1
     vector_routing: bool = False
-    embedding_model: str = "models/multilingual-e5-small"
+    embedding_model: str = "models/Qwen3-Embedding-0.6B"
     embedding_device: str = "cpu"
     vector_weight: float = 0.3
 
