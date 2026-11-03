@@ -7,7 +7,7 @@ import math
 import time
 from typing import Callable
 
-from .prompts import (ROLE_QUERIES, prompt_parts, review_suffix, selected_evidence_excerpts,
+from .prompts import (ROLE_QUERIES, prompt_parts, review_prompt, selected_evidence_excerpts,
                       specialist_sender_prompt, specialist_text_prompt)
 from .selection import select_spans, union_positions
 
@@ -278,27 +278,25 @@ class ReceiverKVRunner:
                     review_result = {'status': 'skipped', 'reason': 'The draft summary is empty.'}
                     self.progress(f"{record_id}: review skipped: draft summary is empty")
                 else:
-                    review_ids = review_suffix(self.tokenizer, transcript, draft)
-                    if len(prefix) + len(review_ids) >= self.context_limit:
+                    review_ids = review_prompt(self.tokenizer, draft)
+                    if len(review_ids) >= self.context_limit:
                         review_result = {'status': 'skipped', 'reason': 'Review prompt leaves no output room; draft preserved.',
                                          'prompt_tokens': len(review_ids)}
                         self.progress(f"{record_id}: review skipped: insufficient context; draft preserved")
                     else:
-                        self.progress(f"{record_id}: evidence-grounded summary review started")
+                        self.progress(f"{record_id}: draft-only summary review started")
                         self._sync()
                         review_start = time.perf_counter()
-                        review_cache = select_cache(source, selected)
                         reviewed, review_tokens, cap_hit, counts = generate(
-                            self.model, self.tokenizer, review_cache, self._tensor(review_ids),
-                            absolute_start=len(prefix), context_limit=self.context_limit, enable_thinking=False)
-                        del review_cache
+                            self.model, self.tokenizer, None, self._tensor(review_ids),
+                            absolute_start=0, context_limit=self.context_limit, enable_thinking=False)
                         self._sync()
                         review_result = {'status': 'completed', 'answer': reviewed,
                                          'prompt_tokens': len(review_ids), 'output_tokens': review_tokens,
                                          'generation_counts': counts, 'output_cap_hit': cap_hit,
                                          'same_text_as_draft': reviewed == draft,
                                          'seconds': time.perf_counter() - review_start,
-                                         'source_kv_positions': len(selected),
+                                         'source_kv_positions': 0,
                                          'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit']}
                         self.progress(f"{record_id}: review completed; same text as draft={reviewed == draft}")
                         if cap_hit:

@@ -24,7 +24,7 @@ def arguments():
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1,
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
-    parser.add_argument("--review", action="store_true", help="Review routed_kv summary using its selected source KV")
+    parser.add_argument("--review", action="store_true", help="Edit the draft for consistency, duplicates and organization using only the draft")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
