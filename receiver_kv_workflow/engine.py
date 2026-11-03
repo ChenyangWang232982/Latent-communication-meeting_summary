@@ -85,9 +85,9 @@ class ReceiverKVRunner:
         if not transcript.strip():
             raise ValueError(f"Transcript is empty: {record_id}")
         requested = tuple(dict.fromkeys(variants))
-        valid_variants = {"routed_kv", "specialist_text", "multi_specialist_kv"}
+        valid_variants = {"routed_kv", "specialist_text"}
         if not requested or any(name not in valid_variants for name in requested):
-            raise ValueError("Unknown workflow variant")
+            raise ValueError("variants must be routed_kv and/or specialist_text")
         if review and 'routed_kv' not in requested:
             raise ValueError('Summary review requires the routed_kv variant')
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript, enable_thinking=self.config.enable_thinking)
@@ -181,17 +181,6 @@ class ReceiverKVRunner:
                 detail = f" seeds={len(seed_selection)}, +/-{self.config.speaker_neighbor_blocks} blocks"
                 self.progress(f"{record_id}: speaker KV selection {len(selected)}/{baseline_positions} positions{detail}")
             answers, measurements = {}, {}
-            specialist_handoffs = None
-            if "multi_specialist_kv" in requested:
-                from multi_specialist_kv.workflow import run_multi
-                self.torch.manual_seed(self.config.seed)
-                multi_answer, specialist_handoffs, multi = run_multi(self, transcript, source, selected, prefix)
-                answers['multi_specialist_kv'] = multi_answer
-                multi['shared_source_positions'] = len(selected)
-                multi['pipeline_seconds_excluding_model_load'] = (
-                    prefill_seconds + selection_seconds + multi['receiver_seconds'] +
-                    sum(role['seconds'] for role in multi['roles'].values()))
-                measurements['multi_specialist_kv'] = multi
             if "routed_kv" in requested:
                 self.torch.manual_seed(self.config.seed)
                 receiver_start = time.perf_counter()
@@ -342,5 +331,4 @@ class ReceiverKVRunner:
             "seed_selected_positions": seed_selection,
             "baseline_selected_positions": baseline_positions,
             "review": review_result,
-            "specialist_handoffs": specialist_handoffs,
         }
