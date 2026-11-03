@@ -7,7 +7,7 @@ import math
 import time
 from typing import Callable
 
-from .prompts import (ROLE_QUERIES, prompt_parts, selected_evidence_excerpts,
+from .prompts import (ROLE_QUERIES, prompt_parts, review_suffix, selected_evidence_excerpts,
                       specialist_sender_prompt, specialist_text_prompt)
 from .selection import select_spans, union_positions
 
@@ -76,7 +76,7 @@ class ReceiverKVRunner:
         return self.torch.tensor([ids], device=self.device, dtype=self.torch.long)
 
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...],
-            routing_audit: bool = False) -> dict:
+            routing_audit: bool = False, review: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -87,6 +87,8 @@ class ReceiverKVRunner:
         valid_variants = {"routed_kv", "specialist_text"}
         if not requested or any(name not in valid_variants for name in requested):
             raise ValueError("variants must be routed_kv and/or specialist_text")
+        if review and 'routed_kv' not in requested:
+            raise ValueError('Summary review requires the routed_kv variant')
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript, enable_thinking=self.config.enable_thinking)
         query_text = dict(ROLE_QUERIES)
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
@@ -269,6 +271,36 @@ class ReceiverKVRunner:
                     "retrieved_evidence_tokens": evidence_tokens,
                     "retrieved_excerpt_count": excerpt_count,
                 }
+            review_result = None
+            if review:
+                draft = answers['routed_kv']
+                if not draft.strip():
+                    review_result = {'status': 'skipped', 'reason': 'The draft summary is empty.'}
+                    self.progress(f"{record_id}: review skipped: draft summary is empty")
+                else:
+                    review_ids = review_suffix(self.tokenizer, transcript, draft)
+                    if len(prefix) + len(review_ids) >= self.context_limit:
+                        review_result = {'status': 'skipped', 'reason': 'Review prompt leaves no output room; draft preserved.',
+                                         'prompt_tokens': len(review_ids)}
+                        self.progress(f"{record_id}: review skipped: insufficient context; draft preserved")
+                    else:
+                        self.progress(f"{record_id}: evidence-grounded summary review started")
+                        self._sync()
+                        review_start = time.perf_counter()
+                        review_cache = select_cache(source, selected)
+                        reviewed, review_tokens, cap_hit, counts = generate(
+                            self.model, self.tokenizer, review_cache, self._tensor(review_ids),
+                            absolute_start=len(prefix), context_limit=self.context_limit, enable_thinking=False)
+                        del review_cache
+                        self._sync()
+                        review_result = {'status': 'completed', 'answer': reviewed,
+                                         'prompt_tokens': len(review_ids), 'output_tokens': review_tokens,
+                                         'generation_counts': counts, 'output_cap_hit': cap_hit,
+                                         'seconds': time.perf_counter() - review_start,
+                                         'source_kv_positions': len(selected),
+                                         'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit']}
+                        if cap_hit:
+                            self.progress(f"{record_id}: warning: reviewed summary reached context limit")
         audit = None
         if routing_audit:
             from .routing_audit import build_audit
@@ -289,4 +321,5 @@ class ReceiverKVRunner:
             "speaker_neighbor_blocks": self.config.speaker_neighbor_blocks,
             "seed_selected_positions": seed_selection,
             "baseline_selected_positions": baseline_positions,
+            "review": review_result,
         }

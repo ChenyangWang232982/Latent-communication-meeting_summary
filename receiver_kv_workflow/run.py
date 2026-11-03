@@ -24,6 +24,7 @@ def arguments():
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1,
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
+    parser.add_argument("--review", action="store_true", help="Review routed_kv summary using its selected source KV")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
@@ -36,6 +37,8 @@ def arguments():
         parser.error("--role-budget-ratio must be in (0, 1]")
     if min(args.span_tokens, args.query_batch_tokens) < 1 or args.speaker_neighbor_blocks < 0:
         parser.error("Token budgets must be positive")
+    if args.review and 'routed_kv' not in args.variants:
+        parser.error('--review requires --variants to include routed_kv')
     return args
 
 
@@ -59,7 +62,7 @@ def main():
         **config_kwargs(args),
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants),
-                        routing_audit=args.routing_audit)
+                        routing_audit=args.routing_audit, review=args.review)
     answers = result["answers"]
     report = {
         "method": "Receiver-conditioned KV routing, CacheBack-inspired, NOT paper reproduction",
@@ -72,9 +75,12 @@ def main():
                      "query_batch_tokens": args.query_batch_tokens,
                      "selection_strategy": "speaker",
                      "enable_thinking": args.enable_thinking,
+                     "review": args.review,
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
+        "review": ({k: v for k, v in result['review'].items() if k != 'answer'}
+                   if result['review'] is not None else None),
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
                   "routed_kv and specialist_text use the identical selected source positions; only the specialist-to-receiver communication representation differs.",
                   "ROUGE-L is lexical reference overlap, not factual accuracy; no reference means N/A.",
@@ -112,6 +118,11 @@ def main():
         else:
             path = output_dir / f"{variant}.txt"
         path.write_text(answer + "\n", encoding="utf-8")
+    if result['review'] is not None and result['review']['status'] == 'completed':
+        review_path = (args.output.with_name(f"{args.output.stem}.reviewed{args.output.suffix or '.txt'}")
+                       if args.output else output_dir / 'routed_kv.reviewed.txt')
+        review_path.write_text(result['review']['answer'] + '\n', encoding='utf-8')
+        log(f"Reviewed summary: {review_path}")
     (metrics_dir / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     rows = ["Receiver-conditioned KV routing (experimental)",
             "variant | ROUGE-L | input positions | KV MiB | positions vs full | total seconds | output tokens | cap-hit"]
@@ -128,6 +139,15 @@ def main():
                     f"delimiter tokens={counts['delimiter_tokens']} | terminal tokens={counts['terminal_tokens']} | "
                     f"thinking complete={counts['thinking_complete']}")
     rows.extend(["", *report["notes"]])
+    if report['review'] is not None:
+        review = report['review']
+        rows.append(f"Review: status={review['status']}")
+        if review['status'] == 'completed':
+            rows.append(f"Review extra: prompt tokens={review['prompt_tokens']} | output tokens={review['output_tokens']} | "
+                        f"seconds={review['seconds']:.2f} | source KV positions={review['source_kv_positions']} | "
+                        f"cap-hit={review['output_cap_hit']} | draft cap-hit={review['draft_output_cap_hit']}")
+        else:
+            rows.append(f"Review skipped: {review['reason']}")
     if result["vector_routing"] is not None:
         vector = result["vector_routing"]
         rows.append(f"Embedding input tokens (separate encoder): {vector['embedding_input_tokens']}; "
