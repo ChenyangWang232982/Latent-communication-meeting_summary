@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime
 import json
+import math
 from pathlib import Path
 from .engine import ReceiverKVConfig, ReceiverKVRunner
 
@@ -32,7 +33,9 @@ def arguments():
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--enable-thinking", action="store_true", help="Enable thinking for the final summary receiver")
     parser.add_argument("--seed", type=int, default=7, help="Seed for source routing and summary generation (default: 7)")
-    parser.add_argument("--review-seed", type=int, default=7, help="Seed reset before review generation (default: 7; decoding is greedy)")
+    parser.add_argument("--review-seed", type=int, default=7, help="Seed reset before review generation (default: 7)")
+    parser.add_argument("--review-temperature", type=float, default=0.0, help="Review sampling temperature; 0 uses greedy decoding (default: 0)")
+    parser.add_argument("--review-top-p", type=float, default=0.9, help="Review nucleus sampling threshold (default: 0.9)")
     args = parser.parse_args()
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
@@ -40,6 +43,10 @@ def arguments():
         parser.error("Token budgets must be positive")
     if args.review and 'routed_kv' not in args.variants:
         parser.error('--review requires --variants to include routed_kv')
+    if not math.isfinite(args.review_temperature) or args.review_temperature < 0:
+        parser.error('--review-temperature must be finite and non-negative')
+    if not math.isfinite(args.review_top_p) or not 0 < args.review_top_p <= 1:
+        parser.error('--review-top-p must be in (0, 1]')
     return args
 
 
@@ -58,7 +65,8 @@ def main():
     runner = ReceiverKVRunner(ReceiverKVConfig(
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
-        seed=args.seed, review_seed=args.review_seed, enable_thinking=args.enable_thinking,
+        seed=args.seed, review_seed=args.review_seed, review_temperature=args.review_temperature,
+        review_top_p=args.review_top_p, enable_thinking=args.enable_thinking,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         **config_kwargs(args),
     ), progress=log)
@@ -151,7 +159,9 @@ def main():
             rows.append(f"Review extra: prompt tokens={review['prompt_tokens']} | output tokens={review['output_tokens']} | "
                         f"seconds={review['seconds']:.2f} | source KV positions={review['source_kv_positions']} | "
                         f"cap-hit={review['output_cap_hit']} | draft cap-hit={review['draft_output_cap_hit']}")
-            rows.append(f"Generation seeds: summary={args.seed} | review={review['seed']} | decoding=greedy")
+            rows.append(f"Generation seeds: summary={args.seed} | review={review['seed']} | "
+                        f"summary decoding=greedy | review decoding={'sampling' if review['temperature'] > 0 else 'greedy'} | "
+                        f"review temperature={review['temperature']} | review top_p={review['top_p']}")
             rows.append(f"Review comparison: same text as draft={review['same_text_as_draft']}")
             rows.append(f"Organization separate reasons present: {review['review_reasons_present']}")
             rows.append(f"Organization potentially missing sections: {review['possibly_missing_sections']}")

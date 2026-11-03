@@ -43,7 +43,8 @@ def forward_tokens(model, ids, cache, absolute_start, **kwargs):
 
 
 @torch.inference_mode()
-def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit, enable_thinking=False):
+def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit, enable_thinking=False,
+                          temperature=0.0, top_p=1.0):
     """Decode after a caller has already prefetched a complete receiver prompt."""
     eos = model.generation_config.eos_token_id
     eos = set(eos if isinstance(eos, list) else [eos])
@@ -54,7 +55,15 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
     if remaining < 1:
         raise ValueError("The prompt leaves no room for generated tokens in the model context.")
     for step in range(remaining):
-        token = output.logits[:, -1].argmax(dim=-1).view(1, 1)
+        logits = output.logits[:, -1].float()
+        if temperature == 0:
+            token = logits.argmax(dim=-1).view(1, 1)
+        else:
+            probabilities = torch.softmax(logits / temperature, dim=-1)
+            sorted_probs, sorted_ids = torch.sort(probabilities, descending=True)
+            discard = (sorted_probs.cumsum(dim=-1) - sorted_probs) >= top_p
+            sorted_probs = sorted_probs.masked_fill(discard, 0)
+            token = sorted_ids.gather(-1, torch.multinomial(sorted_probs, 1))
         value = token.item()
         generated.append(value)
         if value in eos:
@@ -91,7 +100,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
 
 
 @torch.inference_mode()
-def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, enable_thinking=False):
+def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, enable_thinking=False,
+             temperature=0.0, top_p=1.0):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
@@ -99,6 +109,6 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, 
     answer, generated, cap_hit, counts = generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
-        enable_thinking=enable_thinking,
+        enable_thinking=enable_thinking, temperature=temperature, top_p=top_p,
     )
     return answer, generated, cap_hit, counts

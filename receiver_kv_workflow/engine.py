@@ -21,6 +21,8 @@ class ReceiverKVConfig:
     query_batch_tokens: int = 8
     seed: int = 7
     review_seed: int = 7
+    review_temperature: float = 0.0
+    review_top_p: float = 0.9
     speaker_neighbor_blocks: int = 1
     vector_routing: bool = False
     embedding_model: str = "models/Qwen3-Embedding-0.6B"
@@ -40,6 +42,10 @@ class ReceiverKVRunner:
             raise ValueError("speaker_neighbor_blocks must be non-negative")
         if not 0 <= config.vector_weight <= 1:
             raise ValueError("vector_weight must be in [0, 1]")
+        if not math.isfinite(config.review_temperature) or config.review_temperature < 0:
+            raise ValueError("review_temperature must be finite and non-negative")
+        if not math.isfinite(config.review_top_p) or not 0 < config.review_top_p <= 1:
+            raise ValueError("review_top_p must be in (0, 1]")
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -290,7 +296,8 @@ class ReceiverKVRunner:
                         self.torch.manual_seed(self.config.review_seed)
                         response, tokens, cap_hit, counts = generate(
                             self.model, self.tokenizer, None, self._tensor(organize_ids),
-                            absolute_start=0, context_limit=self.context_limit, enable_thinking=False)
+                            absolute_start=0, context_limit=self.context_limit, enable_thinking=False,
+                            temperature=self.config.review_temperature, top_p=self.config.review_top_p)
                         self._sync()
                         seconds = time.perf_counter() - start
                         organized, reasons = split_review_response(response)
@@ -305,6 +312,8 @@ class ReceiverKVRunner:
                                 'generation_counts': counts, 'output_cap_hit': cap_hit,
                                 'same_text_as_draft': organized == draft,
                                 'seed': self.config.review_seed, 'seconds': seconds,
+                                'temperature': self.config.review_temperature,
+                                'top_p': self.config.review_top_p,
                                 'source_kv_positions': 0, 'review_reasons_present': bool(reasons),
                                 'possibly_missing_sections': missing_sections(draft, organized),
                                 'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit'],
