@@ -29,7 +29,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
-    parser.add_argument("--receiver-kv-max-new-tokens", type=int, default=1024)
     parser.add_argument("--device")
     parser.add_argument(
         "--skip-missing",
@@ -55,7 +54,6 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace) -> 
         "--receiver-kv-span-tokens", str(args.receiver_kv_span_tokens),
         "--speaker-neighbor-blocks", str(args.speaker_neighbor_blocks),
         "--receiver-kv-query-batch-tokens", str(args.receiver_kv_query_batch_tokens),
-        "--receiver-kv-max-new-tokens", str(args.receiver_kv_max_new_tokens),
     ])
     return command
 

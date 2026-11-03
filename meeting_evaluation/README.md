@@ -23,7 +23,6 @@ python -m meeting_evaluation.test \
   --receiver-kv-role-budget-ratio 0.25 \
   --receiver-kv-span-tokens 32 \
   --receiver-kv-query-batch-tokens 8 \
-  --receiver-kv-max-new-tokens 1024 \
   --device cuda
 ```
 

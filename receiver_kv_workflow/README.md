@@ -32,7 +32,6 @@ python -m receiver_kv_workflow.run \
   --model Qwen/Qwen3-4B \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
-  --max-new-tokens 1024 \
   --variants routed_kv specialist_text
 ```
 
@@ -49,7 +48,8 @@ sharing context does not guarantee consistency.
 ## Important limits
 
 - The full transcript is prefetched once and is never silently truncated.
-  The run fails if the prompt plus output reserve exceeds the model context.
+  Generation stops at EOS or when the remaining model context is exhausted;
+  the run fails if the prompt leaves no output room.
 - It supports dense full-attention Qwen3 models with standard RoPE only.
 - Smaller receiver KV does not imply lower peak GPU memory: the full source KV
   remains resident while routing and generation occur.

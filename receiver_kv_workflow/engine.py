@@ -20,7 +20,6 @@ class ReceiverKVConfig:
     role_budget_ratio: float = 0.15
     span_tokens: int = 32
     query_batch_tokens: int = 8
-    max_new_tokens: int = 1024
     seed: int = 7
     speaker_neighbor_blocks: int = 1
 
@@ -31,7 +30,7 @@ class ReceiverKVRunner:
     def __init__(self, config: ReceiverKVConfig, progress: Callable[[str], None] | None = None) -> None:
         if not 0 < config.role_budget_ratio <= 1:
             raise ValueError("role_budget_ratio must be in (0, 1]")
-        if min(config.span_tokens, config.query_batch_tokens, config.max_new_tokens) < 1:
+        if min(config.span_tokens, config.query_batch_tokens) < 1:
             raise ValueError("Token budgets must be positive")
         if config.speaker_neighbor_blocks < 0:
             raise ValueError("speaker_neighbor_blocks must be non-negative")
@@ -86,7 +85,7 @@ class ReceiverKVRunner:
             query_text["events"] = EVENT_QUERY
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
         required = len(prefix) + max(
-            len(suffix) + self.config.max_new_tokens,
+            len(suffix) + 1,
             max(map(len, queries.values())),
         )
         if required > self.context_limit:
@@ -151,7 +150,7 @@ class ReceiverKVRunner:
                 incoming_bytes = size_bytes(incoming)
                 answer, generated_tokens, output_cap_hit = generate(
                     self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
-                    max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
+                    context_limit=self.context_limit,
                 )
                 del incoming
                 self._sync()
@@ -180,25 +179,24 @@ class ReceiverKVRunner:
                 self.progress(f"{record_id}: specialist_text sender started")
                 excerpts, evidence_tokens, excerpt_count = selected_evidence_excerpts(self.tokenizer, transcript, selected)
                 sender_prompt = self._tensor(specialist_sender_prompt(self.tokenizer, excerpts))
-                available_output = min(self.config.max_new_tokens, self.context_limit - sender_prompt.shape[1])
-                if available_output < 1:
+                if sender_prompt.shape[1] >= self.context_limit:
                     raise ValueError(f"{record_id}: specialist text sender prompt exhausts the model context limit.")
                 specialist_start = time.perf_counter()
                 handoff, handoff_tokens, _ = generate(
                     self.model, self.tokenizer, None, sender_prompt,
-                    absolute_start=0, max_new_tokens=available_output, context_limit=self.context_limit,
+                    absolute_start=0, context_limit=self.context_limit,
                 )
                 self._sync()
                 specialist_seconds = time.perf_counter() - specialist_start
                 receiver_prompt = self._tensor(specialist_text_prompt(self.tokenizer, handoff))
-                if receiver_prompt.shape[1] + self.config.max_new_tokens > self.context_limit:
+                if receiver_prompt.shape[1] >= self.context_limit:
                     raise ValueError(
-                        f"{record_id}: specialist handoffs plus output reserve exceed the model context limit; no input was truncated."
+                        f"{record_id}: specialist handoff leaves no room for output in the model context; no input was truncated."
                     )
                 receiver_start = time.perf_counter()
                 answer, generated_tokens, output_cap_hit = generate(
                     self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
-                    max_new_tokens=self.config.max_new_tokens, context_limit=self.context_limit,
+                    context_limit=self.context_limit,
                 )
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start
@@ -238,16 +236,16 @@ class ReceiverKVRunner:
                 self.progress(f"{record_id}: {name} generation started using routed KV and summary")
                 grounded_request = summary_grounded_request(answers["routed_kv"], request)
                 derived_suffix = following_turn_suffix(self.tokenizer, transcript, grounded_request)
-                if len(prefix) + len(derived_suffix) + self.config.max_new_tokens > self.context_limit:
+                if len(prefix) + len(derived_suffix) >= self.context_limit:
                     raise ValueError(
-                        f"{record_id}: {name} context (source KV, summary, request and output reserve) "
-                        f"exceeds the model context limit; no text was truncated."
+                        f"{record_id}: {name} context (source KV, summary and request) leaves no room "
+                        f"for output in the model context; no text was truncated."
                     )
                 self._sync()
                 started = time.perf_counter()
                 derived_answer, generated, cap_hit = generate(
                     self.model, self.tokenizer, select_cache(source, selected), self._tensor(derived_suffix),
-                    absolute_start=len(prefix), max_new_tokens=self.config.max_new_tokens,
+                    absolute_start=len(prefix),
                     context_limit=self.context_limit,
                 )
                 self._sync()

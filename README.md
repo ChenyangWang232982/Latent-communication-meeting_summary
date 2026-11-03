@@ -80,7 +80,6 @@ python -m receiver_kv_workflow.run \
   --model Qwen/Qwen3-4B \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
-  --max-new-tokens 1024 \
   --variants routed_kv \
   --device cuda
 ```
@@ -110,7 +109,6 @@ python -m meeting_evaluation.test \
   --model Qwen/Qwen3-4B \
   --receiver-kv-role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
-  --receiver-kv-max-new-tokens 1024 \
   --device cuda
 ```
 
@@ -139,13 +137,12 @@ python -m meeting_evaluation.run_all \
 | `--speaker-neighbor-blocks` | 选中的 speaker block 前后各保留多少个相邻 block，默认 1；0 表示不扩张。 |
 | `--span-tokens` / `--receiver-kv-span-tokens` | 角色查询初步选择连续 token 位置时的 span 大小，默认 32；最终选择仍以完整 speaker block 为单位。 |
 | `--query-batch-tokens` / `--receiver-kv-query-batch-tokens` | 注意力查询计算的批次大小，默认 8。 |
-| `--max-new-tokens` / `--receiver-kv-max-new-tokens` | 生成输出的 token 上限，默认 1024；报告中的 `cap hits` 表示触及上限的次数。 |
 
 ROUGE-L 是与参考摘要的词序重叠指标，不等于事实准确率；source-support 是词汇重叠代理指标，不是人工事实核查。KV positions、KV 字节、logical model-token events、实际耗时是不同口径，不能直接互换。
 
 ## 当前边界
 
-全文会先做一次 prefill；如果输入加上生成预算超过模型支持的上下文长度，程序会报错，不会自动分块总结或静默截断。当前 cache 适配器针对标准 RoPE、全注意力的 Qwen3 模型；全文 KV 在路由期间仍会占用显存，接收端 KV 变小不等于整个进程的峰值显存同比下降。
+全文会先做一次 prefill；每次生成一直运行到模型输出结束标记或用尽模型上下文的剩余容量。如果输入已没有生成空间，程序会报错，不会自动分块总结或静默截断。`cap hits` 表示生成达到上下文边界；没有人为输出上限时，耗时和显存占用可能增加。当前 cache 适配器针对标准 RoPE、全注意力的 Qwen3 模型；全文 KV 在路由期间仍会占用显存，接收端 KV 变小不等于整个进程的峰值显存同比下降。
 
 更多实现说明见 [receiver_kv_workflow/README.md](receiver_kv_workflow/README.md) 和 [meeting_evaluation/README.md](meeting_evaluation/README.md)。
 
@@ -229,7 +226,6 @@ python -m receiver_kv_workflow.run \
   --model Qwen/Qwen3-4B \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
-  --max-new-tokens 1024 \
   --variants routed_kv \
   --device cuda
 ```
@@ -259,7 +255,6 @@ python -m meeting_evaluation.test \
   --model Qwen/Qwen3-4B \
   --receiver-kv-role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
-  --receiver-kv-max-new-tokens 1024 \
   --device cuda
 ```
 
@@ -288,12 +283,11 @@ The default inputs are `input/ami_test.jsonl`, `input/icsi_test.jsonl`, `input/q
 | `--speaker-neighbor-blocks` | Number of adjacent speaker blocks retained on each side of a selected block; default 1, or 0 to disable expansion. |
 | `--span-tokens` / `--receiver-kv-span-tokens` | Span size used in initial role-query position selection; default 32. Final selection uses complete speaker blocks. |
 | `--query-batch-tokens` / `--receiver-kv-query-batch-tokens` | Batch size for attention-query computation; default 8. |
-| `--max-new-tokens` / `--receiver-kv-max-new-tokens` | Generated-output token limit; default 1024. `cap hits` counts outputs that reached the limit. |
 
 ROUGE-L measures word-order overlap with a reference, not factual accuracy. Source-support is a lexical-overlap proxy, not a human factuality check. KV positions, KV bytes, logical model-token events, and elapsed time are different measures and cannot be directly converted into one another.
 
 ### Current limits
 
-The complete transcript is prefetched once. If the input plus generation reserve exceeds the model's context limit, the program raises an error; it does not automatically summarize document chunks or silently truncate the input. The cache adapter targets dense full-attention Qwen3 models with standard RoPE. The full source KV remains resident during routing, so a smaller receiver KV does not imply a proportional reduction in peak process memory.
+The complete transcript is prefetched once. Each generation continues until an EOS token or the remaining model context is exhausted. The program raises an error if the prompt leaves no output room; it does not automatically summarize document chunks or silently truncate the input. `cap hits` counts outputs that reach the context boundary. Without a user-set output limit, inference may take longer and use more memory. The cache adapter targets dense full-attention Qwen3 models with standard RoPE. The full source KV remains resident during routing, so a smaller receiver KV does not imply a proportional reduction in peak process memory.
 
 For implementation details, see [receiver_kv_workflow/README.md](receiver_kv_workflow/README.md) and [meeting_evaluation/README.md](meeting_evaluation/README.md).

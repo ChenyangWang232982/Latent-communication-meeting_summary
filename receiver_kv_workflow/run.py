@@ -24,8 +24,6 @@ def arguments():
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
-    parser.add_argument("--max-new-tokens", type=int, default=1024,
-                        help="Explicit final output reserve; report flags when exhausted")
     parser.add_argument("--timeline", action="store_true",
                         help="Generate a timeline using routed KV and the routed_kv summary")
     parser.add_argument("--decision-evolution", action="store_true",
@@ -37,7 +35,7 @@ def arguments():
     args = parser.parse_args()
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
-    if min(args.span_tokens, args.query_batch_tokens, args.max_new_tokens) < 1 or args.speaker_neighbor_blocks < 0:
+    if min(args.span_tokens, args.query_batch_tokens) < 1 or args.speaker_neighbor_blocks < 0:
         parser.error("Token budgets must be positive")
     if (args.timeline or args.decision_evolution) and "routed_kv" not in args.variants:
         parser.error("--timeline and --decision-evolution require --variants to include routed_kv")
@@ -58,7 +56,7 @@ def main():
     runner = ReceiverKVRunner(ReceiverKVConfig(
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
-        max_new_tokens=args.max_new_tokens, seed=args.seed,
+        seed=args.seed,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline,
@@ -71,7 +69,7 @@ def main():
         "source_cache_bytes": result["source_cache_bytes"], "prefill_seconds": result["prefill_seconds"],
         "selection_seconds": result["selection_seconds"], "roles": result["roles"],
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
-                     "query_batch_tokens": args.query_batch_tokens, "max_new_tokens": args.max_new_tokens,
+                     "query_batch_tokens": args.query_batch_tokens,
                      "timeline": args.timeline, "decision_evolution": args.decision_evolution, "selection_strategy": "speaker",
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
