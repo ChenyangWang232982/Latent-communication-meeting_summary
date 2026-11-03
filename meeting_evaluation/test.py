@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--device")
+    parser.add_argument("--enable-thinking", action="store_true", help="Enable thinking for the final summary receiver")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
                         default=["routed_kv", "specialist_text"])
     parser.add_argument("--communication-metrics-only", action="store_true",
@@ -53,7 +54,7 @@ def main() -> None:
         source_by_id = {record.id: record.context for record in records}
     from vector.cli import config_kwargs
     receiver_config = ReceiverKVConfig(
-        model=args.model, device=args.device or "cuda",
+        model=args.model, device=args.device or "cuda", enable_thinking=args.enable_thinking,
         role_budget_ratio=args.receiver_kv_role_budget_ratio,
         span_tokens=args.receiver_kv_span_tokens,
         query_batch_tokens=args.receiver_kv_query_batch_tokens,

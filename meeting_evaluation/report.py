@@ -40,6 +40,10 @@ def write_receiver_kv_reports(output_dir: Path, benchmark: str, metrics: dict[st
             f"{result['mean_specialist_seconds']:.3f} | {result['mean_receiver_seconds']:.3f} | "
             f"{result['mean_pipeline_seconds_excluding_model_load']:.3f} | {result['mean_generated_tokens']:.1f} | {result['output_cap_hits']}"
         )
+    lines += ["", "Receiver generation (mean): variant | thinking tokens | answer tokens | incomplete thinking"]
+    for variant in ("routed_kv", "specialist_text"):
+        result = efficiency["variants"][variant]
+        lines.append(f"{variant} | {result['mean_thinking_tokens']:.1f} | {result['mean_answer_tokens']:.1f} | {result['incomplete_thinking']}")
     lines += ["", "Logical model-token events per sample (mean)",
               "variant | source prefill | selection probes | specialist prompts | specialist handoffs | receiver prompt | receiver output | total input | total output | total"]
     for variant in ("routed_kv", "specialist_text"):
@@ -87,6 +91,10 @@ def write_receiver_kv_communication_reports(
             f"{result['mean_specialist_handoff_tokens']:.1f} | {result['mean_logical_payload_bytes']:.1f} | "
             f"{result['mean_pipeline_seconds_excluding_model_load']:.3f} | {result['mean_generated_tokens']:.1f} | {result['output_cap_hits']}"
         )
+    lines += ["", "Receiver generation (mean): variant | thinking tokens | answer tokens | incomplete thinking"]
+    for variant in variants:
+        result = efficiency["variants"][variant]
+        lines.append(f"{variant} | {result['mean_thinking_tokens']:.1f} | {result['mean_answer_tokens']:.1f} | {result['incomplete_thinking']}")
     lines += ["", "Logical model-token events per sample (mean)",
               "variant | source prefill | selection probes | sender prompt | text handoff | receiver prompt | receiver output | total input | total output | total"]
     for variant in variants:

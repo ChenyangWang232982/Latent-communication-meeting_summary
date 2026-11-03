@@ -64,7 +64,8 @@ def score_receiver_kv_results(
                "specialist_handoff_tokens": [], "specialist_seconds": [], "receiver_seconds": [],
                "pipeline_seconds": [], "generated_tokens": [], "output_cap_hits": 0,
                "source_prefill_tokens": [], "selection_probe_tokens": [], "specialist_prompt_tokens": [],
-               "receiver_prompt_tokens": [], "receiver_output_tokens": []}
+               "receiver_prompt_tokens": [], "receiver_output_tokens": [],
+               "thinking_tokens": [], "answer_tokens": [], "incomplete_thinking": 0}
         for name in variants
     }
     for result in results:
@@ -95,6 +96,10 @@ def score_receiver_kv_results(
             data["pipeline_seconds"].append(measurement["pipeline_seconds_excluding_model_load"])
             data["generated_tokens"].append(measurement["generated_tokens"])
             data["output_cap_hits"] += int(measurement["output_cap_hit"])
+            counts = measurement.get("generation_counts", {})
+            data["thinking_tokens"].append(counts.get("thinking_tokens", 0))
+            data["answer_tokens"].append(counts.get("answer_tokens", measurement["generated_tokens"]))
+            data["incomplete_thinking"] += int(not counts.get("thinking_complete", True))
             accounting = measurement.get("token_accounting", {})
             for field in ("source_prefill_tokens", "selection_probe_tokens", "specialist_prompt_tokens",
                           "receiver_prompt_tokens", "receiver_output_tokens"):
@@ -115,6 +120,9 @@ def score_receiver_kv_results(
                     "mean_receiver_seconds": _average(values["receiver_seconds"]),
                     "mean_pipeline_seconds_excluding_model_load": _average(values["pipeline_seconds"]),
                     "mean_generated_tokens": _average(values["generated_tokens"]),
+                    "mean_thinking_tokens": _average(values["thinking_tokens"]),
+                    "mean_answer_tokens": _average(values["answer_tokens"]),
+                    "incomplete_thinking": values["incomplete_thinking"],
                     "output_cap_hits": values["output_cap_hits"],
                     "mean_source_prefill_tokens": _average(values["source_prefill_tokens"]),
                     "mean_selection_probe_tokens": _average(values["selection_probe_tokens"]),

@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--device")
+    parser.add_argument("--enable-thinking", action="store_true", help="Enable thinking for the final summary receiver")
     parser.add_argument(
         "--skip-missing",
         action="store_true",
@@ -49,6 +50,8 @@ def test_command(benchmark: str, input_path: Path, args: argparse.Namespace) -> 
     ]
     if args.device:
         command.extend(["--device", args.device])
+    if args.enable_thinking:
+        command.append("--enable-thinking")
     command.extend([
         "--receiver-kv-role-budget-ratio", str(args.receiver_kv_role_budget_ratio),
         "--receiver-kv-span-tokens", str(args.receiver_kv_span_tokens),

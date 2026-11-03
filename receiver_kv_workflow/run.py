@@ -29,6 +29,7 @@ def arguments():
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
                         default=["routed_kv", "specialist_text"])
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--enable-thinking", action="store_true", help="Enable thinking for the final summary receiver")
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
     if not 0 < args.role_budget_ratio <= 1:
@@ -53,7 +54,7 @@ def main():
     runner = ReceiverKVRunner(ReceiverKVConfig(
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
-        seed=args.seed,
+        seed=args.seed, enable_thinking=args.enable_thinking,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         **config_kwargs(args),
     ), progress=log)
@@ -70,6 +71,7 @@ def main():
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens,
                      "selection_strategy": "speaker",
+                     "enable_thinking": args.enable_thinking,
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
@@ -121,6 +123,10 @@ def main():
                     f"{values['incoming_cache_bytes']/2**20:.1f} | {position_delta_text} | "
                     f"{values['pipeline_seconds_excluding_model_load']:.2f} | "
                     f"{values['generated_tokens']} | {values['output_cap_hit']}")
+        counts = values['generation_counts']
+        rows.append(f"  thinking tokens={counts['thinking_tokens']} | answer tokens={counts['answer_tokens']} | "
+                    f"delimiter tokens={counts['delimiter_tokens']} | terminal tokens={counts['terminal_tokens']} | "
+                    f"thinking complete={counts['thinking_complete']}")
     rows.extend(["", *report["notes"]])
     if result["vector_routing"] is not None:
         vector = result["vector_routing"]

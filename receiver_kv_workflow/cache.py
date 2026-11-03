@@ -43,7 +43,7 @@ def forward_tokens(model, ids, cache, absolute_start, **kwargs):
 
 
 @torch.inference_mode()
-def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit):
+def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit, enable_thinking=False):
     """Decode after a caller has already prefetched a complete receiver prompt."""
     eos = model.generation_config.eos_token_id
     eos = set(eos if isinstance(eos, list) else [eos])
@@ -63,11 +63,35 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
         if step + 1 < remaining:
             output = forward_tokens(model, token, output.past_key_values, next_position, logits_to_keep=1)
             next_position += 1
-    return tokenizer.decode(generated, skip_special_tokens=True), len(generated), not stopped
+    # Count the generated sequence itself, not a re-tokenization of decoded text.
+    content = generated[:-1] if stopped else generated
+    terminal_tokens = len(generated) - len(content)
+    delimiter_tokens = 0
+    reasoning_tokens = 0
+    thinking_complete = True
+    if enable_thinking:
+        marker = tokenizer.encode('</think>', add_special_tokens=False)
+        if not marker:
+            raise ValueError('Tokenizer does not encode the thinking delimiter.')
+        boundary = next((i for i in range(len(content) - len(marker) + 1)
+                         if content[i:i + len(marker)] == marker), None)
+        thinking_complete = boundary is not None
+        if thinking_complete:
+            reasoning_tokens = boundary
+            delimiter_tokens = len(marker)
+            content = content[boundary + len(marker):]
+        else:
+            # An unfinished thinking section is not a final summary.
+            reasoning_tokens = len(content)
+            content = []
+    counts = {'thinking_tokens': reasoning_tokens, 'answer_tokens': len(content),
+              'delimiter_tokens': delimiter_tokens, 'terminal_tokens': terminal_tokens,
+              'thinking_complete': thinking_complete}
+    return tokenizer.decode(content, skip_special_tokens=True), len(generated), not stopped, counts
 
 
 @torch.inference_mode()
-def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit):
+def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, enable_thinking=False):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
@@ -75,4 +99,5 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit):
     return generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
+        enable_thinking=enable_thinking,
     )

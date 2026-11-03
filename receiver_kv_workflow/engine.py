@@ -24,6 +24,7 @@ class ReceiverKVConfig:
     vector_routing: bool = False
     embedding_model: str = "models/Qwen3-Embedding-0.6B"
     vector_weight: float = 0.3
+    enable_thinking: bool = False
 
 
 class ReceiverKVRunner:
@@ -86,7 +87,7 @@ class ReceiverKVRunner:
         valid_variants = {"routed_kv", "specialist_text"}
         if not requested or any(name not in valid_variants for name in requested):
             raise ValueError("variants must be routed_kv and/or specialist_text")
-        prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
+        prefix, suffix, protected = prompt_parts(self.tokenizer, transcript, enable_thinking=self.config.enable_thinking)
         query_text = dict(ROLE_QUERIES)
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
         required = len(prefix) + max(
@@ -183,10 +184,12 @@ class ReceiverKVRunner:
                 incoming = select_cache(source, ids)
                 absolute_start, payload_bytes = len(prefix), size_bytes(incoming)
                 incoming_bytes = size_bytes(incoming)
-                answer, generated_tokens, output_cap_hit = generate(
+                answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
-                    context_limit=self.context_limit,
+                    context_limit=self.context_limit, enable_thinking=self.config.enable_thinking,
                 )
+                if not generation_counts['thinking_complete']:
+                    self.progress(f"{record_id}: warning: thinking did not finish; final summary is empty")
                 del incoming
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start
@@ -201,6 +204,7 @@ class ReceiverKVRunner:
                     "receiver_seconds": receiver_seconds,
                     "pipeline_seconds_excluding_model_load": prefill_seconds + selection_seconds + receiver_seconds,
                     "generated_tokens": generated_tokens, "output_cap_hit": output_cap_hit,
+                    "generation_counts": generation_counts,
                     "token_accounting": {
                         "source_prefill_tokens": len(prefix),
                         "selection_probe_tokens": selection_probe_tokens,
@@ -217,22 +221,25 @@ class ReceiverKVRunner:
                 if sender_prompt.shape[1] >= self.context_limit:
                     raise ValueError(f"{record_id}: specialist text sender prompt exhausts the model context limit.")
                 specialist_start = time.perf_counter()
-                handoff, handoff_tokens, _ = generate(
+                handoff, handoff_tokens, _, _ = generate(
                     self.model, self.tokenizer, None, sender_prompt,
                     absolute_start=0, context_limit=self.context_limit,
                 )
                 self._sync()
                 specialist_seconds = time.perf_counter() - specialist_start
-                receiver_prompt = self._tensor(specialist_text_prompt(self.tokenizer, handoff))
+                receiver_prompt = self._tensor(specialist_text_prompt(
+                    self.tokenizer, handoff, enable_thinking=self.config.enable_thinking))
                 if receiver_prompt.shape[1] >= self.context_limit:
                     raise ValueError(
                         f"{record_id}: specialist handoff leaves no room for output in the model context; no input was truncated."
                     )
                 receiver_start = time.perf_counter()
-                answer, generated_tokens, output_cap_hit = generate(
+                answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
-                    context_limit=self.context_limit,
+                    context_limit=self.context_limit, enable_thinking=self.config.enable_thinking,
                 )
+                if not generation_counts['thinking_complete']:
+                    self.progress(f"{record_id}: warning: thinking did not finish; final summary is empty")
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start
                 answers["specialist_text"] = answer
@@ -250,6 +257,7 @@ class ReceiverKVRunner:
                     "pipeline_seconds_excluding_model_load": prefill_seconds + selection_seconds + specialist_seconds + receiver_seconds,
                     "generated_tokens": generated_tokens,
                     "output_cap_hit": output_cap_hit,
+                    "generation_counts": generation_counts,
                     "token_accounting": {
                         "source_prefill_tokens": len(prefix),
                         "selection_probe_tokens": selection_probe_tokens,
