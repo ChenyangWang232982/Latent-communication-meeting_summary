@@ -7,9 +7,8 @@ import math
 import time
 from typing import Callable
 
-from .prompts import (DECISION_EVOLUTION_REQUEST, EVENT_QUERY, ROLE_QUERIES, TIMELINE_REQUEST,
-                      following_turn_suffix, prompt_parts, selected_evidence_excerpts,
-                      specialist_sender_prompt, specialist_text_prompt, summary_grounded_request)
+from .prompts import (ROLE_QUERIES, prompt_parts, selected_evidence_excerpts,
+                      specialist_sender_prompt, specialist_text_prompt)
 from .selection import select_spans, union_positions
 
 
@@ -76,8 +75,8 @@ class ReceiverKVRunner:
     def _tensor(self, ids):
         return self.torch.tensor([ids], device=self.device, dtype=self.torch.long)
 
-    def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...], timeline: bool = False,
-            decision_evolution: bool = False, routing_audit: bool = False) -> dict:
+    def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...],
+            routing_audit: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -88,12 +87,8 @@ class ReceiverKVRunner:
         valid_variants = {"routed_kv", "specialist_text"}
         if not requested or any(name not in valid_variants for name in requested):
             raise ValueError("variants must be routed_kv and/or specialist_text")
-        if (timeline or decision_evolution) and "routed_kv" not in requested:
-            raise ValueError("timeline and decision evolution require the routed_kv summary")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
         query_text = dict(ROLE_QUERIES)
-        if timeline:
-            query_text["events"] = EVENT_QUERY
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
         required = len(prefix) + max(
             len(suffix) + 1,
@@ -124,7 +119,7 @@ class ReceiverKVRunner:
             role_scores = []
             selection_seconds = 0.0
             selection_probe_tokens = 0
-            if timeline or requested:
+            if requested:
                 selection_start = time.perf_counter()
                 for index, (role, query) in enumerate(queries.items(), start=1):
                     self.progress(f"{record_id}: selector {role} started ({index - 1}/{len(queries)} complete)")
@@ -267,32 +262,6 @@ class ReceiverKVRunner:
                     "retrieved_evidence_tokens": evidence_tokens,
                     "retrieved_excerpt_count": excerpt_count,
                 }
-            derived_answers, derived_metrics = {}, {}
-            for name, enabled, request in (
-                ("timeline", timeline, TIMELINE_REQUEST),
-                ("decision_evolution", decision_evolution, DECISION_EVOLUTION_REQUEST),
-            ):
-                if not enabled:
-                    continue
-                self.progress(f"{record_id}: {name} generation started using routed KV and summary")
-                grounded_request = summary_grounded_request(answers["routed_kv"], request)
-                derived_suffix = following_turn_suffix(self.tokenizer, transcript, grounded_request)
-                if len(prefix) + len(derived_suffix) >= self.context_limit:
-                    raise ValueError(
-                        f"{record_id}: {name} context (source KV, summary and request) leaves no room "
-                        f"for output in the model context; no text was truncated."
-                    )
-                self._sync()
-                started = time.perf_counter()
-                derived_answer, generated, cap_hit = generate(
-                    self.model, self.tokenizer, select_cache(source, selected), self._tensor(derived_suffix),
-                    absolute_start=len(prefix),
-                    context_limit=self.context_limit,
-                )
-                self._sync()
-                derived_answers[name] = derived_answer
-                derived_metrics[name] = {"prompt_tokens": len(derived_suffix), "output_tokens": generated,
-                                         "output_cap_hit": cap_hit, "seconds": time.perf_counter() - started}
         audit = None
         if routing_audit:
             from .routing_audit import build_audit
@@ -313,7 +282,4 @@ class ReceiverKVRunner:
             "speaker_neighbor_blocks": self.config.speaker_neighbor_blocks,
             "seed_selected_positions": seed_selection,
             "baseline_selected_positions": baseline_positions,
-            "timeline": derived_answers.get("timeline"),
-            "decision_evolution": derived_answers.get("decision_evolution"),
-            "derived_metrics": derived_metrics,
         }

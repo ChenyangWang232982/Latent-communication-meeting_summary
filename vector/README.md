@@ -69,12 +69,12 @@ python -m receiver_kv_workflow.run \
   --embedding-device cpu \
   --vector-weight 0.3 \
   --variants routed_kv \
-  --timeline --decision-evolution --routing-audit
+  --routing-audit
 ```
 
 Remove `--vector-routing` and change output filename for the attention-only
-control. Keep all other flags, including timeline, identical: timeline adds an
-events selector query. The embedding stage itself does not change prompts.
+control. Keep all other flags identical. The embedding stage itself does not
+change prompts.
 
 ```bash
 python -m meeting_evaluation.test \

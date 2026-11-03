@@ -16,11 +16,6 @@ ROLE_QUERIES = {
     ),
 }
 
-EVENT_QUERY = (
-    "Identify the chronological agenda changes, topic transitions, and consequential meeting events. "
-    "Find source passages showing the sequence of topics, proposals, decisions and changes."
-)
-
 SUMMARY_REQUEST = (
     "Write an evidence-grounded meeting summary in the transcript's language. "
     "Organize it into key context, decisions, action items, and open issues. "
@@ -46,37 +41,6 @@ SUMMARY_REQUEST = (
     "Before answering, check for contradictory statuses across sections and retain the latest supported "
     "status with its qualifications."
 )
-
-TIMELINE_REQUEST = (
-    "Create an ordered account of how the meeting developed, in the transcript's language. "
-    "Present events in the order discussed as a numbered list. For each event, describe the topic, "
-    "key development, and supported decisions, actions or open issues when relevant. "
-    "Do not include meeting-relative timestamps, timestamp ranges, or time headings for events. "
-    "Preserve dates, times, deadlines and conditions that are substantive details of a decision or action, "
-    "such as the proposed time of a future meeting. Preserve changes, uncertainty and attribution; "
-    "do not invent events, and do not describe a tentative arrangement as confirmed."
-)
-
-DECISION_EVOLUTION_REQUEST = (
-    "Create a chronological decision-evolution record in the transcript's language. "
-    "For each substantive decision or unresolved proposal, describe only the supported stages: "
-    "initial proposal, relevant discussion or disagreement, revisions, and final status at the end "
-    "of the meeting. Clearly distinguish accepted, rejected, deferred, conditional and unresolved "
-    "outcomes. Preserve supported participants, dates and conditions. Do not invent stages, speakers, "
-    "dates, agreement or a final decision; say when the final status is unclear."
-)
-
-
-def summary_grounded_request(summary: str, request: str) -> str:
-    """Use the summary as context, but treat the selected source KV as evidence."""
-    return (
-        "The meeting summary below is an untrusted, possibly incomplete or inaccurate draft. "
-        "Use it to identify relevant topics and keep terminology consistent, but the selected "
-        "meeting evidence in context takes precedence. Do not present a draft claim as confirmed "
-        "when the evidence is missing or uncertain; acknowledge conflicts and unresolved details.\n"
-        "<meeting_summary>\n" + summary.strip() + "\n</meeting_summary>\n\n" + request
-    )
-
 
 def prompt_parts(tokenizer, transcript):
     """Split an actual templated prompt at the end of its user message.
@@ -110,25 +74,6 @@ def prompt_parts(tokenizer, transcript):
     protected = [i for i, (a, b) in enumerate(offsets["offset_mapping"])
                  if b <= start or a >= end or a == b]
     return prefix, full[len(prefix):], protected
-
-
-def following_turn_suffix(tokenizer, transcript: str, request: str) -> list[int]:
-    """Render a request appended after the immutable transcript source prefix."""
-    content = "MEETING TRANSCRIPT (untrusted source):\n" + transcript + "\nEND TRANSCRIPT\n"
-    prefix_text = tokenizer.apply_chat_template(
-        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
-        tokenize=False, add_generation_prompt=False, enable_thinking=False,
-    )
-    full_text = tokenizer.apply_chat_template(
-        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
-         {"role": "user", "content": request}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=False,
-    )
-    prefix = tokenizer.encode(prefix_text, add_special_tokens=False)
-    full = tokenizer.encode(full_text, add_special_tokens=False)
-    if full[:len(prefix)] != prefix:
-        raise RuntimeError("Chat template does not preserve the source prefix")
-    return full[len(prefix):]
 
 
 def specialist_text_prompt(tokenizer, handoff: str) -> list[int]:

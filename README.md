@@ -18,7 +18,7 @@
 
 ```text
 input/                  输入转录和已准备的评测数据
-output/                 会议摘要、可选 timeline 和 audit
+output/                 会议摘要和可选 audit
 test_result/            评测报告和运行指标
 receiver_kv_workflow/   摘要工作流
 data_preprocess/        评测数据预处理
@@ -92,11 +92,9 @@ python -m receiver_kv_workflow.run \
 --variants routed_kv specialist_text
 ```
 
-此时自然语言版本写入 `output/meeting1.specialist_text.txt`。也可以添加 `--timeline` 输出独立的时间线，或添加 `--routing-audit` 输出被选中的原文范围等审计文件。审计文件可能包含会议原文，请按原文的敏感程度保存。
+此时自然语言版本写入 `output/meeting1.specialist_text.txt`。也可以添加 `--routing-audit` 输出被选中的原文范围等审计文件。审计文件可能包含会议原文，请按原文的敏感程度保存。
 
-同时生成时间线和决策演变记录，可以在摘要命令中加入 `--timeline --decision-evolution`。两者分别以**同一份选中原文 KV + `routed_kv` 摘要文本**作为上下文，各自生成独立结果：`output/meeting1.timeline.txt` 和 `output/meeting1.decisions.txt`。摘要作为参考，模型仍应以选中 KV 中的原文证据为准；这有助于一致性，但不能保证没有矛盾。两个附加步骤的 token 和耗时单独列在 metrics 中，不包含在原摘要 pipeline 的统计内。启用这两个选项时 `--variants` 必须包含 `routed_kv`。
 
-时间线按讨论顺序列出事件，不要求会议进行中的时间戳；下次会议日期、行动截止时间等事实仍会保留。事件顺序由模型推断，仍需与原文核对。
 
 ## 评测
 
@@ -152,7 +150,7 @@ ROUGE-L 是与参考摘要的词序重叠指标，不等于事实准确率；sou
 
 ## English
 
-This project uses training-free receiver-conditioned KV routing to generate meeting summaries and compare KV communication with a natural-language handoff. It takes a speaker-labelled transcript as input and produces summaries, an optional timeline, and evaluation metrics.
+This project uses training-free receiver-conditioned KV routing to generate meeting summaries and compare KV communication with a natural-language handoff. It takes a speaker-labelled transcript as input and produces summaries and evaluation metrics.
 
 ```text
 transcript → full-source KV prefill → role queries and speaker-block selection
@@ -166,7 +164,7 @@ transcript → full-source KV prefill → role queries and speaker-block selecti
 
 ```text
 input/                  Transcripts and prepared evaluation data
-output/                 Summaries and optional timeline / audit
+output/                 Summaries and optional audit
 test_result/            Evaluation reports and runtime metrics
 receiver_kv_workflow/   Summarization workflow
 data_preprocess/        Benchmark preparation
@@ -240,11 +238,9 @@ To generate the natural-language control as well, replace `--variants routed_kv`
 --variants routed_kv specialist_text
 ```
 
-The text control is then written to `output/meeting1.specialist_text.txt`. Add `--timeline` to generate a separate timeline, or `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
+The text control is then written to `output/meeting1.specialist_text.txt`. Add `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
 
-Add `--timeline --decision-evolution` to generate both a timeline and a decision-evolution record. Each uses the same selected source KV plus the `routed_kv` summary text as context and is written separately to `output/meeting1.timeline.txt` and `output/meeting1.decisions.txt`. The summary is a reference rather than authoritative evidence; this can improve consistency but cannot guarantee it. The extra steps' token counts and elapsed time appear separately in the metrics and are not included in the original summary pipeline totals. These options require `routed_kv` in `--variants`.
 
-The timeline lists events in discussion order without meeting-relative timestamps. Substantive dates and times, such as a future meeting schedule or an action deadline, are preserved. The model infers event order, which should still be checked against the transcript.
 
 ### Evaluation
 
