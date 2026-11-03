@@ -306,57 +306,41 @@ class ReceiverKVRunner:
                 derived_metrics[name] = {"prompt_tokens": len(derived_suffix), "output_tokens": generated,
                                          "output_cap_hit": cap_hit, "seconds": time.perf_counter() - started}
             if grouped_decisions:
-                from decision_tracking.grouping import build_groups
-                from decision_tracking.prompts import GROUP_REQUEST
-                self.progress(f"{record_id}: grouping decision topics across all source speaker blocks")
-                grouping_started = time.perf_counter()
+                from decision_tracking.workflow import run_two_stage
+                embedding_started = time.perf_counter()
                 extra_embedding = None
                 if decision_vectors is None:
                     texts = [self.tokenizer.decode([prefix[i] for i in block], skip_special_tokens=True)
                              for block in speaker_blocks]
                     decision_vectors, extra_embedding = self.semantic_router.encode(texts)
-                decision_index = list(queries).index('decisions')
-                groups = build_groups(decision_vectors, speaker_blocks, messages[decision_index], protected,
-                                      threshold=decision_similarity, neighbors=self.config.speaker_neighbor_blocks)
-                grouping_seconds = time.perf_counter() - grouping_started
-                request = summary_grounded_request(answers['routed_kv'], GROUP_REQUEST)
-                group_suffix = following_turn_suffix(self.tokenizer, transcript, request)
-                if len(prefix) + len(group_suffix) >= self.context_limit:
-                    raise ValueError(f"{record_id}: decision topic context leaves no room for output; no input was truncated.")
-                outputs, group_audit = [], []
-                total_output, cap_hits, generation_seconds = 0, 0, 0.0
-                for number, group in enumerate(groups, start=1):
-                    self.progress(f"{record_id}: decision topic {number}/{len(groups)} started "
-                                  f"({len(groups)-number} remaining; {len(group['block_ids'])} blocks)")
+                extra_embedding_seconds = time.perf_counter() - embedding_started
+
+                def generate_decision(positions, request):
+                    request = summary_grounded_request(answers['routed_kv'], request)
+                    suffix = following_turn_suffix(self.tokenizer, transcript, request)
+                    if len(prefix) + len(suffix) >= self.context_limit:
+                        raise ValueError(f"{record_id}: decision context leaves no room for output; no input was truncated.")
                     self._sync()
                     started = time.perf_counter()
                     answer, generated, cap_hit = generate(
-                        self.model, self.tokenizer, select_cache(source, group['positions']),
-                        self._tensor(group_suffix), absolute_start=len(prefix), context_limit=self.context_limit)
+                        self.model, self.tokenizer, select_cache(source, positions),
+                        self._tensor(suffix), absolute_start=len(prefix), context_limit=self.context_limit)
                     self._sync()
-                    elapsed = time.perf_counter() - started
-                    generation_seconds += elapsed
-                    total_output += generated
-                    cap_hits += int(cap_hit)
-                    outputs.append(f"### Candidate topic {number}\n\n{answer.strip()}")
-                    group_audit.append({**{key: value for key, value in group.items() if key != 'positions'},
-                                        'source_positions': len(group['positions']),
-                                        'output_tokens': generated, 'output_cap_hit': cap_hit,
-                                        'seconds': elapsed})
-                derived_answers['decision_evolution'] = ('\n\n'.join(outputs) if outputs else
-                    'No decision-related source blocks were selected for topic analysis.')
-                derived_metrics['decision_evolution'] = {
-                    'prompt_tokens': len(group_suffix) * len(groups), 'output_tokens': total_output,
-                    'output_cap_hit': bool(cap_hits), 'seconds': grouping_seconds + generation_seconds,
-                    'mode': 'grouped', 'group_count': len(groups), 'grouping_seconds': grouping_seconds,
-                    'generation_seconds': generation_seconds, 'cap_hits': cap_hits,
-                    'source_kv_positions_across_calls': sum(len(group['positions']) for group in groups),
-                    'extra_embedding': extra_embedding,
-                    'note': 'Embedding vectors are reused from vector routing when available; '
-                            'topic calls and grouping are additional to the summary pipeline.'}
-                decision_tracking_audit = {'similarity_threshold': decision_similarity,
-                                           'neighbors': self.config.speaker_neighbor_blocks,
-                                           'group_count': len(groups), 'groups': group_audit}
+                    return answer, {'prompt_tokens': len(suffix), 'output_tokens': generated,
+                                    'output_cap_hit': cap_hit, 'seconds': time.perf_counter() - started,
+                                    'source_positions': len(positions)}
+
+                answer, metrics, decision_tracking_audit = run_two_stage(
+                    generate=generate_decision, router=self.semantic_router,
+                    source_vectors=decision_vectors, blocks=speaker_blocks,
+                    initial_positions=selected, protected=protected,
+                    threshold=decision_similarity, neighbors=self.config.speaker_neighbor_blocks,
+                    progress=lambda message: self.progress(f"{record_id}: {message}"))
+                metrics['extra_source_embedding'] = extra_embedding
+                metrics['extra_source_embedding_seconds'] = extra_embedding_seconds
+                metrics['seconds'] += extra_embedding_seconds
+                derived_answers['decision_evolution'] = answer
+                derived_metrics['decision_evolution'] = metrics
         audit = None
         if routing_audit:
             from .routing_audit import build_audit

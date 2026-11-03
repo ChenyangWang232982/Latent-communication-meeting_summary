@@ -302,5 +302,5 @@ See [vector/README.md](vector/README.md) for embedding model download,
 `--vector-routing`, inference/evaluation commands and accounting details.
 向量模块辅助选择发言块，最终仍传原始 KV；默认不启用，便于保留原方法对照。
 
-For optional per-topic decision evolution, see [decision_tracking/README.md](decision_tracking/README.md).
+For optional two-stage decision evolution (checklist, evidence retrieval, joint analysis), see [decision_tracking/README.md](decision_tracking/README.md).
 按议题关联发言并生成决策演变的可选流程见上述说明。

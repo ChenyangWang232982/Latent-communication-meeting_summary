@@ -31,9 +31,9 @@ def arguments():
     parser.add_argument("--decision-evolution", action="store_true",
                         help="Generate a decision-evolution record using routed KV and the routed_kv summary")
     parser.add_argument("--grouped-decisions", action="store_true",
-                        help="Generate decision evolution per semantic topic; requires --vector-routing")
+                        help="Generate a checklist then joint decision evolution (two calls); requires --vector-routing")
     parser.add_argument("--decision-similarity", type=float, default=0.75,
-                        help="Candidate topic cosine threshold in [-1,1]; experimental")
+                        help="Checklist-to-source cosine threshold in [-1,1]; experimental")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
                         default=["routed_kv", "specialist_text"])
     parser.add_argument("--device", default="cuda")
@@ -150,9 +150,9 @@ def main():
     for name, values in result["derived_metrics"].items():
         rows.append(f"{name} | prompt tokens={values['prompt_tokens']} | output tokens={values['output_tokens']} | "
                     f"seconds={values['seconds']:.2f} | cap-hit={values['output_cap_hit']}")
-        if values.get('mode') == 'grouped':
-            rows.append(f"  candidate topics={values['group_count']} | grouping seconds={values['grouping_seconds']:.2f} | "
-                        f"topic generation seconds={values['generation_seconds']:.2f} | cap hits={values['cap_hits']} | "
+        if values.get('mode') == 'two_stage':
+            rows.append(f"  generation calls={values['generation_calls']} | checklist items={values['checklist_items']} | retrieval seconds={values['retrieval_seconds']:.2f} | "
+                        f"generation seconds={values['generation_seconds']:.2f} | cap hits={values['cap_hits']} | "
                         f"source KV positions across calls={values['source_kv_positions_across_calls']}")
     if result["derived_metrics"]:
         rows.append("Timeline/decision generation costs above are additional to the per-variant pipeline measurements.")

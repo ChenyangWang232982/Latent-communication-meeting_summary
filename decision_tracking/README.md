@@ -1,71 +1,60 @@
-# Semantic candidate topics for decision evolution / 语义关联决策演变
+# Two-stage decision evolution
 
-An optional experiment using the existing Qwen3 embedding model and the single
-source prefill. `--grouped-decisions` replaces the one-pass decision-evolution
-output with per-topic analysis; it does not change the summary or timeline.
-It requires `--vector-routing` and automatically enables decision evolution.
+现在使用两阶段决策分析：先通过已选 KV 和摘要生成决策清单，再用清单向全文
+发言块检索关联证据，合并去重后一次性生成所有决策的变化。决策分析固定增加
+两次大模型生成，不再对每个候选主题分别生成。摘要与时间线流程不变。
 
-## Flow / 流程
+清单是自然语言中间态；原文证据仍通过 KV 传递。保留原来的已选位置并补入
+检索到的块，因此这一步可能增加 KV 覆盖范围，不能承诺进一步压缩。
+JSON 审计中可检查清单、匹配分数及新增位置；实际质量和速度仍需实测。
 
-1. The normal attention-based `decisions` query selects source token positions.
-   Every speaker block intersecting those positions becomes a candidate seed;
-   this is a retrieval signal, not proof that a decision exists.
-2. Reuse the vectors computed for **all** speaker blocks in vector routing.
-   Decision seed blocks are grouped by cosine similarity to the first seed of
-   each group. Every remaining source block can join its nearest representative
-   if its similarity meets the threshold, even when that block was omitted from
-   the summary receiver's KV.
-3. Expand each group by the configured preceding/following speaker blocks,
-   deduplicate positions, and keep their original transcript order. Neighbor
-   expansion can make topics overlap. Frame tokens and the group's original
-   source KV are selected from the one full source cache.
-4. Run one receiver generation per candidate topic using that KV and the final
-   natural-language summary as an untrusted draft. The prompt asks the model to
-   check whether excerpts actually concern the same decision, distinguish
-   proposal, change and final status, and report uncertainty. Outputs are
-   concatenated in representative source order; there is no separate merge
-   model or hard-coded claim filter.
+`--grouped-decisions` now performs **two additional LLM generations**, replacing
+one generation per semantic group. It requires `--vector-routing`, implies decision
+ evolution, and leaves the summary and timeline paths unchanged.
 
-向量只负责生成候选关联，不能证明同一议题、判断否定或最终结论。候选组可能
-混合多个议题、重复、遗漏或因代词缺少语境产生错误；最终结果需要核对原文。
-整个源 KV 保持驻留，所选 KV 位置是同一份完整前缀的切片，并非独立计算后拼接。
-该流程不训练模型、不修改摘要，绝不保证组内讨论完整或全局最终结论正确。
+1. Original selected source KV plus the final summary produce a short decision/proposal checklist.
+2. Embed checklist items and match against the reused embeddings of **all** speaker blocks.
+   Keep every block above `--decision-similarity` (default 0.75, experimental), or the
+   closest block if no block reaches it. The audit labels this fallback explicitly.
+   Expand by `--speaker-neighbor-blocks`, union with the original selected positions,
+   deduplicate, and sort in source order. No source text is silently dropped to meet a budget.
+3. The merged original-source KV, summary and checklist produce one joint decision-evolution
+   report. Similarity is only retrieval; the model checks proposal identity and final status.
+   It may add supported decisions missing from the checklist. Neither completeness nor
+   correct interpretation is guaranteed.
 
-The threshold `--decision-similarity` defaults to 0.75 as an unvalidated
-experimental setting; it is not a calibrated probability. More or fewer groups
-and inclusion changes can result. `--speaker-neighbor-blocks` is shared with
-summary selection. There is no fixed maximum topic count; a long meeting can
-require many receiver calls and run significantly longer. Outputs may repeat.
+The checklist is a natural-language intermediate, not latent communication. Evidence is
+supplied through original KV slices, preserving original positions. Source KV is computed
+once. There is no fixed checklist count or per-topic generation loop. This reduces call
+count, not necessarily retained KV size; evidence union may approach the full transcript.
+Long outputs still take time and model context capacity remains a limit. Insufficient
+input capacity raises an error rather than truncating evidence or the checklist.
 
-## Linux example
+## Linux
 
 ```bash
 python -m receiver_kv_workflow.run \
   --transcript input/meeting1.txt \
-  --output output/vector/meeting1_grouped.txt \
+  --output output/vector/meeting1_two_stage.txt \
   --model Qwen/Qwen3-4B \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
+  --embedding-device cuda \
   --grouped-decisions \
-  --decision-similarity 0.75 \
   --variants routed_kv \
   --timeline \
   --routing-audit
 ```
 
-Outputs include the existing summary, `.timeline.txt`, grouped `.decisions.txt`
-and `.audit.json`/`.audit.txt`. The JSON audit and `metrics.json` contain seed,
-matched and expanded block IDs, similarity scores, per-topic KV position counts,
-generation time and cap hits. The text audit continues to show normal routing;
-use the JSON for topic groups. Embedding inputs and time are counted in vector
-routing, reused rather than recalculated for groups. Grouping and receiver calls
-are additional; prompt tokens are summed across calls, and model context limits
-still apply. The intermediate topic vectors, source text and KV are not copied
-into the decision prompt as text; only the final summary is a text handoff.
+The final report is `.decisions.txt`. JSON audit records the checklist, matching scores,
+expanded block IDs, final KV positions and newly added positions. The normal text audit
+still describes summary routing; use JSON to inspect decision retrieval.
+`metrics.json` includes both stages' input/output tokens, time, cap hits and additional
+checklist embedding tokens (separate encoder). These costs are additional to summary
+pipeline metrics. Source embedding cost is already counted in vector routing.
 
-For comparison, replace `--grouped-decisions` with `--decision-evolution` and
-keep all other options identical. Assess per-decision coverage, source evidence,
-supersession and participant/negation accuracy manually or against labelled
-data, together with total retained KV positions and added time/tokens. Comparing
-one meeting and lexical overlap alone does not establish an improvement.
+For the original one-pass baseline, replace `--grouped-decisions` with
+`--decision-evolution`. Compare coverage of decisions and subsequent revisions, final
+status, factuality and total runtime on the same meetings; reduced calls alone do not
+prove better output quality.

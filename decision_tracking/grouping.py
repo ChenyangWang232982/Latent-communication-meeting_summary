@@ -1,50 +1,34 @@
-"""Build auditable candidate topic groups without treating similarity as a decision."""
+"""Retrieve candidate evidence; similarity never establishes a decision."""
+import re
 
 
-def build_groups(vectors, blocks, decision_positions, protected, *, threshold=0.75, neighbors=1):
-    """Cluster decision seeds, then associate all source blocks and neighbors.
+def checklist_items(text):
+    items = []
+    for line in text.splitlines():
+        match = re.match(r"^\s*(?:[-*?]|\d+[.)])\s+(.+?)\s*$", line)
+        if match and match.group(1) not in items:
+            items.append(match.group(1))
+    return items or ([text.strip()] if text.strip() else [])
 
-    A representative is the first decision-seed block in source order. Other
-    seeds join the closest representative above threshold; each non-seed block
-    joins its closest representative if above threshold. Groups may overlap
-    after neighbor expansion. Similarity is only a candidate-generation signal.
-    """
-    if not -1 <= threshold <= 1:
-        raise ValueError('Decision similarity threshold must be in [-1, 1]')
-    if neighbors < 0:
-        raise ValueError('Decision neighbor count cannot be negative')
-    if len(vectors) != len(blocks):
-        raise ValueError('Block and embedding counts differ')
-    decision_set = set(decision_positions) - set(protected)
-    seeds = [i for i, block in enumerate(blocks) if decision_set.intersection(block)]
-    if not seeds:
-        return []
-    similarities = (vectors @ vectors.T).tolist()
-    groups = []
-    seed_set = set(seeds)
-    for i in seeds:
-        if groups:
-            best = max(range(len(groups)), key=lambda j: similarities[i][groups[j]['representative']])
-            if similarities[i][groups[best]['representative']] >= threshold:
-                groups[best]['seed_blocks'].append(i)
-                continue
-        groups.append({'representative': i, 'seed_blocks': [i], 'matched_blocks': []})
-    for i in range(len(blocks)):
-        if i in seed_set:
-            continue
-        best = max(range(len(groups)), key=lambda j: similarities[i][groups[j]['representative']])
-        similarity = similarities[i][groups[best]['representative']]
-        if similarity >= threshold:
-            groups[best]['matched_blocks'].append({'block': i, 'similarity': similarity})
-    for group in groups:
-        matched = [m['block'] for m in group['matched_blocks']]
-        core = set(group['seed_blocks'] + matched)
-        expanded = set(core)
+
+def retrieve_positions(queries, vectors, blocks, initial_positions, protected,
+                       *, threshold=0.75, neighbors=1):
+    if not -1 <= threshold <= 1 or neighbors < 0:
+        raise ValueError("Invalid decision retrieval threshold or neighbor count")
+    if len(vectors) != len(blocks) or not blocks:
+        raise ValueError("Decision retrieval requires aligned, nonempty source blocks")
+    positions = set(initial_positions) | set(protected)
+    audit = []
+    for scores in (queries @ vectors.T).tolist():
+        core = [i for i, score in enumerate(scores) if score >= threshold]
+        fallback = not core
+        if fallback:
+            core = [max(range(len(scores)), key=scores.__getitem__)]
+        expanded = set()
         for i in core:
             expanded.update(range(max(0, i-neighbors), min(len(blocks), i+neighbors+1)))
-        group['block_ids'] = sorted(expanded)
-        positions = set(protected)
-        for i in group['block_ids']:
+        for i in expanded:
             positions.update(blocks[i])
-        group['positions'] = sorted(positions)
-    return groups
+        audit.append({"matched_blocks": [{"block": i, "similarity": scores[i]} for i in core],
+                      "block_ids": sorted(expanded), "below_threshold_fallback": fallback})
+    return sorted(positions), audit
