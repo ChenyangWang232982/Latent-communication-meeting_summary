@@ -66,11 +66,14 @@ python -m receiver_kv_workflow.run \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
   --embedding-model models/Qwen3-Embedding-0.6B \
-  --embedding-device cpu \
+  --device cuda \
   --vector-weight 0.3 \
   --variants routed_kv \
   --routing-audit
 ```
+
+The shared `--device` selects the device for both the language model and the
+embedding model. Use `--device cpu` to run both on CPU.
 
 Remove `--vector-routing` and change output filename for the attention-only
 control. Keep all other flags identical. The embedding stage itself does not

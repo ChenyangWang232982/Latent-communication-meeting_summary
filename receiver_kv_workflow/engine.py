@@ -23,7 +23,6 @@ class ReceiverKVConfig:
     speaker_neighbor_blocks: int = 1
     vector_routing: bool = False
     embedding_model: str = "models/Qwen3-Embedding-0.6B"
-    embedding_device: str = "cpu"
     vector_weight: float = 0.3
 
 
@@ -66,7 +65,7 @@ class ReceiverKVRunner:
         if config.vector_routing:
             from vector.routing import SemanticRouter
             self.progress("loading embedding model")
-            self.semantic_router = SemanticRouter(config.embedding_model, config.embedding_device)
+            self.semantic_router = SemanticRouter(config.embedding_model, config.device)
 
     def _sync(self) -> None:
         if self.device.type == "cuda":
