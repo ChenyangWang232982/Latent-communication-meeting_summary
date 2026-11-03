@@ -7,7 +7,7 @@ import math
 import time
 from typing import Callable
 
-from .prompts import (ROLE_QUERIES, prompt_parts, organize_prompt, review_prompt, selected_evidence_excerpts,
+from .prompts import (ROLE_QUERIES, prompt_parts, organize_prompt, selected_evidence_excerpts,
                       specialist_sender_prompt, specialist_text_prompt)
 from .selection import select_spans, union_positions
 
@@ -275,78 +275,41 @@ class ReceiverKVRunner:
                 }
             review_result = None
             if review:
+                from .review_checks import change_log, missing_sections, split_review_response
                 draft = answers['routed_kv']
                 if not draft.strip():
                     review_result = {'status': 'skipped', 'reason': 'The draft summary is empty.'}
-                    self.progress(f"{record_id}: review skipped: draft summary is empty")
                 else:
-                    from .review_checks import missing_sections
                     organize_ids = organize_prompt(self.tokenizer, draft)
                     if len(organize_ids) >= self.context_limit:
                         review_result = {'status': 'skipped', 'reason': 'Organization prompt leaves no output room; draft preserved.'}
                     else:
-                        self.progress(f"{record_id}: draft-only organization started")
+                        self.progress(f"{record_id}: draft-only summary organization started")
                         self._sync()
                         start = time.perf_counter()
                         self.torch.manual_seed(self.config.review_seed)
-                        organized, org_tokens, org_cap, org_counts = generate(
+                        response, tokens, cap_hit, counts = generate(
                             self.model, self.tokenizer, None, self._tensor(organize_ids),
                             absolute_start=0, context_limit=self.context_limit, enable_thinking=False)
                         self._sync()
-                        org_seconds = time.perf_counter() - start
-                        missing = missing_sections(draft, organized)
-                        if org_cap or not organized.strip():
+                        seconds = time.perf_counter() - start
+                        organized, reasons = split_review_response(response)
+                        if cap_hit or not organized.strip():
                             review_result = {'status': 'skipped', 'reason':
-                                f'Organization incomplete (cap-hit={org_cap}, missing sections={missing}); draft preserved.'}
+                                f'Organization incomplete (cap-hit={cap_hit}); draft preserved.'}
                         else:
-                            review_ids = review_prompt(self.tokenizer, transcript, organized)
-                            if len(prefix) + len(review_ids) >= self.context_limit:
-                                review_result = {'status': 'skipped', 'reason': 'Evidence review leaves no output room; draft preserved.'}
-                            else:
-                                if self.semantic_router is None:
-                                    from vector.routing import SemanticRouter
-                                    self.progress(f"{record_id}: loading embedding model for review retrieval")
-                                    self.semantic_router = SemanticRouter(self.config.embedding_model, self.config.device)
-                                from .review_retrieval import retrieve_review_positions
-                                self.progress(f"{record_id}: retrieving speaker blocks for organized items")
-                                review_positions, retrieval = retrieve_review_positions(
-                                    self.semantic_router, self.tokenizer, prefix, speaker_blocks, protected, organized,
-                                    neighbors=self.config.speaker_neighbor_blocks)
-                                self.progress(f"{record_id}: evidence-KV review started with {len(review_positions)} positions")
-                                self._sync()
-                                start = time.perf_counter()
-                                self.torch.manual_seed(self.config.review_seed)
-                                review_cache = select_cache(source, review_positions)
-                                review_response, review_tokens, cap_hit, counts = generate(
-                                    self.model, self.tokenizer, review_cache, self._tensor(review_ids),
-                                    absolute_start=len(prefix), context_limit=self.context_limit, enable_thinking=False)
-                                del review_cache
-                                self._sync()
-                                review_seconds = time.perf_counter() - start
-                                from .review_checks import split_review_response
-                                reviewed, reasons = split_review_response(review_response)
-                                missing = missing_sections(draft, reviewed)
-                                if cap_hit or not reviewed.strip():
-                                    review_result = {'status': 'skipped', 'reason':
-                                        f'Evidence review incomplete (cap-hit={cap_hit}, missing sections={missing}); draft preserved.'}
-                                else:
-                                    from .review_checks import change_log
-                                    excerpts, _, _ = selected_evidence_excerpts(self.tokenizer, transcript, review_positions)
-                                    changes = change_log(draft, organized, reviewed, retrieval, reasons)
-                                    changes += "\nCandidate retrieved source excerpts (not claim-level citations):\n" + excerpts + "\n"
-                                    review_result = {'status': 'completed', 'answer': reviewed,
-                                        'organized': organized, 'changes': changes,
-                                        'prompt_tokens': len(review_ids), 'output_tokens': review_tokens,
-                                        'generation_counts': counts, 'output_cap_hit': cap_hit,
-                                        'same_text_as_draft': reviewed == draft,
-                                        'seed': self.config.review_seed, 'seconds': review_seconds,
-                                        'organization': {'prompt_tokens': len(organize_ids), 'output_tokens': org_tokens,
-                                            'output_cap_hit': org_cap, 'seconds': org_seconds, 'generation_counts': org_counts},
-                                        'source_kv_positions': len(review_positions), 'retrieval': retrieval,
-                                        'possibly_missing_sections': missing,
-                                        'review_reasons_present': bool(reasons),
-                                        'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit']}
-                                    self.progress(f"{record_id}: review completed; same text as draft={reviewed == draft}")
+                            review_result = {
+                                'status': 'completed', 'answer': organized,
+                                'changes': change_log(draft, organized, reasons),
+                                'prompt_tokens': len(organize_ids), 'output_tokens': tokens,
+                                'generation_counts': counts, 'output_cap_hit': cap_hit,
+                                'same_text_as_draft': organized == draft,
+                                'seed': self.config.review_seed, 'seconds': seconds,
+                                'source_kv_positions': 0, 'review_reasons_present': bool(reasons),
+                                'possibly_missing_sections': missing_sections(draft, organized),
+                                'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit'],
+                            }
+                            self.progress(f"{record_id}: organization completed; same text as draft={organized == draft}")
         audit = None
         if routing_audit:
             from .routing_audit import build_audit
