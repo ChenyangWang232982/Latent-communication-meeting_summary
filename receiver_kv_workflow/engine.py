@@ -77,8 +77,7 @@ class ReceiverKVRunner:
         return self.torch.tensor([ids], device=self.device, dtype=self.torch.long)
 
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...], timeline: bool = False,
-            decision_evolution: bool = False, routing_audit: bool = False,
-            grouped_decisions: bool = False, decision_similarity: float = 0.75) -> dict:
+            decision_evolution: bool = False, routing_audit: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -91,10 +90,6 @@ class ReceiverKVRunner:
             raise ValueError("variants must be routed_kv and/or specialist_text")
         if (timeline or decision_evolution) and "routed_kv" not in requested:
             raise ValueError("timeline and decision evolution require the routed_kv summary")
-        if grouped_decisions and (not decision_evolution or self.semantic_router is None):
-            raise ValueError("Grouped decisions require decision_evolution and vector_routing")
-        if not -1 <= decision_similarity <= 1:
-            raise ValueError("decision_similarity must be in [-1, 1]")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
         query_text = dict(ROLE_QUERIES)
         if timeline:
@@ -146,7 +141,6 @@ class ReceiverKVRunner:
             baseline_positions = len(selected)
             seed_selection = list(selected)
             vector_metrics = None
-            decision_vectors = None
             if selected:
                 from .speaker_blocks import expand_neighbor_blocks, select_complete_blocks
                 boundary_start = time.perf_counter()
@@ -165,13 +159,8 @@ class ReceiverKVRunner:
                     if anchors:
                         texts = [self.tokenizer.decode([prefix[i] for i in block], skip_special_tokens=True)
                                  for block in speaker_blocks]
-                        ranked = self.semantic_router.rank(
-                            texts, attention, anchors, self.config.vector_weight,
-                            return_vectors=grouped_decisions)
-                        if grouped_decisions:
-                            scores, vector_metrics, decision_vectors = ranked
-                        else:
-                            scores, vector_metrics = ranked
+                        scores, vector_metrics = self.semantic_router.rank(
+                            texts, attention, anchors, self.config.vector_weight)
                         selected = select_complete_blocks(speaker_blocks, baseline_selection, role_scores,
                                                           protected, block_scores=scores)
                     else:
@@ -279,10 +268,9 @@ class ReceiverKVRunner:
                     "retrieved_excerpt_count": excerpt_count,
                 }
             derived_answers, derived_metrics = {}, {}
-            decision_tracking_audit = None
             for name, enabled, request in (
                 ("timeline", timeline, TIMELINE_REQUEST),
-                ("decision_evolution", decision_evolution and not grouped_decisions, DECISION_EVOLUTION_REQUEST),
+                ("decision_evolution", decision_evolution, DECISION_EVOLUTION_REQUEST),
             ):
                 if not enabled:
                     continue
@@ -305,42 +293,6 @@ class ReceiverKVRunner:
                 derived_answers[name] = derived_answer
                 derived_metrics[name] = {"prompt_tokens": len(derived_suffix), "output_tokens": generated,
                                          "output_cap_hit": cap_hit, "seconds": time.perf_counter() - started}
-            if grouped_decisions:
-                from decision_tracking.workflow import run_two_stage
-                embedding_started = time.perf_counter()
-                extra_embedding = None
-                if decision_vectors is None:
-                    texts = [self.tokenizer.decode([prefix[i] for i in block], skip_special_tokens=True)
-                             for block in speaker_blocks]
-                    decision_vectors, extra_embedding = self.semantic_router.encode(texts)
-                extra_embedding_seconds = time.perf_counter() - embedding_started
-
-                def generate_decision(positions, request):
-                    request = summary_grounded_request(answers['routed_kv'], request)
-                    suffix = following_turn_suffix(self.tokenizer, transcript, request)
-                    if len(prefix) + len(suffix) >= self.context_limit:
-                        raise ValueError(f"{record_id}: decision context leaves no room for output; no input was truncated.")
-                    self._sync()
-                    started = time.perf_counter()
-                    answer, generated, cap_hit = generate(
-                        self.model, self.tokenizer, select_cache(source, positions),
-                        self._tensor(suffix), absolute_start=len(prefix), context_limit=self.context_limit)
-                    self._sync()
-                    return answer, {'prompt_tokens': len(suffix), 'output_tokens': generated,
-                                    'output_cap_hit': cap_hit, 'seconds': time.perf_counter() - started,
-                                    'source_positions': len(positions)}
-
-                answer, metrics, decision_tracking_audit = run_two_stage(
-                    generate=generate_decision, router=self.semantic_router,
-                    source_vectors=decision_vectors, blocks=speaker_blocks,
-                    initial_positions=selected, protected=protected,
-                    threshold=decision_similarity, neighbors=self.config.speaker_neighbor_blocks,
-                    progress=lambda message: self.progress(f"{record_id}: {message}"))
-                metrics['extra_source_embedding'] = extra_embedding
-                metrics['extra_source_embedding_seconds'] = extra_embedding_seconds
-                metrics['seconds'] += extra_embedding_seconds
-                derived_answers['decision_evolution'] = answer
-                derived_metrics['decision_evolution'] = metrics
         audit = None
         if routing_audit:
             from .routing_audit import build_audit
@@ -349,12 +301,9 @@ class ReceiverKVRunner:
                                 seed_selection=seed_selection,
                                 neighbor_blocks=self.config.speaker_neighbor_blocks)
             audit["vector_routing"] = vector_metrics
-            if decision_tracking_audit is not None:
-                audit['decision_tracking'] = decision_tracking_audit
         return {
             "vector_routing": vector_metrics,
             "routing_audit": audit,
-            "decision_tracking": decision_tracking_audit,
             "id": record_id, "answers": answers, "variants": measurements,
             "source_positions": len(prefix), "context_limit": self.context_limit,
             "source_cache_bytes": source_bytes, "prefill_seconds": prefill_seconds,

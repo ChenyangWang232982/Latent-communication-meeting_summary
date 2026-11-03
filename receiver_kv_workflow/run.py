@@ -30,10 +30,6 @@ def arguments():
                         help="Generate a timeline using routed KV and the routed_kv summary")
     parser.add_argument("--decision-evolution", action="store_true",
                         help="Generate a decision-evolution record using routed KV and the routed_kv summary")
-    parser.add_argument("--grouped-decisions", action="store_true",
-                        help="Generate a checklist then joint decision evolution (two calls); requires --vector-routing")
-    parser.add_argument("--decision-similarity", type=float, default=0.75,
-                        help="Checklist-to-source cosine threshold in [-1,1]; experimental")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
                         default=["routed_kv", "specialist_text"])
     parser.add_argument("--device", default="cuda")
@@ -43,11 +39,7 @@ def arguments():
         parser.error("--role-budget-ratio must be in (0, 1]")
     if min(args.span_tokens, args.query_batch_tokens) < 1 or args.speaker_neighbor_blocks < 0:
         parser.error("Token budgets must be positive")
-    if args.grouped_decisions and not args.vector_routing:
-        parser.error("--grouped-decisions requires --vector-routing")
-    if not -1 <= args.decision_similarity <= 1:
-        parser.error("--decision-similarity must be in [-1, 1]")
-    if (args.timeline or args.decision_evolution or args.grouped_decisions) and "routed_kv" not in args.variants:
+    if (args.timeline or args.decision_evolution) and "routed_kv" not in args.variants:
         parser.error("--timeline and --decision-evolution require --variants to include routed_kv")
     return args
 
@@ -72,9 +64,7 @@ def main():
         **config_kwargs(args),
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline,
-                        decision_evolution=args.decision_evolution or args.grouped_decisions,
-                        grouped_decisions=args.grouped_decisions, decision_similarity=args.decision_similarity,
-                        routing_audit=args.routing_audit)
+                        decision_evolution=args.decision_evolution, routing_audit=args.routing_audit)
     answers = result["answers"]
     report = {
         "method": "Receiver-conditioned KV routing, CacheBack-inspired, NOT paper reproduction",
@@ -85,14 +75,11 @@ def main():
         "vector_routing": result["vector_routing"],
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens,
-                     "timeline": args.timeline, "decision_evolution": args.decision_evolution or args.grouped_decisions,
-                     "grouped_decisions": args.grouped_decisions, "decision_similarity": args.decision_similarity,
-                     "selection_strategy": "speaker",
+                     "timeline": args.timeline, "decision_evolution": args.decision_evolution, "selection_strategy": "speaker",
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
         "derived_metrics": result["derived_metrics"],
-        "decision_tracking": result["decision_tracking"],
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
                   "routed_kv and specialist_text use the identical selected source positions; only the specialist-to-receiver communication representation differs.",
                   "ROUGE-L is lexical reference overlap, not factual accuracy; no reference means N/A.",
@@ -150,10 +137,6 @@ def main():
     for name, values in result["derived_metrics"].items():
         rows.append(f"{name} | prompt tokens={values['prompt_tokens']} | output tokens={values['output_tokens']} | "
                     f"seconds={values['seconds']:.2f} | cap-hit={values['output_cap_hit']}")
-        if values.get('mode') == 'two_stage':
-            rows.append(f"  generation calls={values['generation_calls']} | checklist items={values['checklist_items']} | retrieval seconds={values['retrieval_seconds']:.2f} | "
-                        f"generation seconds={values['generation_seconds']:.2f} | cap hits={values['cap_hits']} | "
-                        f"source KV positions across calls={values['source_kv_positions_across_calls']}")
     if result["derived_metrics"]:
         rows.append("Timeline/decision generation costs above are additional to the per-variant pipeline measurements.")
     rows.extend(["", *report["notes"]])
