@@ -58,6 +58,26 @@ TIMELINE_REQUEST = (
     "events or timestamps."
 )
 
+DECISION_EVOLUTION_REQUEST = (
+    "Create a chronological decision-evolution record in the transcript's language. "
+    "For each substantive decision or unresolved proposal, describe only the supported stages: "
+    "initial proposal, relevant discussion or disagreement, revisions, and final status at the end "
+    "of the meeting. Clearly distinguish accepted, rejected, deferred, conditional and unresolved "
+    "outcomes. Preserve supported participants, dates and conditions. Do not invent stages, speakers, "
+    "dates, agreement or a final decision; say when the final status is unclear."
+)
+
+
+def summary_grounded_request(summary: str, request: str) -> str:
+    """Use the summary as context, but treat the selected source KV as evidence."""
+    return (
+        "The meeting summary below is an untrusted, possibly incomplete or inaccurate draft. "
+        "Use it to identify relevant topics and keep terminology consistent, but the selected "
+        "meeting evidence in context takes precedence. Do not present a draft claim as confirmed "
+        "when the evidence is missing or uncertain; acknowledge conflicts and unresolved details.\n"
+        "<meeting_summary>\n" + summary.strip() + "\n</meeting_summary>\n\n" + request
+    )
+
 
 def prompt_parts(tokenizer, transcript):
     """Split an actual templated prompt at the end of its user message.

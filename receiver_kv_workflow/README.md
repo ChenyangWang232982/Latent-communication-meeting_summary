@@ -40,7 +40,11 @@ Use `--output output/meeting1.txt` to place `routed_kv` at that exact path;
 the text baseline then uses a sibling `meeting1.specialist_text.txt` file.
 Use `--timeline` for a separately generated chronology and `--routing-audit`
 for an offline source-coordinate audit. Neither audit text nor dropped source
-text is passed to the receiver.
+text is passed to the receiver. `--timeline` and `--decision-evolution` each
+use the selected source KV and the generated `routed_kv` summary, and write
+separate `.timeline.txt` and `.decisions.txt` files. They require `routed_kv`.
+Their generation costs are recorded separately from summary-pipeline totals;
+sharing context does not guarantee consistency.
 
 ## Important limits
 

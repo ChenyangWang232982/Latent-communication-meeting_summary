@@ -27,7 +27,9 @@ def arguments():
     parser.add_argument("--max-new-tokens", type=int, default=1024,
                         help="Explicit final output reserve; report flags when exhausted")
     parser.add_argument("--timeline", action="store_true",
-                        help="Also write a chronological event timeline with one approximate time per event")
+                        help="Generate a timeline using routed KV and the routed_kv summary")
+    parser.add_argument("--decision-evolution", action="store_true",
+                        help="Generate a decision-evolution record using routed KV and the routed_kv summary")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
                         default=["routed_kv", "specialist_text"])
     parser.add_argument("--device", default="cuda")
@@ -37,6 +39,8 @@ def arguments():
         parser.error("--role-budget-ratio must be in (0, 1]")
     if min(args.span_tokens, args.query_batch_tokens, args.max_new_tokens) < 1 or args.speaker_neighbor_blocks < 0:
         parser.error("Token budgets must be positive")
+    if (args.timeline or args.decision_evolution) and "routed_kv" not in args.variants:
+        parser.error("--timeline and --decision-evolution require --variants to include routed_kv")
     return args
 
 
@@ -58,7 +62,7 @@ def main():
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline,
-                        routing_audit=args.routing_audit)
+                        decision_evolution=args.decision_evolution, routing_audit=args.routing_audit)
     answers = result["answers"]
     report = {
         "method": "Receiver-conditioned KV routing, CacheBack-inspired, NOT paper reproduction",
@@ -68,10 +72,11 @@ def main():
         "selection_seconds": result["selection_seconds"], "roles": result["roles"],
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens, "max_new_tokens": args.max_new_tokens,
-                     "timeline": args.timeline, "selection_strategy": "speaker",
+                     "timeline": args.timeline, "decision_evolution": args.decision_evolution, "selection_strategy": "speaker",
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
+        "derived_metrics": result["derived_metrics"],
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
                   "routed_kv and specialist_text use the identical selected source positions; only the specialist-to-receiver communication representation differs.",
                   "ROUGE-L is lexical reference overlap, not factual accuracy; no reference means N/A.",
@@ -112,6 +117,9 @@ def main():
     if result["timeline"] is not None:
         timeline_path = args.output.with_name(f"{args.output.stem}.timeline{args.output.suffix or '.txt'}") if args.output else output_dir / "timeline.txt"
         timeline_path.write_text(result["timeline"] + "\n", encoding="utf-8")
+    if result["decision_evolution"] is not None:
+        decision_path = args.output.with_name(f"{args.output.stem}.decisions{args.output.suffix or '.txt'}") if args.output else output_dir / "decision_evolution.txt"
+        decision_path.write_text(result["decision_evolution"] + "\n", encoding="utf-8")
     (metrics_dir / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     rows = ["Receiver-conditioned KV routing (experimental)",
             "variant | ROUGE-L | input positions | KV MiB | positions vs full | total seconds | output tokens | cap-hit"]
@@ -123,6 +131,11 @@ def main():
                     f"{values['incoming_cache_bytes']/2**20:.1f} | {position_delta_text} | "
                     f"{values['pipeline_seconds_excluding_model_load']:.2f} | "
                     f"{values['generated_tokens']} | {values['output_cap_hit']}")
+    for name, values in result["derived_metrics"].items():
+        rows.append(f"{name} | prompt tokens={values['prompt_tokens']} | output tokens={values['output_tokens']} | "
+                    f"seconds={values['seconds']:.2f} | cap-hit={values['output_cap_hit']}")
+    if result["derived_metrics"]:
+        rows.append("Timeline/decision generation costs above are additional to the per-variant pipeline measurements.")
     rows.extend(["", *report["notes"]])
     (metrics_dir / "metrics.txt").write_text("\n".join(rows) + "\n", encoding="utf-8")
     summary_location = args.output.parent if args.output else output_dir
