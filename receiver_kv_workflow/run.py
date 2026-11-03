@@ -30,7 +30,7 @@ def arguments():
                         default=["routed_kv", "specialist_text"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--enable-thinking", action="store_true", help="Enable thinking for the final summary receiver")
-    parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--seed", type=int, default=7, help="Random seed for model inference (default: 7)")
     args = parser.parse_args()
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
