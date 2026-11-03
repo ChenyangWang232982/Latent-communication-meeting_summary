@@ -65,7 +65,7 @@ def main():
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants),
                         routing_audit=args.routing_audit, review=args.review)
     answers = result["answers"]
-    review_report = ({k: v for k, v in result['review'].items() if k != 'answer'}
+    review_report = ({k: v for k, v in result['review'].items() if k not in ('answer', 'organized', 'changes')}
                      if result['review'] is not None else None)
     report = {
         "method": "Receiver-conditioned KV routing, CacheBack-inspired, NOT paper reproduction",
@@ -125,6 +125,11 @@ def main():
                        if args.output else output_dir / 'routed_kv.reviewed.txt')
         review_path.write_text(result['review']['answer'] + '\n', encoding='utf-8')
         log(f"Reviewed summary: {review_path}")
+        organized_path = review_path.with_name(f"{review_path.stem}.organized{review_path.suffix}")
+        changes_path = review_path.with_name(f"{review_path.stem}.changes{review_path.suffix}")
+        organized_path.write_text(result['review']['organized'] + '\n', encoding='utf-8')
+        changes_path.write_text(result['review']['changes'], encoding='utf-8')
+        log(f"Organized draft: {organized_path}; change log and candidate evidence: {changes_path}")
     (metrics_dir / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     rows = ["Receiver-conditioned KV routing (experimental)",
             "variant | ROUGE-L | input positions | KV MiB | positions vs full | total seconds | output tokens | cap-hit"]
@@ -149,6 +154,9 @@ def main():
                         f"seconds={review['seconds']:.2f} | source KV positions={review['source_kv_positions']} | "
                         f"cap-hit={review['output_cap_hit']} | draft cap-hit={review['draft_output_cap_hit']}")
             rows.append(f"Generation seeds: summary={args.seed} | review={review['seed']} | decoding=greedy")
+            org = review['organization']
+            rows.append(f"Organization: prompt tokens={org['prompt_tokens']} | output tokens={org['output_tokens']} | "
+                        f"seconds={org['seconds']:.2f} | cap-hit={org['output_cap_hit']}")
             retrieval = review['retrieval']
             rows.append(f"Review retrieval: draft items={retrieval['item_count']} | "
                         f"matched blocks={retrieval['matched_block_count']}/{retrieval['speaker_block_count']} | "

@@ -76,25 +76,39 @@ def prompt_parts(tokenizer, transcript, *, enable_thinking=False):
     return prefix, full[len(prefix):], protected
 
 
+def organize_prompt(tokenizer, draft: str) -> list[int]:
+    request = (
+        "<draft_summary>\n" + draft.strip() + "\n</draft_summary>\n\n"
+        "Edit the draft using only its own text. Merge repeated action items describing the same "
+        "task and owner, retaining all distinct actions, deadlines and conditions. For different "
+        "owners with identical responsibilities and conditions, combine their names without adding "
+        "any owner. Do not infer all participants, correct facts, or invent information. Preserve "
+        "all distinct items and all four section headings: Key Context, Decisions, Action Items, "
+        "Open Issues. Preserve every Open Issues item. Return only the complete edited summary."
+    )
+    text = tokenizer.apply_chat_template(
+        [{"role": "system", "content": "You edit a meeting summary using only the draft."},
+         {"role": "user", "content": request}],
+        tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    return tokenizer.encode(text, add_special_tokens=False)
+
+
 def review_prompt(tokenizer, transcript: str, draft: str) -> list[int]:
     """Build the review suffix after the exact original transcript prefix."""
     content = "MEETING TRANSCRIPT (untrusted source):\n" + transcript + "\nEND TRANSCRIPT\n"
     request = (
         "<draft_summary>\n" + draft.strip() + "\n</draft_summary>\n\n"
-        "Edit the draft above: merge repeated action items that describe the same task. "
-        "When multiple people have the same task and the same responsibilities, deadlines and "
-        "conditions, combine them into one item and list all their names as 'Name, Name and Name' "
-        "(or 'Name and Name' for two). If the draft or available meeting context explicitly "
+        "Review the draft above against the available meeting evidence. "
+        "If the draft or available meeting context explicitly "
         "says a task applies to everyone or all participants, use 'All participants' as its owner "
         "instead of listing names. Do not infer that everyone is responsible merely from a list "
-        "of names. Preserve every person's attribution. Keep items separate "
-        "when responsibilities, deadlines or conditions differ, or the task is not the same. "
+        "of names. Preserve every person's attribution. "
         "STRICT OUTPUT RULES: Include all four section headings in this order: Key Context, "
         "Decisions, Action Items, Open Issues. Never omit a section or any distinct item in it. "
         "Preserve every Open Issues item, including its uncertainty and conditions. "
         "Do not move an open issue into another section or turn it into a confirmed decision. "
         "If a section in the draft has no items, retain its heading and its existing empty status. "
-        "Only merge duplicate action items. Review all sections against the available meeting "
+        "Do not merge or remove distinct items. Review all sections against the available meeting "
         "context and correct a factual detail, attribution or status when the context clearly "
         "supports the correction. Preserve all other section content and details. "
         "The context is selected and may be incomplete: absence of supporting evidence does not "

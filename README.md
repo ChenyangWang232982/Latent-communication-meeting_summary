@@ -94,7 +94,7 @@ python -m receiver_kv_workflow.run \
 
 此时自然语言版本写入 `output/meeting1.specialist_text.txt`。也可以添加 `--routing-audit` 输出被选中的原文范围等审计文件。审计文件可能包含会议原文，请按原文的敏感程度保存。
 
-添加 `--review` 后，程序使用 Qwen3 embedding 按摘要条目检索原文发言块，每条取相似度最高的两个块并按 `--speaker-neighbor-blocks` 扩展，合并重叠位置后将对应原文 KV、摘要初稿和去重指令交给同一模型。未启用 `--vector-routing` 时，审校仍会加载 `--embedding-model`。这是单一行动项去重任务，不是逐条事实核验，也不会为每条结论输出引用。`--output output/meeting1.txt` 保留初稿，审校稿写入 `output/meeting1.reviewed.txt`；检索及审校的额外成本记录在指标文件中。上下文不足时会跳过审校并保留初稿。
+添加 `--review` 后，同一模型先仅根据初稿合并重复行动项，再使用 Qwen3 embedding 按整理后的条目检索原文发言块，将选中 KV 与整理稿交给模型核查。每条取最相近的两个块，按 `--speaker-neighbor-blocks` 扩展并合并重叠位置。`--output output/meeting1.txt` 保留初稿，另外输出 `meeting1.reviewed.txt`、`meeting1.reviewed.organized.txt` 和 `meeting1.reviewed.changes.txt`。变更记录包含文本差异及候选原文片段，不代表逐条已核验的引用。未启用 `--vector-routing` 时审校也会加载 `--embedding-model`。若任一步截断或缺少初稿中已有的标准章节，则跳过审校并保留初稿；章节检查不保证章内每一项完整。
 
 默认关闭思考模式；添加 `--enable-thinking` 仅对最终摘要模型开启。两次对照请使用相同输入、参数和随机种子，并设置不同的 `--output`。思考内容不会写入摘要，运行指标单独记录 thinking/answer token；若思考未结束，摘要为空并标记不完整。思考和答案共用模型剩余上下文空间。
 
@@ -246,7 +246,7 @@ To generate the natural-language control as well, replace `--variants routed_kv`
 
 The text control is then written to `output/meeting1.specialist_text.txt`. Add `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
 
-With `--review`, Qwen3 embeddings retrieve the two most similar source speaker blocks per draft item, expand them by `--speaker-neighbor-blocks`, and merge overlapping source positions. Their original KV, the draft and an action-item deduplication request are sent to the same model. Review loads `--embedding-model` even without `--vector-routing`. This is not claim-by-claim fact checking and does not produce per-claim citations. With `--output output/meeting1.txt`, the draft remains there and the edit is saved as `output/meeting1.reviewed.txt`. Retrieval and review costs are recorded separately. If the review prompt exceeds the available context, review is skipped and the draft is preserved.
+With `--review`, the same model first merges duplicate action items using only the draft. Qwen3 embeddings then retrieve the two closest speaker blocks per organized item, expand them by `--speaker-neighbor-blocks`, and the model reviews the organized draft using the selected source KV. The draft remains at `--output`; separate `.reviewed.txt`, `.reviewed.organized.txt` and `.reviewed.changes.txt` files contain the reviewed summary, organized draft, and textual changes with candidate source excerpts. These excerpts are not verified claim-level citations. Review loads `--embedding-model` even without `--vector-routing`. If either generation is truncated or omits an original standard section, review is skipped and the draft is preserved. Section checking does not guarantee that each item is preserved.
 
 Thinking is off by default. Add `--enable-thinking` to enable it for the final summary receiver. Use identical input, settings and seed and separate output paths for comparison. Reasoning text is not saved in the summary; metrics separately count thinking and answer tokens. An unfinished thinking section produces an empty summary and is flagged as incomplete. Thinking and the answer share the remaining model context.
 
