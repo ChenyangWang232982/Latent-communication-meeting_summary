@@ -295,7 +295,7 @@ class ReceiverKVRunner:
                         self._sync()
                         org_seconds = time.perf_counter() - start
                         missing = missing_sections(draft, organized)
-                        if org_cap or not organized.strip() or missing:
+                        if org_cap or not organized.strip():
                             review_result = {'status': 'skipped', 'reason':
                                 f'Organization incomplete (cap-hit={org_cap}, missing sections={missing}); draft preserved.'}
                         else:
@@ -323,22 +323,16 @@ class ReceiverKVRunner:
                                 del review_cache
                                 self._sync()
                                 review_seconds = time.perf_counter() - start
-                                from .review_checks import apply_evidence_edits
-                                try:
-                                    reviewed, edits = apply_evidence_edits(organized, review_response)
-                                    validation_error = None
-                                except (ValueError, TypeError) as exc:
-                                    reviewed, edits = organized, []
-                                    validation_error = str(exc)
+                                from .review_checks import split_review_response
+                                reviewed, reasons = split_review_response(review_response)
                                 missing = missing_sections(draft, reviewed)
-                                if cap_hit or not reviewed.strip() or missing or validation_error:
+                                if cap_hit or not reviewed.strip():
                                     review_result = {'status': 'skipped', 'reason':
-                                        f'Evidence review incomplete or invalid (cap-hit={cap_hit}, missing sections={missing}, '
-                                        f'validation={validation_error}); draft preserved.'}
+                                        f'Evidence review incomplete (cap-hit={cap_hit}, missing sections={missing}); draft preserved.'}
                                 else:
                                     from .review_checks import change_log
                                     excerpts, _, _ = selected_evidence_excerpts(self.tokenizer, transcript, review_positions)
-                                    changes = change_log(draft, organized, reviewed, retrieval, edits)
+                                    changes = change_log(draft, organized, reviewed, retrieval, reasons)
                                     changes += "\nCandidate retrieved source excerpts (not claim-level citations):\n" + excerpts + "\n"
                                     review_result = {'status': 'completed', 'answer': reviewed,
                                         'organized': organized, 'changes': changes,
@@ -349,7 +343,8 @@ class ReceiverKVRunner:
                                         'organization': {'prompt_tokens': len(organize_ids), 'output_tokens': org_tokens,
                                             'output_cap_hit': org_cap, 'seconds': org_seconds, 'generation_counts': org_counts},
                                         'source_kv_positions': len(review_positions), 'retrieval': retrieval,
-                                        'evidence_review_edit_count': len(edits),
+                                        'possibly_missing_sections': missing,
+                                        'review_reasons_present': bool(reasons),
                                         'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit']}
                                     self.progress(f"{record_id}: review completed; same text as draft={reviewed == draft}")
         audit = None
