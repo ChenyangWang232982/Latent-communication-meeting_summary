@@ -249,6 +249,9 @@ class ReceiverKVRunner:
                     context_limit=self.context_limit,
                 )
                 self._sync()
+                if name == "timeline":
+                    from .timeline import midpoint_timeline_ranges
+                    derived_answer = midpoint_timeline_ranges(derived_answer)
                 derived_answers[name] = derived_answer
                 derived_metrics[name] = {"prompt_tokens": len(derived_suffix), "output_tokens": generated,
                                          "output_cap_hit": cap_hit, "seconds": time.perf_counter() - started}

@@ -96,6 +96,8 @@ python -m receiver_kv_workflow.run \
 
 同时生成时间线和决策演变记录，可以在摘要命令中加入 `--timeline --decision-evolution`。两者分别以**同一份选中原文 KV + `routed_kv` 摘要文本**作为上下文，各自生成独立结果：`output/meeting1.timeline.txt` 和 `output/meeting1.decisions.txt`。摘要作为参考，模型仍应以选中 KV 中的原文证据为准；这有助于一致性，但不能保证没有矛盾。两个附加步骤的 token 和耗时单独列在 metrics 中，不包含在原摘要 pipeline 的统计内。启用这两个选项时 `--variants` 必须包含 `routed_kv`。
 
+时间线要求模型输出每个事件的单个近似时间。若模型在独立的事件时间行输出 `分钟:秒` 或 `小时:分钟:秒` 范围，程序会将其转换为范围的中间时间；正文中的会议安排时间不会转换。该处理只改变显示格式，不验证模型所给时间是否存在于原文。
+
 ## 评测
 
 单个数据集评测会比较 `routed_kv` 和 `specialist_text`，报告摘要质量和通信效率：
@@ -241,6 +243,8 @@ To generate the natural-language control as well, replace `--variants routed_kv`
 The text control is then written to `output/meeting1.specialist_text.txt`. Add `--timeline` to generate a separate timeline, or `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
 
 Add `--timeline --decision-evolution` to generate both a timeline and a decision-evolution record. Each uses the same selected source KV plus the `routed_kv` summary text as context and is written separately to `output/meeting1.timeline.txt` and `output/meeting1.decisions.txt`. The summary is a reference rather than authoritative evidence; this can improve consistency but cannot guarantee it. The extra steps' token counts and elapsed time appear separately in the metrics and are not included in the original summary pipeline totals. These options require `routed_kv` in `--variants`.
+
+The timeline requests one approximate timestamp per event. If the model returns an elapsed-time range (`minutes:seconds` or `hours:minutes:seconds`) on a standalone event-time line, the program replaces it with its midpoint. Meeting schedule ranges in prose are not changed. This is display normalization and does not verify that generated timestamps are supported by the transcript.
 
 ### Evaluation
 
