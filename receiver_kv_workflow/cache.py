@@ -104,8 +104,18 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, 
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
     output = forward_tokens(model, suffix, cache, absolute_start, logits_to_keep=1)
-    return generate_from_prefill(
+    # Record what actually reached this forward call and its final-position logits.
+    # No prompt, transcript or generated text is recorded by these hashes.
+    logits = output.logits[:, -1, :].detach().to(dtype=torch.float32).cpu().contiguous()
+    forward_diagnostic = {
+        'forward_input_token_sha256': token_fingerprint(suffix.detach().reshape(-1).cpu().tolist()),
+        'first_step_logits_sha256': hashlib.sha256(logits.numpy().tobytes()).hexdigest(),
+        'first_step_top_token': int(logits.argmax(dim=-1).item()),
+    }
+    answer, generated, cap_hit, counts = generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
         enable_thinking=enable_thinking,
     )
+    counts.update(forward_diagnostic)
+    return answer, generated, cap_hit, counts

@@ -152,6 +152,14 @@ def main():
             rows.append(f"Review prompt token SHA-256: {review['prompt_token_sha256']}")
             rows.append(f"Draft generated token SHA-256: {review['draft_generated_token_sha256']}")
             rows.append(f"Review generated token SHA-256: {review['generation_counts']['generated_token_sha256']}")
+            draft_counts = report['variants']['routed_kv']['generation_counts']
+            review_counts = review['generation_counts']
+            rows.append(f"Draft actual forward input SHA-256: {draft_counts['forward_input_token_sha256']}")
+            rows.append(f"Review actual forward input SHA-256: {review_counts['forward_input_token_sha256']}")
+            rows.append(f"Draft first-step logits SHA-256: {draft_counts['first_step_logits_sha256']} | "
+                        f"top token id: {draft_counts['first_step_top_token']}")
+            rows.append(f"Review first-step logits SHA-256: {review_counts['first_step_logits_sha256']} | "
+                        f"top token id: {review_counts['first_step_top_token']}")
         else:
             rows.append(f"Review skipped: {review['reason']}")
     if result["vector_routing"] is not None:
