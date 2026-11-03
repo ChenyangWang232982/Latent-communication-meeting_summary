@@ -98,7 +98,7 @@ python -m receiver_kv_workflow.run \
 
 默认关闭思考模式；添加 `--enable-thinking` 仅对最终摘要模型开启。两次对照请使用相同输入、参数和随机种子，并设置不同的 `--output`。思考内容不会写入摘要，运行指标单独记录 thinking/answer token；若思考未结束，摘要为空并标记不完整。思考和答案共用模型剩余上下文空间。
 
-使用 `--seed 7` 指定推理随机种子；摘要和评测命令均默认为 7。固定种子有助于复现，但不同 GPU、依赖版本等仍可能影响结果。
+使用 `--seed 7` 指定摘要种子，`--review-seed 42` 单独指定审校种子，二者默认均为 7。当前生成使用贪心解码，通常改变种子不会改变输出；不同 GPU、依赖版本等仍可能影响结果。评测命令的 `--seed` 默认也为 7。
 
 
 
@@ -250,7 +250,7 @@ Add `--review` to check the draft for internal consistency, merge duplicates, an
 
 Thinking is off by default. Add `--enable-thinking` to enable it for the final summary receiver. Use identical input, settings and seed and separate output paths for comparison. Reasoning text is not saved in the summary; metrics separately count thinking and answer tokens. An unfinished thinking section produces an empty summary and is flagged as incomplete. Thinking and the answer share the remaining model context.
 
-Use `--seed 7` to set the inference seed; summary and evaluation commands default to 7. A fixed seed helps reproducibility but does not guarantee identical results across GPU hardware or dependency versions.
+Use `--seed 7` for summary generation and `--review-seed 42` for review; both default to 7. Decoding is greedy, so changing seeds normally does not change the output. Results can still vary across GPU hardware or dependency versions. The evaluation command also defaults to seed 7.
 
 
 

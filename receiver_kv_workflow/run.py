@@ -31,7 +31,8 @@ def arguments():
                         default=["routed_kv", "specialist_text"])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--enable-thinking", action="store_true", help="Enable thinking for the final summary receiver")
-    parser.add_argument("--seed", type=int, default=7, help="Random seed for model inference (default: 7)")
+    parser.add_argument("--seed", type=int, default=7, help="Seed for source routing and summary generation (default: 7)")
+    parser.add_argument("--review-seed", type=int, default=7, help="Seed reset before review generation (default: 7; decoding is greedy)")
     args = parser.parse_args()
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
@@ -57,7 +58,7 @@ def main():
     runner = ReceiverKVRunner(ReceiverKVConfig(
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
-        seed=args.seed, enable_thinking=args.enable_thinking,
+        seed=args.seed, review_seed=args.review_seed, enable_thinking=args.enable_thinking,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         **config_kwargs(args),
     ), progress=log)
@@ -77,7 +78,7 @@ def main():
                      "query_batch_tokens": args.query_batch_tokens,
                      "selection_strategy": "speaker",
                      "enable_thinking": args.enable_thinking,
-                     "review": args.review,
+                     "review": args.review, "review_seed": args.review_seed if args.review else None,
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
@@ -147,6 +148,7 @@ def main():
             rows.append(f"Review extra: prompt tokens={review['prompt_tokens']} | output tokens={review['output_tokens']} | "
                         f"seconds={review['seconds']:.2f} | source KV positions={review['source_kv_positions']} | "
                         f"cap-hit={review['output_cap_hit']} | draft cap-hit={review['draft_output_cap_hit']}")
+            rows.append(f"Generation seeds: summary={args.seed} | review={review['seed']} | decoding=greedy")
             rows.append(f"Review comparison: same text as draft={review['same_text_as_draft']}")
         else:
             rows.append(f"Review skipped: {review['reason']}")

@@ -20,6 +20,7 @@ class ReceiverKVConfig:
     span_tokens: int = 32
     query_batch_tokens: int = 8
     seed: int = 7
+    review_seed: int = 7
     speaker_neighbor_blocks: int = 1
     vector_routing: bool = False
     embedding_model: str = "models/Qwen3-Embedding-0.6B"
@@ -181,6 +182,7 @@ class ReceiverKVRunner:
                 self.progress(f"{record_id}: speaker KV selection {len(selected)}/{baseline_positions} positions{detail}")
             answers, measurements = {}, {}
             if "routed_kv" in requested:
+                self.torch.manual_seed(self.config.seed)
                 receiver_start = time.perf_counter()
                 ids = selected
                 incoming = select_cache(source, ids)
@@ -287,6 +289,7 @@ class ReceiverKVRunner:
                         self.progress(f"{record_id}: draft-only summary review started")
                         self._sync()
                         review_start = time.perf_counter()
+                        self.torch.manual_seed(self.config.review_seed)
                         reviewed, review_tokens, cap_hit, counts = generate(
                             self.model, self.tokenizer, None, self._tensor(review_ids),
                             absolute_start=0, context_limit=self.context_limit, enable_thinking=False)
@@ -295,6 +298,7 @@ class ReceiverKVRunner:
                                          'prompt_tokens': len(review_ids), 'output_tokens': review_tokens,
                                          'generation_counts': counts, 'output_cap_hit': cap_hit,
                                          'same_text_as_draft': reviewed == draft,
+                                         'seed': self.config.review_seed,
                                          'seconds': time.perf_counter() - review_start,
                                          'source_kv_positions': 0,
                                          'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit']}
