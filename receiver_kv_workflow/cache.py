@@ -5,8 +5,15 @@ comes from one source prefill. Physical cache slots and absolute positions are
 different after selection: continuation uses the original absolute position.
 """
 
+import hashlib
 import torch
 from transformers.cache_utils import DynamicCache
+
+
+def token_fingerprint(token_ids):
+    """Hash token IDs for comparing calls without recording meeting text."""
+    data = ','.join(str(int(token)) for token in token_ids).encode('ascii')
+    return hashlib.sha256(data).hexdigest()
 
 
 def pairs(cache):
@@ -86,7 +93,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
             content = []
     counts = {'thinking_tokens': reasoning_tokens, 'answer_tokens': len(content),
               'delimiter_tokens': delimiter_tokens, 'terminal_tokens': terminal_tokens,
-              'thinking_complete': thinking_complete}
+              'thinking_complete': thinking_complete,
+              'generated_token_sha256': token_fingerprint(generated)}
     return tokenizer.decode(content, skip_special_tokens=True), len(generated), not stopped, counts
 
 

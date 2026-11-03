@@ -146,6 +146,12 @@ def main():
             rows.append(f"Review extra: prompt tokens={review['prompt_tokens']} | output tokens={review['output_tokens']} | "
                         f"seconds={review['seconds']:.2f} | source KV positions={review['source_kv_positions']} | "
                         f"cap-hit={review['output_cap_hit']} | draft cap-hit={review['draft_output_cap_hit']}")
+            rows.append(f"Review comparison: same text={review['same_text_as_draft']} | "
+                        f"same generated tokens={review['same_generated_tokens_as_draft']}")
+            rows.append(f"Draft prompt token SHA-256: {review['draft_prompt_token_sha256']}")
+            rows.append(f"Review prompt token SHA-256: {review['prompt_token_sha256']}")
+            rows.append(f"Draft generated token SHA-256: {review['draft_generated_token_sha256']}")
+            rows.append(f"Review generated token SHA-256: {review['generation_counts']['generated_token_sha256']}")
         else:
             rows.append(f"Review skipped: {review['reason']}")
     if result["vector_routing"] is not None:

@@ -78,7 +78,7 @@ class ReceiverKVRunner:
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...],
             routing_audit: bool = False, review: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
-        from .cache import forward_tokens, generate, select_cache, size_bytes
+        from .cache import forward_tokens, generate, select_cache, size_bytes, token_fingerprint
         from .scoring import query_scores
 
         if not transcript.strip():
@@ -207,6 +207,7 @@ class ReceiverKVRunner:
                     "pipeline_seconds_excluding_model_load": prefill_seconds + selection_seconds + receiver_seconds,
                     "generated_tokens": generated_tokens, "output_cap_hit": output_cap_hit,
                     "generation_counts": generation_counts,
+                    "prompt_token_sha256": token_fingerprint(suffix),
                     "token_accounting": {
                         "source_prefill_tokens": len(prefix),
                         "selection_probe_tokens": selection_probe_tokens,
@@ -296,9 +297,16 @@ class ReceiverKVRunner:
                         review_result = {'status': 'completed', 'answer': reviewed,
                                          'prompt_tokens': len(review_ids), 'output_tokens': review_tokens,
                                          'generation_counts': counts, 'output_cap_hit': cap_hit,
+                                         'prompt_token_sha256': token_fingerprint(review_ids),
+                                         'draft_prompt_token_sha256': measurements['routed_kv']['prompt_token_sha256'],
+                                         'draft_generated_token_sha256': measurements['routed_kv']['generation_counts']['generated_token_sha256'],
+                                         'same_text_as_draft': reviewed == draft,
+                                         'same_generated_tokens_as_draft': counts['generated_token_sha256'] == measurements['routed_kv']['generation_counts']['generated_token_sha256'],
                                          'seconds': time.perf_counter() - review_start,
                                          'source_kv_positions': len(selected),
                                          'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit']}
+                        self.progress(f"{record_id}: review completed; same text as draft={reviewed == draft}; "
+                                      f"same generated tokens={review_result['same_generated_tokens_as_draft']}")
                         if cap_hit:
                             self.progress(f"{record_id}: warning: reviewed summary reached context limit")
         audit = None
