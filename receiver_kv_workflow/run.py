@@ -25,7 +25,6 @@ def arguments():
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--review", action="store_true", help="Review routed_kv summary using its selected source KV")
-    parser.add_argument("--review-debug", action="store_true", help="Compare the same editing prompt with and without selected source KV; requires --review")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
@@ -40,8 +39,6 @@ def arguments():
         parser.error("Token budgets must be positive")
     if args.review and 'routed_kv' not in args.variants:
         parser.error('--review requires --variants to include routed_kv')
-    if args.review_debug and not args.review:
-        parser.error('--review-debug requires --review')
     return args
 
 
@@ -65,19 +62,10 @@ def main():
         **config_kwargs(args),
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants),
-                        routing_audit=args.routing_audit, review=args.review, review_debug=args.review_debug)
+                        routing_audit=args.routing_audit, review=args.review)
     answers = result["answers"]
-    review_report = None
-    if result['review'] is not None:
-        review_report = {k: v for k, v in result['review'].items() if k not in ('answer', 'debug')}
-        debug = result['review'].get('debug')
-        if debug is not None:
-            review_report['debug'] = {k: v for k, v in debug.items() if k != 'conditions'}
-            if 'conditions' in debug:
-                review_report['debug']['conditions'] = {
-                    name: {k: v for k, v in values.items() if k != 'answer'}
-                    for name, values in debug['conditions'].items()
-                }
+    review_report = ({k: v for k, v in result['review'].items() if k != 'answer'}
+                     if result['review'] is not None else None)
     report = {
         "method": "Receiver-conditioned KV routing, CacheBack-inspired, NOT paper reproduction",
         "model": args.model, "source_file": str(args.transcript), "seed": args.seed,
@@ -136,11 +124,6 @@ def main():
                        if args.output else output_dir / 'routed_kv.reviewed.txt')
         review_path.write_text(result['review']['answer'] + '\n', encoding='utf-8')
         log(f"Reviewed summary: {review_path}")
-        debug = result['review'].get('debug', {})
-        for name, values in debug.get('conditions', {}).items():
-            path = review_path.with_name(f"{review_path.stem}.debug_{name}{review_path.suffix}")
-            path.write_text(values['answer'] + '\n', encoding='utf-8')
-            log(f"Review diagnostic {name}: {path}")
     (metrics_dir / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     rows = ["Receiver-conditioned KV routing (experimental)",
             "variant | ROUGE-L | input positions | KV MiB | positions vs full | total seconds | output tokens | cap-hit"]
@@ -164,33 +147,7 @@ def main():
             rows.append(f"Review extra: prompt tokens={review['prompt_tokens']} | output tokens={review['output_tokens']} | "
                         f"seconds={review['seconds']:.2f} | source KV positions={review['source_kv_positions']} | "
                         f"cap-hit={review['output_cap_hit']} | draft cap-hit={review['draft_output_cap_hit']}")
-            rows.append(f"Review comparison: same text={review['same_text_as_draft']} | "
-                        f"same generated tokens={review['same_generated_tokens_as_draft']}")
-            rows.append(f"Draft prompt token SHA-256: {review['draft_prompt_token_sha256']}")
-            rows.append(f"Review prompt token SHA-256: {review['prompt_token_sha256']}")
-            rows.append(f"Draft generated token SHA-256: {review['draft_generated_token_sha256']}")
-            rows.append(f"Review generated token SHA-256: {review['generation_counts']['generated_token_sha256']}")
-            draft_counts = report['variants']['routed_kv']['generation_counts']
-            review_counts = review['generation_counts']
-            rows.append(f"Draft actual forward input SHA-256: {draft_counts['forward_input_token_sha256']}")
-            rows.append(f"Review actual forward input SHA-256: {review_counts['forward_input_token_sha256']}")
-            rows.append(f"Draft first-step logits SHA-256: {draft_counts['first_step_logits_sha256']} | "
-                        f"top token id: {draft_counts['first_step_top_token']}")
-            rows.append(f"Review first-step logits SHA-256: {review_counts['first_step_logits_sha256']} | "
-                        f"top token id: {review_counts['first_step_top_token']}")
-            debug = review.get('debug')
-            if debug and debug['status'] == 'completed':
-                rows.append(f"Review diagnostic: identical suffix and absolute positions; selected KV present only in with_kv. "
-                            f"Same text between conditions={debug['same_text_between_conditions']} | "
-                            f"prompt tokens={debug['prompt_tokens']} | source KV positions={debug['source_kv_positions']}")
-                for name, values in debug['conditions'].items():
-                    rows.append(f"  {name}: same as draft={values['same_text_as_draft']} | "
-                                f"tokens={values['output_tokens']} | cap-hit={values['output_cap_hit']} | "
-                                f"seconds={values['seconds']:.2f} | "
-                                f"prompt SHA-256={values['generation_counts']['forward_input_token_sha256']} | "
-                                f"output SHA-256={values['generation_counts']['generated_token_sha256']}")
-            elif debug:
-                rows.append(f"Review diagnostic skipped: {debug['reason']}")
+            rows.append(f"Review comparison: same text as draft={review['same_text_as_draft']}")
         else:
             rows.append(f"Review skipped: {review['reason']}")
     if result["vector_routing"] is not None:

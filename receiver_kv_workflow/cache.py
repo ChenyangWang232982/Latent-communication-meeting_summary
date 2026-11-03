@@ -5,15 +5,8 @@ comes from one source prefill. Physical cache slots and absolute positions are
 different after selection: continuation uses the original absolute position.
 """
 
-import hashlib
 import torch
 from transformers.cache_utils import DynamicCache
-
-
-def token_fingerprint(token_ids):
-    """Hash token IDs for comparing calls without recording meeting text."""
-    data = ','.join(str(int(token)) for token in token_ids).encode('ascii')
-    return hashlib.sha256(data).hexdigest()
 
 
 def pairs(cache):
@@ -93,8 +86,7 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
             content = []
     counts = {'thinking_tokens': reasoning_tokens, 'answer_tokens': len(content),
               'delimiter_tokens': delimiter_tokens, 'terminal_tokens': terminal_tokens,
-              'thinking_complete': thinking_complete,
-              'generated_token_sha256': token_fingerprint(generated)}
+              'thinking_complete': thinking_complete}
     return tokenizer.decode(content, skip_special_tokens=True), len(generated), not stopped, counts
 
 
@@ -104,18 +96,9 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, 
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
     output = forward_tokens(model, suffix, cache, absolute_start, logits_to_keep=1)
-    # Record what actually reached this forward call and its final-position logits.
-    # No prompt, transcript or generated text is recorded by these hashes.
-    logits = output.logits[:, -1, :].detach().to(dtype=torch.float32).cpu().contiguous()
-    forward_diagnostic = {
-        'forward_input_token_sha256': token_fingerprint(suffix.detach().reshape(-1).cpu().tolist()),
-        'first_step_logits_sha256': hashlib.sha256(logits.numpy().tobytes()).hexdigest(),
-        'first_step_top_token': int(logits.argmax(dim=-1).item()),
-    }
     answer, generated, cap_hit, counts = generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
         enable_thinking=enable_thinking,
     )
-    counts.update(forward_diagnostic)
     return answer, generated, cap_hit, counts
