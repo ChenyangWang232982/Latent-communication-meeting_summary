@@ -96,6 +96,8 @@ python -m receiver_kv_workflow.run \
 
 添加 `--review` 后，同一模型先仅根据初稿合并重复行动项，再使用 Qwen3 embedding 按整理后的条目检索原文发言块，将选中 KV 与整理稿交给模型核查。每条取最相近的两个块，按 `--speaker-neighbor-blocks` 扩展并合并重叠位置。`--output output/meeting1.txt` 保留初稿，另外输出 `meeting1.reviewed.txt`、`meeting1.reviewed.organized.txt` 和 `meeting1.reviewed.changes.txt`。变更记录包含文本差异及候选原文片段，不代表逐条已核验的引用。未启用 `--vector-routing` 时审校也会加载 `--embedding-model`。若任一步截断或缺少初稿中已有的标准章节，则跳过审校并保留初稿；章节检查不保证章内每一项完整。
 
+证据核查阶段须为每条修改提供修改前后内容、理由和证据依据；程序只应用能唯一匹配到整理稿原条目的修改。格式不合法或缺少理由时跳过审校。理由和依据由模型生成，并未独立验证；第一步整理的变化仍以文本差异记录。
+
 默认关闭思考模式；添加 `--enable-thinking` 仅对最终摘要模型开启。两次对照请使用相同输入、参数和随机种子，并设置不同的 `--output`。思考内容不会写入摘要，运行指标单独记录 thinking/answer token；若思考未结束，摘要为空并标记不完整。思考和答案共用模型剩余上下文空间。
 
 使用 `--seed 7` 指定摘要种子，`--review-seed 42` 单独指定审校种子，二者默认均为 7。当前生成使用贪心解码，通常改变种子不会改变输出；不同 GPU、依赖版本等仍可能影响结果。评测命令的 `--seed` 默认也为 7。
@@ -247,6 +249,8 @@ To generate the natural-language control as well, replace `--variants routed_kv`
 The text control is then written to `output/meeting1.specialist_text.txt`. Add `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
 
 With `--review`, the same model first merges duplicate action items using only the draft. Qwen3 embeddings then retrieve the two closest speaker blocks per organized item, expand them by `--speaker-neighbor-blocks`, and the model reviews the organized draft using the selected source KV. The draft remains at `--output`; separate `.reviewed.txt`, `.reviewed.organized.txt` and `.reviewed.changes.txt` files contain the reviewed summary, organized draft, and textual changes with candidate source excerpts. These excerpts are not verified claim-level citations. Review loads `--embedding-model` even without `--vector-routing`. If either generation is truncated or omits an original standard section, review is skipped and the draft is preserved. Section checking does not guarantee that each item is preserved.
+
+Each evidence-review edit must include its original item, replacement, reason, and evidence basis; only exact, unique item matches are applied. Invalid responses or missing reasons cause review to be skipped. Model-provided reasons and evidence are not independently verified; organization-stage changes are recorded as textual differences.
 
 Thinking is off by default. Add `--enable-thinking` to enable it for the final summary receiver. Use identical input, settings and seed and separate output paths for comparison. Reasoning text is not saved in the summary; metrics separately count thinking and answer tokens. An unfinished thinking section produces an empty summary and is flagged as incomplete. Thinking and the answer share the remaining model context.
 

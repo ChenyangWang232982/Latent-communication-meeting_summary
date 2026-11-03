@@ -164,6 +164,7 @@ def main():
                         f"neighbors=+/-{retrieval['neighbor_blocks']} | "
                         f"embedding tokens={retrieval['embedding_input_tokens']} | seconds={retrieval['seconds']:.2f}")
             rows.append(f"Review comparison: same text as draft={review['same_text_as_draft']}")
+            rows.append(f"Evidence-review edits with model-provided reasons: {review['evidence_review_edit_count']}")
         else:
             rows.append(f"Review skipped: {review['reason']}")
     if result["vector_routing"] is not None:

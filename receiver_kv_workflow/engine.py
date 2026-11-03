@@ -317,20 +317,28 @@ class ReceiverKVRunner:
                                 start = time.perf_counter()
                                 self.torch.manual_seed(self.config.review_seed)
                                 review_cache = select_cache(source, review_positions)
-                                reviewed, review_tokens, cap_hit, counts = generate(
+                                review_response, review_tokens, cap_hit, counts = generate(
                                     self.model, self.tokenizer, review_cache, self._tensor(review_ids),
                                     absolute_start=len(prefix), context_limit=self.context_limit, enable_thinking=False)
                                 del review_cache
                                 self._sync()
                                 review_seconds = time.perf_counter() - start
+                                from .review_checks import apply_evidence_edits
+                                try:
+                                    reviewed, edits = apply_evidence_edits(organized, review_response)
+                                    validation_error = None
+                                except (ValueError, TypeError) as exc:
+                                    reviewed, edits = organized, []
+                                    validation_error = str(exc)
                                 missing = missing_sections(draft, reviewed)
-                                if cap_hit or not reviewed.strip() or missing:
+                                if cap_hit or not reviewed.strip() or missing or validation_error:
                                     review_result = {'status': 'skipped', 'reason':
-                                        f'Evidence review incomplete (cap-hit={cap_hit}, missing sections={missing}); draft preserved.'}
+                                        f'Evidence review incomplete or invalid (cap-hit={cap_hit}, missing sections={missing}, '
+                                        f'validation={validation_error}); draft preserved.'}
                                 else:
                                     from .review_checks import change_log
                                     excerpts, _, _ = selected_evidence_excerpts(self.tokenizer, transcript, review_positions)
-                                    changes = change_log(draft, organized, reviewed, retrieval)
+                                    changes = change_log(draft, organized, reviewed, retrieval, edits)
                                     changes += "\nCandidate retrieved source excerpts (not claim-level citations):\n" + excerpts + "\n"
                                     review_result = {'status': 'completed', 'answer': reviewed,
                                         'organized': organized, 'changes': changes,
@@ -341,6 +349,7 @@ class ReceiverKVRunner:
                                         'organization': {'prompt_tokens': len(organize_ids), 'output_tokens': org_tokens,
                                             'output_cap_hit': org_cap, 'seconds': org_seconds, 'generation_counts': org_counts},
                                         'source_kv_positions': len(review_positions), 'retrieval': retrieval,
+                                        'evidence_review_edit_count': len(edits),
                                         'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit']}
                                     self.progress(f"{record_id}: review completed; same text as draft={reviewed == draft}")
         audit = None
