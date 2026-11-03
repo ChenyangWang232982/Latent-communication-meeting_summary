@@ -18,7 +18,7 @@ ROLE_QUERIES = {
 
 EVENT_QUERY = (
     "Identify the chronological agenda changes, topic transitions, and consequential meeting events. "
-    "Keep source passages that establish the transcript timestamp nearest the middle of each event discussion and what changed."
+    "Find source passages showing the sequence of topics, proposals, decisions and changes."
 )
 
 SUMMARY_REQUEST = (
@@ -48,14 +48,13 @@ SUMMARY_REQUEST = (
 )
 
 TIMELINE_REQUEST = (
-    "Create a chronological meeting timeline in the transcript's language. "
-    "Represent each event with: Approximate time, Topic, Key development, and only the supported "
-    "Decisions, Actions, or Open issues that belong to that event. "
-    "For Approximate time, give one timestamp near the middle of that event's discussion, derived from "
-    "the transcript timestamps. If the transcript does not support a time, write 'time unavailable'. "
-    "Do not use start/end time ranges or relative labels such as early, middle, or late meeting. "
-    "Preserve changes, uncertainty, attribution, and pending coordination dependencies. Do not invent "
-    "events or timestamps."
+    "Create an ordered account of how the meeting developed, in the transcript's language. "
+    "Present events in the order discussed as a numbered list. For each event, describe the topic, "
+    "key development, and supported decisions, actions or open issues when relevant. "
+    "Do not include meeting-relative timestamps, timestamp ranges, or time headings for events. "
+    "Preserve dates, times, deadlines and conditions that are substantive details of a decision or action, "
+    "such as the proposed time of a future meeting. Preserve changes, uncertainty and attribution; "
+    "do not invent events, and do not describe a tentative arrangement as confirmed."
 )
 
 DECISION_EVOLUTION_REQUEST = (

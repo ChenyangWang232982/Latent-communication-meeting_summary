@@ -52,7 +52,7 @@ Bob: 我会在周五之前发送测试报告。
 Alice: 下周二再讨论测试结果。
 ```
 
-也可以使用 `Speaker_0: ...` 等匿名标签。连续的相同说话人会被合并成一个 speaker block，再根据相关性选择。当前程序不会从音频自动识别说话人；纯音频或无说话人标签的文本需要先在外部转录并分离说话人。时间线依赖转录中的时间信息，缺失时无法可靠给出会议中的时间位置。
+也可以使用 `Speaker_0: ...` 等匿名标签。连续的相同说话人会被合并成一个 speaker block，再根据相关性选择。当前程序不会从音频自动识别说话人；纯音频或无说话人标签的文本需要先在外部转录并分离说话人。
 
 ### 批量评测：UTF-8 JSONL
 
@@ -96,7 +96,7 @@ python -m receiver_kv_workflow.run \
 
 同时生成时间线和决策演变记录，可以在摘要命令中加入 `--timeline --decision-evolution`。两者分别以**同一份选中原文 KV + `routed_kv` 摘要文本**作为上下文，各自生成独立结果：`output/meeting1.timeline.txt` 和 `output/meeting1.decisions.txt`。摘要作为参考，模型仍应以选中 KV 中的原文证据为准；这有助于一致性，但不能保证没有矛盾。两个附加步骤的 token 和耗时单独列在 metrics 中，不包含在原摘要 pipeline 的统计内。启用这两个选项时 `--variants` 必须包含 `routed_kv`。
 
-时间线要求模型输出每个事件的单个近似时间。若模型在独立的事件时间行输出 `分钟:秒` 或 `小时:分钟:秒` 范围，程序会将其转换为范围的中间时间；正文中的会议安排时间不会转换。该处理只改变显示格式，不验证模型所给时间是否存在于原文。
+时间线按讨论顺序列出事件，不要求会议进行中的时间戳；下次会议日期、行动截止时间等事实仍会保留。事件顺序由模型推断，仍需与原文核对。
 
 ## 评测
 
@@ -200,7 +200,7 @@ Bob: I will send the test report by Friday.
 Alice: We will discuss the results next Tuesday.
 ```
 
-Anonymous labels such as `Speaker_0: ...` are also accepted. Consecutive turns from the same speaker are grouped into one speaker block, and blocks are selected by relevance. The program does not perform speech recognition or speaker diarization: audio and unlabelled transcripts must be transcribed and labelled externally first. Timeline timestamps depend on timing information in the transcript; without it, a reliable meeting-relative time cannot be provided.
+Anonymous labels such as `Speaker_0: ...` are also accepted. Consecutive turns from the same speaker are grouped into one speaker block, and blocks are selected by relevance. The program does not perform speech recognition or speaker diarization: audio and unlabelled transcripts must be transcribed and labelled externally first.
 
 #### Batch evaluation: UTF-8 JSONL
 
@@ -244,7 +244,7 @@ The text control is then written to `output/meeting1.specialist_text.txt`. Add `
 
 Add `--timeline --decision-evolution` to generate both a timeline and a decision-evolution record. Each uses the same selected source KV plus the `routed_kv` summary text as context and is written separately to `output/meeting1.timeline.txt` and `output/meeting1.decisions.txt`. The summary is a reference rather than authoritative evidence; this can improve consistency but cannot guarantee it. The extra steps' token counts and elapsed time appear separately in the metrics and are not included in the original summary pipeline totals. These options require `routed_kv` in `--variants`.
 
-The timeline requests one approximate timestamp per event. If the model returns an elapsed-time range (`minutes:seconds` or `hours:minutes:seconds`) on a standalone event-time line, the program replaces it with its midpoint. Meeting schedule ranges in prose are not changed. This is display normalization and does not verify that generated timestamps are supported by the transcript.
+The timeline lists events in discussion order without meeting-relative timestamps. Substantive dates and times, such as a future meeting schedule or an action deadline, are preserved. The model infers event order, which should still be checked against the transcript.
 
 ### Evaluation
 
