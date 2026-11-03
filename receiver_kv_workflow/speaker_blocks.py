@@ -43,7 +43,7 @@ def speaker_ranges(transcript):
     return blocks
 
 
-def select_complete_blocks(blocks, baseline, role_scores, protected):
+def select_complete_blocks(blocks, baseline, role_scores, protected, block_scores=None):
     """Select complete speaker blocks without exceeding the seed budget."""
     budget = len(baseline)
     selected = set(protected)
@@ -59,10 +59,11 @@ def select_complete_blocks(blocks, baseline, role_scores, protected):
         scale = sum(scores)
         if scale > 0:
             pooled = [max(a, b / scale) for a, b in zip(pooled, scores)]
-    candidates = [sorted(set(block) - selected) for block in blocks]
-    candidates = [block for block in candidates if block]
-    candidates.sort(key=lambda block: (-sum(pooled[i] for i in block) / len(block), block[0]))
-    for block in candidates:
+    candidates = [(index, sorted(set(block) - selected)) for index, block in enumerate(blocks)]
+    candidates = [(index, block) for index, block in candidates if block]
+    candidates.sort(key=lambda item: (-(block_scores[item[0]] if block_scores is not None else
+                                        sum(pooled[i] for i in item[1]) / len(item[1])), item[1][0]))
+    for _, block in candidates:
         if len(selected) + len(block) <= budget:
             selected.update(block)
     return sorted(selected)

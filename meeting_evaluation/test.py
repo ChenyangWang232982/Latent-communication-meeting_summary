@@ -15,6 +15,8 @@ from receiver_kv_workflow.engine import ReceiverKVConfig
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    from vector.cli import add_arguments
+    add_arguments(parser)
     parser.add_argument("--benchmark", choices=["ami", "icsi", "qmsum_committee", "meetingbank"], default="meetingbank")
     parser.add_argument("--input", type=Path, required=True, help="Normalized MeetingBank JSONL input.")
     parser.add_argument("--output-dir", type=Path, default=Path("test_result"))
@@ -49,12 +51,14 @@ def main() -> None:
     source_by_id = {record.id: record.context for record in records[: args.num_samples] if args.num_samples}
     if not source_by_id:
         source_by_id = {record.id: record.context for record in records}
+    from vector.cli import config_kwargs
     receiver_config = ReceiverKVConfig(
         model=args.model, device=args.device or "cuda",
         role_budget_ratio=args.receiver_kv_role_budget_ratio,
         span_tokens=args.receiver_kv_span_tokens,
         query_batch_tokens=args.receiver_kv_query_batch_tokens,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
+        **config_kwargs(args),
     )
     results = run_receiver_kv(records, receiver_config, num_samples=args.num_samples, variants=tuple(args.variants))
     from .metrics import score_receiver_kv_results

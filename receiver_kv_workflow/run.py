@@ -9,6 +9,8 @@ from .engine import ReceiverKVConfig, ReceiverKVRunner
 
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
+    from vector.cli import add_arguments
+    add_arguments(parser)
     parser.add_argument("--transcript", type=Path, required=True)
     parser.add_argument("--reference", type=Path, help="Optional human summary; English ROUGE-L only")
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
@@ -53,11 +55,13 @@ def main():
         raise ValueError("Transcript is empty")
     reference = args.reference.read_text(encoding="utf-8-sig") if args.reference else ""
     from meeting_evaluation.metrics import rouge_l_f1
+    from vector.cli import config_kwargs
     runner = ReceiverKVRunner(ReceiverKVConfig(
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         seed=args.seed,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
+        **config_kwargs(args),
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants), timeline=args.timeline,
                         decision_evolution=args.decision_evolution, routing_audit=args.routing_audit)
@@ -68,6 +72,7 @@ def main():
         "source_positions": result["source_positions"], "context_limit": result["context_limit"],
         "source_cache_bytes": result["source_cache_bytes"], "prefill_seconds": result["prefill_seconds"],
         "selection_seconds": result["selection_seconds"], "roles": result["roles"],
+        "vector_routing": result["vector_routing"],
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens,
                      "timeline": args.timeline, "decision_evolution": args.decision_evolution, "selection_strategy": "speaker",
@@ -135,6 +140,11 @@ def main():
     if result["derived_metrics"]:
         rows.append("Timeline/decision generation costs above are additional to the per-variant pipeline measurements.")
     rows.extend(["", *report["notes"]])
+    if result["vector_routing"] is not None:
+        vector = result["vector_routing"]
+        rows.append(f"Embedding input tokens (separate encoder): {vector['embedding_input_tokens']}; "
+                    f"embedding/ranking seconds: {vector['seconds']:.3f}; "
+                    "included in selection/pipeline time; model load excluded.")
     (metrics_dir / "metrics.txt").write_text("\n".join(rows) + "\n", encoding="utf-8")
     summary_location = args.output.parent if args.output else output_dir
     log(f"Summaries: {summary_location}; metrics only: {metrics_dir}")

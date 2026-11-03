@@ -22,6 +22,10 @@ class ReceiverKVConfig:
     query_batch_tokens: int = 8
     seed: int = 7
     speaker_neighbor_blocks: int = 1
+    vector_routing: bool = False
+    embedding_model: str = "models/multilingual-e5-small"
+    embedding_device: str = "cpu"
+    vector_weight: float = 0.3
 
 
 class ReceiverKVRunner:
@@ -34,6 +38,8 @@ class ReceiverKVRunner:
             raise ValueError("Token budgets must be positive")
         if config.speaker_neighbor_blocks < 0:
             raise ValueError("speaker_neighbor_blocks must be non-negative")
+        if not 0 <= config.vector_weight <= 1:
+            raise ValueError("vector_weight must be in [0, 1]")
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -57,6 +63,11 @@ class ReceiverKVRunner:
         self.progress("loading model")
         self.model = AutoModelForCausalLM.from_pretrained(config.model, dtype=dtype, attn_implementation="sdpa")
         self.model = self.model.to(self.device).eval()
+        self.semantic_router = None
+        if config.vector_routing:
+            from vector.routing import SemanticRouter
+            self.progress("loading embedding model")
+            self.semantic_router = SemanticRouter(config.embedding_model, config.embedding_device)
 
     def _sync(self) -> None:
         if self.device.type == "cuda":
@@ -129,15 +140,45 @@ class ReceiverKVRunner:
             baseline_selection = list(selected)
             baseline_positions = len(selected)
             seed_selection = list(selected)
+            vector_metrics = None
             if selected:
                 from .speaker_blocks import expand_neighbor_blocks, select_complete_blocks
                 boundary_start = time.perf_counter()
                 selected = select_complete_blocks(speaker_blocks, selected, role_scores, protected)
+                attention_seed_selection = list(selected)
+                if self.semantic_router is not None:
+                    self.progress(f"{record_id}: semantic speaker-block ranking started")
+                    pooled = [0.0] * len(prefix)
+                    for scores in role_scores:
+                        scale = sum(scores)
+                        if scale > 0:
+                            pooled = [max(a, b / scale) for a, b in zip(pooled, scores)]
+                    attention = [sum(pooled[i] for i in block) / len(block) for block in speaker_blocks]
+                    anchors = [i for i, block in enumerate(speaker_blocks)
+                               if set(block).intersection(selected)]
+                    if anchors:
+                        texts = [self.tokenizer.decode([prefix[i] for i in block], skip_special_tokens=True)
+                                 for block in speaker_blocks]
+                        scores, vector_metrics = self.semantic_router.rank(
+                            texts, attention, anchors, self.config.vector_weight)
+                        selected = select_complete_blocks(speaker_blocks, baseline_selection, role_scores,
+                                                          protected, block_scores=scores)
+                    else:
+                        vector_metrics = {"skipped": "No complete attention seed block fits the budget",
+                                          "embedding_input_tokens": 0, "seconds": 0.0}
                 seed_selection = list(selected)
                 if self.config.speaker_neighbor_blocks:
                     selected = expand_neighbor_blocks(
                         selected, speaker_blocks, protected, radius=self.config.speaker_neighbor_blocks
                     )
+                if vector_metrics is not None:
+                    original_expanded = expand_neighbor_blocks(attention_seed_selection, speaker_blocks, protected,
+                                                              radius=self.config.speaker_neighbor_blocks)
+                    vector_metrics.update(seed_budget_positions=baseline_positions,
+                                          attention_only_final_positions=len(original_expanded),
+                                          hybrid_final_positions=len(selected),
+                                          selected_block_ids=[i for i, block in enumerate(speaker_blocks)
+                                                              if set(block).intersection(selected)])
                 selection_seconds += time.perf_counter() - boundary_start + block_seconds
                 detail = f" seeds={len(seed_selection)}, +/-{self.config.speaker_neighbor_blocks} blocks"
                 self.progress(f"{record_id}: speaker KV selection {len(selected)}/{baseline_positions} positions{detail}")
@@ -259,7 +300,9 @@ class ReceiverKVRunner:
                                 dict(zip(queries, messages)), "speaker",
                                 seed_selection=seed_selection,
                                 neighbor_blocks=self.config.speaker_neighbor_blocks)
+            audit["vector_routing"] = vector_metrics
         return {
+            "vector_routing": vector_metrics,
             "routing_audit": audit,
             "id": record_id, "answers": answers, "variants": measurements,
             "source_positions": len(prefix), "context_limit": self.context_limit,

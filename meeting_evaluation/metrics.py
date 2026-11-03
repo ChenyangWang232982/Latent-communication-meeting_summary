@@ -158,5 +158,20 @@ def score_receiver_kv_results(
             "supported_claim_rate is a lexical source-overlap proxy inspired by MESA-style source checking; "
             "it is not an LLM or human MESA score."
         )
+    vector_runs = [r["vector_routing"] for r in results if r.get("vector_routing") is not None]
+    if vector_runs:
+        report["vector_routing"] = {
+            "mean_embedding_input_tokens": _average([r['embedding_input_tokens'] for r in vector_runs]),
+            "mean_embedding_seconds": _average([r['seconds'] for r in vector_runs]),
+            "model_load_seconds": max(r.get('model_load_seconds', 0) for r in vector_runs),
+            "mean_attention_only_final_positions": _average([r['attention_only_final_positions'] for r in vector_runs]),
+            "mean_hybrid_final_positions": _average([r['hybrid_final_positions'] for r in vector_runs]),
+        }
+        report['efficiency_note'] += (
+            f" Separate embedding encoder input tokens/sample: {report['vector_routing']['mean_embedding_input_tokens']:.1f}; "
+            f"embedding/ranking seconds/sample: {report['vector_routing']['mean_embedding_seconds']:.3f}. "
+            "Embedding time is included in selection/pipeline time; embedding tokens are excluded from the Qwen token table. "
+            "Complete-block neighbor expansion can change final retained positions despite the same seed budget."
+        )
     return report
 

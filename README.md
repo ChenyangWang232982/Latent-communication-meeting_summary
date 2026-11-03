@@ -295,3 +295,9 @@ ROUGE-L measures word-order overlap with a reference, not factual accuracy. Sour
 The complete transcript is prefetched once. Each generation continues until an EOS token or the remaining model context is exhausted. The program raises an error if the prompt leaves no output room; it does not automatically summarize document chunks or silently truncate the input. `cap hits` counts outputs that reach the context boundary. Without a user-set output limit, inference may take longer and use more memory. The cache adapter targets dense full-attention Qwen3 models with standard RoPE. The full source KV remains resident during routing, so a smaller receiver KV does not imply a proportional reduction in peak process memory.
 
 For implementation details, see [receiver_kv_workflow/README.md](receiver_kv_workflow/README.md) and [meeting_evaluation/README.md](meeting_evaluation/README.md).
+
+## Optional semantic block routing / 可选向量辅助块选择
+
+See [vector/README.md](vector/README.md) for embedding model download,
+`--vector-routing`, inference/evaluation commands and accounting details.
+向量模块辅助选择发言块，最终仍传原始 KV；默认不启用，便于保留原方法对照。
