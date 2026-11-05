@@ -27,7 +27,6 @@ class ReceiverKVConfig:
     vector_routing: bool = False
     embedding_model: str = "models/Qwen3-Embedding-0.6B"
     vector_weight: float = 0.3
-    enable_thinking: bool = False
 
 
 class ReceiverKVRunner:
@@ -96,7 +95,7 @@ class ReceiverKVRunner:
             raise ValueError("variants must be routed_kv and/or specialist_text")
         if review and 'routed_kv' not in requested:
             raise ValueError('Summary review requires the routed_kv variant')
-        prefix, suffix, protected = prompt_parts(self.tokenizer, transcript, enable_thinking=self.config.enable_thinking)
+        prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
         query_text = dict(ROLE_QUERIES)
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
         required = len(prefix) + max(
@@ -196,10 +195,8 @@ class ReceiverKVRunner:
                 incoming_bytes = size_bytes(incoming)
                 answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
-                    context_limit=self.context_limit, enable_thinking=self.config.enable_thinking,
+                    context_limit=self.context_limit,
                 )
-                if not generation_counts['thinking_complete']:
-                    self.progress(f"{record_id}: warning: thinking did not finish; final summary is empty")
                 del incoming
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start
@@ -237,8 +234,7 @@ class ReceiverKVRunner:
                 )
                 self._sync()
                 specialist_seconds = time.perf_counter() - specialist_start
-                receiver_prompt = self._tensor(specialist_text_prompt(
-                    self.tokenizer, handoff, enable_thinking=self.config.enable_thinking))
+                receiver_prompt = self._tensor(specialist_text_prompt(self.tokenizer, handoff))
                 if receiver_prompt.shape[1] >= self.context_limit:
                     raise ValueError(
                         f"{record_id}: specialist handoff leaves no room for output in the model context; no input was truncated."
@@ -246,10 +242,8 @@ class ReceiverKVRunner:
                 receiver_start = time.perf_counter()
                 answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
-                    context_limit=self.context_limit, enable_thinking=self.config.enable_thinking,
+                    context_limit=self.context_limit,
                 )
-                if not generation_counts['thinking_complete']:
-                    self.progress(f"{record_id}: warning: thinking did not finish; final summary is empty")
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start
                 answers["specialist_text"] = answer
@@ -297,7 +291,7 @@ class ReceiverKVRunner:
                         review_cache = select_cache(source, selected)
                         response, tokens, cap_hit, counts = generate(
                             self.model, self.tokenizer, review_cache, self._tensor(organize_ids),
-                            absolute_start=len(prefix), context_limit=self.context_limit, enable_thinking=False,
+                            absolute_start=len(prefix), context_limit=self.context_limit,
                             temperature=self.config.review_temperature, top_p=self.config.review_top_p)
                         del review_cache
                         self._sync()

@@ -4,11 +4,11 @@
 
 ## 中文
 
-本项目使用无需额外训练的 receiver-conditioned KV routing 生成会议摘要，并与自然语言通信方式进行对照。输入是带说话人标签的会议转录文本；输出包括摘要、可选时间线以及评测指标。
+本项目使用无需额外训练的 receiver-conditioned KV routing 生成会议摘要，并与自然语言通信方式进行对照。输入是带说话人标签的会议转录文本；输出包括摘要和运行指标。
 
 ```text
 会议转录 → 全文 KV prefill → 角色查询与 speaker block 选择
-                                  ├─ routed_kv：选中的 KV → 摘要模型
+                                  ├─ routed_kv：选中的 KV → 摘要模型 → 初稿 + 同一 KV → review → 最终摘要
                                   └─ specialist_text：相同证据 → 文本 handoff → 摘要模型
 ```
 
@@ -21,6 +21,7 @@ input/                  输入转录和已准备的评测数据
 output/                 会议摘要和可选 audit
 test_result/            评测报告和运行指标
 receiver_kv_workflow/   摘要工作流
+vector/                 可选 embedding 辅助选择
 data_preprocess/        评测数据预处理
 meeting_evaluation/     评测入口、指标与报告
 requirements.txt        pip 依赖
@@ -94,11 +95,17 @@ python -m receiver_kv_workflow.run \
 
 此时自然语言版本写入 `output/meeting1.specialist_text.txt`。也可以添加 `--routing-audit` 输出被选中的原文范围等审计文件。审计文件可能包含会议原文，请按原文的敏感程度保存。
 
-添加 `--review` 后，同一模型将摘要初稿与摘要阶段选中的原文 KV 一起用于整理和核查，不另做证据检索。选中 KV 可能遗漏原文内容，模型核查不能保证事实正确。`--output output/meeting1.txt` 保留初稿，另输出 `meeting1.reviewed.txt` 和 `meeting1.reviewed.changes.txt`，其中后者包含文本差异和模型给出的理由。审校输出为空或生成到上下文上限时会跳过审校并保留初稿；章节缺失仅在指标中提示。
+默认运行 routed KV 摘要与审校，`--output output/meeting1.txt` 保存审校后的结果。添加 `--review` 会额外保存 `meeting1.draft.txt` 和 `meeting1.reviewed.changes.txt`，分别记录初稿和差异及模型给出的理由。审校复用摘要阶段选中的原文 KV，不另做证据检索；所选证据可能遗漏内容，模型核查不能保证事实正确。审校输出为空或达到上下文上限时会跳过审校，输出文件保存初稿并在日志和指标中说明；章节缺失仅在指标中提示。
 
-证据核查阶段要求模型说明每处修改的理由和证据依据；程序不再要求 JSON 或逐条匹配格式。能识别的理由会写入变更记录，否则记录未识别到独立理由。理由和依据由模型生成，并未独立验证，也不能保证模型为每处修改提供理由；第一步整理的变化仍以文本差异记录。
+审校阶段要求模型说明每处修改的理由；开启 `--review` 时，变更记录同时包含程序生成的文本差异和模型理由。模型理由未经独立验证，可能不准确；请以实际差异为准。
 
-默认关闭思考模式；添加 `--enable-thinking` 仅对最终摘要模型开启。两次对照请使用相同输入、参数和随机种子，并设置不同的 `--output`。思考内容不会写入摘要，运行指标单独记录 thinking/answer token；若思考未结束，摘要为空并标记不完整。思考和答案共用模型剩余上下文空间。
+使用 `--vector-routing` 才会启用 embedding 辅助选择，默认 embedding 模型路径为 `models/Qwen3-Embedding-0.6B`；可通过 `--embedding-model` 指定本地目录或 Hugging Face 模型 ID。未加该参数时只使用注意力选择。speaker block 的相邻扩张由 `--speaker-neighbor-blocks` 控制，与是否启用向量无关。
+
+`--routing-audit` 会在输出旁生成 `.audit.txt` 和 `.audit.json`，记录选中范围、各发言块保留情况以及原文片段。每次运行自动生成的 `metrics.txt` / `metrics.json` 包含 KV、耗时、token 和 review 状态；启用向量时 JSON 还会记录每块的相关分数。`same text as draft` 是精确字符串比较，格式变化也会显示为不同。终端进度、`cap-hit` 与 review 跳过原因可用于判断运行状态。
+
+指标中的摘要 `total seconds` 和 `output tokens` 不包含 review；review 耗时和输出 token 另列在 `Review extra` 中。显式复用同一个 `--output` 路径会覆盖对应结果，建议为不同实验使用不同路径。
+
+摘要和审校均使用非思考模式。
 
 使用 `--seed 7` 指定摘要种子，`--review-seed 42` 单独指定整理种子，二者默认均为 7。整理默认使用贪心解码；添加 `--review-temperature 0.3 --review-top-p 0.9` 可仅对整理启用随机采样。摘要生成仍使用贪心解码。不同 GPU、依赖版本等可能影响复现；评测命令的 `--seed` 默认也为 7。
 
@@ -121,6 +128,8 @@ python -m meeting_evaluation.test \
 ```
 
 自有 JSONL 也可以作为 `--input`；`--benchmark` 用于标记报告名称，可选 `ami`、`icsi`、`qmsum_committee`、`meetingbank`。`--num-samples 0` 表示使用全部记录。只需要 token、缓存和耗时指标时，加 `--communication-metrics-only`；程序仍会生成摘要来统计输出 token，但不保存摘要或计算质量分数。
+
+此评测入口比较的是两个模式的摘要初稿，**不执行 review**。单数据集入口支持加入 `--vector-routing`；不加时默认关闭。当前 `meeting_evaluation.run_all` 不提供向量参数，使用注意力路由；若要评测向量辅助路由，请对各数据集分别运行 `meeting_evaluation.test`。
 
 报告保存在 `test_result/YYYYMMDD_HHMM/`，同一 benchmark 生成 `.txt` 和 `.json`。单次评测若在同一分钟重复运行同一 benchmark，可能覆盖同名报告。
 
@@ -162,7 +171,7 @@ This project uses training-free receiver-conditioned KV routing to generate meet
 
 ```text
 transcript → full-source KV prefill → role queries and speaker-block selection
-                                      ├─ routed_kv: selected KV → summary receiver
+                                      ├─ routed_kv: selected KV → summary receiver → draft + same KV → review → final summary
                                       └─ specialist_text: selected evidence → text handoff → summary receiver
 ```
 
@@ -175,6 +184,7 @@ input/                  Transcripts and prepared evaluation data
 output/                 Summaries and optional audit
 test_result/            Evaluation reports and runtime metrics
 receiver_kv_workflow/   Summarization workflow
+vector/                 Optional embedding-assisted selection
 data_preprocess/        Benchmark preparation
 meeting_evaluation/     Evaluation entry points, metrics, and reports
 requirements.txt        pip dependencies
@@ -248,11 +258,17 @@ To generate the natural-language control as well, replace `--variants routed_kv`
 
 The text control is then written to `output/meeting1.specialist_text.txt`. Add `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
 
-With `--review`, the same model receives the draft and a fresh copy of the source KV selected for the summary. It organizes the four sections and checks the draft against that selected evidence, without a separate retrieval step. The evidence can be incomplete and model review does not guarantee factual accuracy. The draft remains at `--output`; `.reviewed.txt` contains the reviewed summary, and `.reviewed.changes.txt` contains textual differences and any detected reasons. Empty or truncated output is skipped and the draft preserved; missing sections are reported in metrics.
+By default, routed KV generation includes review and `--output` contains the reviewed summary. Add `--review` to also save `.draft.txt` and `.reviewed.changes.txt` with the original draft, textual differences and model-provided reasons. Review reuses the selected source KV without separate retrieval; the evidence can be incomplete and model review does not guarantee factual accuracy. If review is empty or truncated, it is skipped and `--output` contains the draft, with the status recorded in logs and metrics; missing sections are reported in metrics.
 
 The model is asked to explain each change, but reasons can be missing or inaccurate; use the textual diff for review.
 
-Thinking is off by default. Add `--enable-thinking` to enable it for the final summary receiver. Use identical input, settings and seed and separate output paths for comparison. Reasoning text is not saved in the summary; metrics separately count thinking and answer tokens. An unfinished thinking section produces an empty summary and is flagged as incomplete. Thinking and the answer share the remaining model context.
+Add `--vector-routing` to enable embedding-assisted selection. The default embedding model is `models/Qwen3-Embedding-0.6B`; `--embedding-model` accepts a local directory or Hugging Face model ID. Without this flag, selection uses attention only. Neighbour expansion is controlled independently by `--speaker-neighbor-blocks`.
+
+`--routing-audit` writes `.audit.txt` and `.audit.json` beside the output, including selected ranges, speaker-block coverage and transcript excerpts. Each run also writes `metrics.txt` and `metrics.json` with KV, timing, token and review status; vector runs include per-block scores in JSON. `same text as draft` compares strings exactly, so formatting-only changes count as different. Progress logs, `cap-hit` and review skip reasons help diagnose a run.
+
+Summary `total seconds` and `output tokens` exclude review; review time and output tokens appear separately under `Review extra`. Reusing an explicit `--output` path overwrites the corresponding results; use a different path for each experiment.
+
+Summary generation and review use non-thinking mode.
 
 Use `--seed 7` for summary generation and `--review-seed 42` for organization; both default to 7. Organization is greedy by default; set `--review-temperature 0.3 --review-top-p 0.9` to enable sampling only for that stage. Summary generation remains greedy. Results can still vary across GPU hardware or dependency versions. The evaluation command also defaults to seed 7.
 
@@ -275,6 +291,8 @@ python -m meeting_evaluation.test \
 ```
 
 Your own JSONL can also be supplied via `--input`. `--benchmark` labels the report and accepts `ami`, `icsi`, `qmsum_committee`, or `meetingbank`. Set `--num-samples 0` to process every record. Add `--communication-metrics-only` for token, cache, and timing metrics only; summaries are still generated to count output tokens, but their text is discarded and quality is not scored.
+
+This evaluation compares the two draft summaries and **does not run review**. The single-dataset entry point accepts `--vector-routing`, which is off by default. `meeting_evaluation.run_all` currently has no vector-routing option and uses attention routing; run `meeting_evaluation.test` separately for each dataset to evaluate vector-assisted routing.
 
 Reports are written as `.txt` and `.json` under `test_result/YYYYMMDD_HHMM/`. Repeating the same benchmark within the same minute can overwrite a report with the same name.
 

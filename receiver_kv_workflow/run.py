@@ -16,7 +16,7 @@ def arguments():
     parser.add_argument("--reference", type=Path, help="Optional human summary; English ROUGE-L only")
     parser.add_argument("--model", default="Qwen/Qwen3-4B")
     parser.add_argument("--output", type=Path,
-                        help="Write routed_kv directly to this file; specialist_text uses a sibling file")
+                        help="Write the final routed_kv summary to this file; specialist_text uses a sibling file")
     parser.add_argument("--output-dir", type=Path, default=Path("output/receiver_kv"))
     parser.add_argument("--metrics-dir", type=Path, default=Path("test_result/receiver_kv"))
     parser.add_argument("--role-budget-ratio", type=float, default=0.15,
@@ -25,13 +25,12 @@ def arguments():
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1,
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
-    parser.add_argument("--review", action="store_true", help="Review and organize the draft against selected source KV")
+    parser.add_argument("--review", action="store_true", help="Also save the routed_kv draft and review change log")
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
-                        default=["routed_kv", "specialist_text"])
+                        default=["routed_kv"])
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--enable-thinking", action="store_true", help="Enable thinking for the final summary receiver")
     parser.add_argument("--seed", type=int, default=7, help="Seed for source routing and summary generation (default: 7)")
     parser.add_argument("--review-seed", type=int, default=7, help="Seed reset before review generation (default: 7)")
     parser.add_argument("--review-temperature", type=float, default=0.0, help="Review sampling temperature; 0 uses greedy decoding (default: 0)")
@@ -66,12 +65,12 @@ def main():
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         seed=args.seed, review_seed=args.review_seed, review_temperature=args.review_temperature,
-        review_top_p=args.review_top_p, enable_thinking=args.enable_thinking,
+        review_top_p=args.review_top_p,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         **config_kwargs(args),
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants),
-                        routing_audit=args.routing_audit, review=args.review)
+                        routing_audit=args.routing_audit, review="routed_kv" in args.variants)
     answers = result["answers"]
     review_report = ({k: v for k, v in result['review'].items() if k not in ('answer', 'changes')}
                      if result['review'] is not None else None)
@@ -85,8 +84,8 @@ def main():
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens,
                      "selection_strategy": "speaker",
-                     "enable_thinking": args.enable_thinking,
-                     "review": args.review, "review_seed": args.review_seed if args.review else None,
+                     "review": "routed_kv" in args.variants, "save_review_details": args.review,
+                     "review_seed": args.review_seed if "routed_kv" in args.variants else None,
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
@@ -100,6 +99,8 @@ def main():
                   "Logical payload bytes are accounting, not measured network traffic."],
     }
     for variant, answer in answers.items():
+        if variant == 'routed_kv' and result['review'] and result['review']['status'] == 'completed':
+            answer = result['review']['answer']
         report["variants"][variant]["rouge_l_f1"] = rouge_l_f1(answer, reference) if reference else None
     report["selected_source_positions"] = result["selected_source_positions"]
     report["seed_selected_positions"] = result["seed_selected_positions"]
@@ -127,15 +128,18 @@ def main():
             )
         else:
             path = output_dir / f"{variant}.txt"
-        path.write_text(answer + "\n", encoding="utf-8")
-    if result['review'] is not None and result['review']['status'] == 'completed':
-        review_path = (args.output.with_name(f"{args.output.stem}.reviewed{args.output.suffix or '.txt'}")
-                       if args.output else output_dir / 'routed_kv.reviewed.txt')
-        review_path.write_text(result['review']['answer'] + '\n', encoding='utf-8')
-        log(f"Reviewed summary: {review_path}")
-        changes_path = review_path.with_name(f"{review_path.stem}.changes{review_path.suffix}")
-        changes_path.write_text(result['review']['changes'], encoding='utf-8')
-        log(f"Organization change log: {changes_path}")
+        review = result['review'] if variant == 'routed_kv' else None
+        final_answer = review['answer'] if review and review['status'] == 'completed' else answer
+        path.write_text(final_answer + "\n", encoding="utf-8")
+        log(f"{'Reviewed summary' if review and review['status'] == 'completed' else 'Summary'}: {path}")
+        if review and review['status'] != 'completed':
+            log(f"Review skipped: {review['reason']} The output contains the draft.")
+        if args.review and review and review['status'] == 'completed':
+            draft_path = path.with_name(f"{path.stem}.draft{path.suffix or '.txt'}")
+            changes_path = path.with_name(f"{path.stem}.reviewed.changes{path.suffix or '.txt'}")
+            draft_path.write_text(answer + '\n', encoding='utf-8')
+            changes_path.write_text(review['changes'], encoding='utf-8')
+            log(f"Draft summary: {draft_path}; review change log: {changes_path}")
     (metrics_dir / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     rows = ["Receiver-conditioned KV routing (experimental)",
             "variant | ROUGE-L | input positions | KV MiB | positions vs full | total seconds | output tokens | cap-hit"]
@@ -148,9 +152,7 @@ def main():
                     f"{values['pipeline_seconds_excluding_model_load']:.2f} | "
                     f"{values['generated_tokens']} | {values['output_cap_hit']}")
         counts = values['generation_counts']
-        rows.append(f"  thinking tokens={counts['thinking_tokens']} | answer tokens={counts['answer_tokens']} | "
-                    f"delimiter tokens={counts['delimiter_tokens']} | terminal tokens={counts['terminal_tokens']} | "
-                    f"thinking complete={counts['thinking_complete']}")
+        rows.append(f"  answer tokens={counts['answer_tokens']} | terminal tokens={counts['terminal_tokens']}")
     rows.extend(["", *report["notes"]])
     if report['review'] is not None:
         review = report['review']

@@ -43,7 +43,7 @@ def forward_tokens(model, ids, cache, absolute_start, **kwargs):
 
 
 @torch.inference_mode()
-def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit, enable_thinking=False,
+def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit,
                           temperature=0.0, top_p=1.0):
     """Decode after a caller has already prefetched a complete receiver prompt."""
     eos = model.generation_config.eos_token_id
@@ -75,32 +75,12 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
     # Count the generated sequence itself, not a re-tokenization of decoded text.
     content = generated[:-1] if stopped else generated
     terminal_tokens = len(generated) - len(content)
-    delimiter_tokens = 0
-    reasoning_tokens = 0
-    thinking_complete = True
-    if enable_thinking:
-        marker = tokenizer.encode('</think>', add_special_tokens=False)
-        if not marker:
-            raise ValueError('Tokenizer does not encode the thinking delimiter.')
-        boundary = next((i for i in range(len(content) - len(marker) + 1)
-                         if content[i:i + len(marker)] == marker), None)
-        thinking_complete = boundary is not None
-        if thinking_complete:
-            reasoning_tokens = boundary
-            delimiter_tokens = len(marker)
-            content = content[boundary + len(marker):]
-        else:
-            # An unfinished thinking section is not a final summary.
-            reasoning_tokens = len(content)
-            content = []
-    counts = {'thinking_tokens': reasoning_tokens, 'answer_tokens': len(content),
-              'delimiter_tokens': delimiter_tokens, 'terminal_tokens': terminal_tokens,
-              'thinking_complete': thinking_complete}
+    counts = {'answer_tokens': len(content), 'terminal_tokens': terminal_tokens}
     return tokenizer.decode(content, skip_special_tokens=True), len(generated), not stopped, counts
 
 
 @torch.inference_mode()
-def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, enable_thinking=False,
+def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
              temperature=0.0, top_p=1.0):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
@@ -109,6 +89,6 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit, 
     answer, generated, cap_hit, counts = generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
-        enable_thinking=enable_thinking, temperature=temperature, top_p=top_p,
+        temperature=temperature, top_p=top_p,
     )
     return answer, generated, cap_hit, counts

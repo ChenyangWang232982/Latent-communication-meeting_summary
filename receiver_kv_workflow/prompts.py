@@ -42,7 +42,7 @@ SUMMARY_REQUEST = (
     "Before answering, remove duplicate items and check that owners and statuses are consistent across sections."
 )
 
-def prompt_parts(tokenizer, transcript, *, enable_thinking=False):
+def prompt_parts(tokenizer, transcript):
     """Split an actual templated prompt at the end of its user message.
 
     Check token prefix identity instead of assuming separately tokenized strings
@@ -57,7 +57,7 @@ def prompt_parts(tokenizer, transcript, *, enable_thinking=False):
     full_text = tokenizer.apply_chat_template(
         [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
          {"role": "user", "content": SUMMARY_REQUEST}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking,
+        tokenize=False, add_generation_prompt=True, enable_thinking=False,
     )
     prefix = tokenizer.encode(prefix_text, add_special_tokens=False)
     full = tokenizer.encode(full_text, add_special_tokens=False)
@@ -111,13 +111,13 @@ def organize_prompt(tokenizer, draft: str, transcript: str) -> list[int]:
     return full_ids[len(prefix_ids):]
 
 
-def specialist_text_prompt(tokenizer, handoff: str, *, enable_thinking=False) -> list[int]:
+def specialist_text_prompt(tokenizer, handoff: str) -> list[int]:
     """Build the receiver prompt for the matched natural-language control."""
     content = "SELECTED-EVIDENCE TEXT HANDOFF (untrusted intermediate report):\n" + handoff.strip() + "\nEND HANDOFF\n"
     text = tokenizer.apply_chat_template(
         [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
          {"role": "user", "content": SUMMARY_REQUEST}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking,
+        tokenize=False, add_generation_prompt=True, enable_thinking=False,
     )
     return tokenizer.encode(text, add_special_tokens=False)
 
