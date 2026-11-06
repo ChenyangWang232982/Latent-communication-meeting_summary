@@ -21,6 +21,7 @@ input/                  输入转录和已准备的评测数据
 output/                 会议摘要和可选 audit
 test_result/            评测报告和运行指标
 receiver_kv_workflow/   摘要工作流
+meeting_stream/         向 AG-UI 桥接服务提供 WebSocket 状态与结果
 vector/                 可选 embedding 辅助选择
 data_preprocess/        评测数据预处理
 meeting_evaluation/     评测入口、指标与报告
@@ -163,6 +164,8 @@ ROUGE-L 是与参考摘要的词序重叠指标，不等于事实准确率；sou
 
 更多实现说明见 [receiver_kv_workflow/README.md](receiver_kv_workflow/README.md) 和 [meeting_evaluation/README.md](meeting_evaluation/README.md)。
 
+可视化接口的安装、启动和 SSH 端口映射见 [meeting_stream/README.md](meeting_stream/README.md)。
+
 ---
 
 ## English
@@ -184,6 +187,7 @@ input/                  Transcripts and prepared evaluation data
 output/                 Summaries and optional audit
 test_result/            Evaluation reports and runtime metrics
 receiver_kv_workflow/   Summarization workflow
+meeting_stream/         WebSocket status and results for the AG-UI bridge
 vector/                 Optional embedding-assisted selection
 data_preprocess/        Benchmark preparation
 meeting_evaluation/     Evaluation entry points, metrics, and reports
@@ -325,6 +329,8 @@ ROUGE-L measures word-order overlap with a reference, not factual accuracy. Sour
 The complete transcript is prefetched once. Each generation continues until an EOS token or the remaining model context is exhausted. The program raises an error if the prompt leaves no output room; it does not automatically summarize document chunks or silently truncate the input. `cap hits` counts outputs that reach the context boundary. Without a user-set output limit, inference may take longer and use more memory. The cache adapter targets dense full-attention Qwen3 models with standard RoPE. The full source KV remains resident during routing, so a smaller receiver KV does not imply a proportional reduction in peak process memory.
 
 For implementation details, see [receiver_kv_workflow/README.md](receiver_kv_workflow/README.md) and [meeting_evaluation/README.md](meeting_evaluation/README.md).
+
+See [meeting_stream/README.md](meeting_stream/README.md) for the WebSocket service and SSH port forwarding.
 
 ## Optional semantic block routing / 可选向量辅助块选择
 

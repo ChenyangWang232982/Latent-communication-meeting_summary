@@ -82,7 +82,8 @@ class ReceiverKVRunner:
         return self.torch.tensor([ids], device=self.device, dtype=self.torch.long)
 
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...],
-            routing_audit: bool = False, review: bool = False) -> dict:
+            routing_audit: bool = False, review: bool = False,
+            on_state: Callable[[dict], None] | None = None) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -95,6 +96,11 @@ class ReceiverKVRunner:
             raise ValueError("variants must be routed_kv and/or specialist_text")
         if review and 'routed_kv' not in requested:
             raise ValueError('Summary review requires the routed_kv variant')
+        def emit(stage: str, message: str, **fields) -> None:
+            if on_state is not None:
+                on_state({"stage": stage, "message": message, **fields})
+
+        emit("queued", "Preparing transcript", reviewStatus="pending" if review else "skipped")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
         query_text = dict(ROLE_QUERIES)
         queries = {role: self.tokenizer.encode(query, add_special_tokens=False) for role, query in query_text.items()}
@@ -115,6 +121,7 @@ class ReceiverKVRunner:
         self._sync()
         prefill_start = time.perf_counter()
         self.progress(f"{record_id}: full source prefill started")
+        emit("prefill", "Reading the meeting transcript", metrics={"sourcePositions": len(prefix)})
         with self.torch.inference_mode():
             output = forward_tokens(self.model, self._tensor(prefix), None, 0, logits_to_keep=1)
             source = output.past_key_values
@@ -128,6 +135,7 @@ class ReceiverKVRunner:
             selection_seconds = 0.0
             selection_probe_tokens = 0
             if requested:
+                emit("selection", "Selecting relevant meeting context")
                 selection_start = time.perf_counter()
                 for index, (role, query) in enumerate(queries.items(), start=1):
                     self.progress(f"{record_id}: selector {role} started ({index - 1}/{len(queries)} complete)")
@@ -187,6 +195,7 @@ class ReceiverKVRunner:
                 self.progress(f"{record_id}: speaker KV selection {len(selected)}/{baseline_positions} positions{detail}")
             answers, measurements = {}, {}
             if "routed_kv" in requested:
+                emit("summary", "Generating the summary", metrics={"selectedPositions": len(selected)})
                 self.torch.manual_seed(self.config.seed)
                 receiver_start = time.perf_counter()
                 ids = selected
@@ -285,6 +294,7 @@ class ReceiverKVRunner:
                         review_result = {'status': 'skipped', 'reason': 'Source positions and review prompt leave no output room; draft preserved.'}
                     else:
                         self.progress(f"{record_id}: evidence-based summary review started ({len(selected)} source KV positions)")
+                        emit("review", "Reviewing the summary against selected context", reviewStatus="running")
                         self._sync()
                         start = time.perf_counter()
                         self.torch.manual_seed(self.config.review_seed)
@@ -315,6 +325,11 @@ class ReceiverKVRunner:
                                 'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit'],
                             }
                             self.progress(f"{record_id}: organization completed; same text as draft={organized == draft}")
+        if review:
+            emit("completed", "Review complete" if review_result['status'] == 'completed' else "Review skipped; showing the draft",
+                 reviewStatus=review_result['status'])
+        else:
+            emit("completed", "Summary complete", reviewStatus="skipped")
         audit = None
         if routing_audit:
             from .routing_audit import build_audit
