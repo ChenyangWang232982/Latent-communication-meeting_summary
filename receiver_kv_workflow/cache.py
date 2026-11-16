@@ -5,6 +5,7 @@ comes from one source prefill. Physical cache slots and absolute positions are
 different after selection: continuation uses the original absolute position.
 """
 
+import math
 import torch
 from transformers.cache_utils import DynamicCache
 
@@ -63,9 +64,11 @@ def refill_selected_cache(model, prefix_ids, selected_positions):
 
 @torch.inference_mode()
 def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit,
-                          temperature=0.0, top_p=1.0, top_k=0, on_progress=None, on_snapshot=None,
+                          temperature=0.0, top_p=1.0, top_k=0, repetition_penalty=1.0, on_progress=None, on_snapshot=None,
                           on_token=None):
     """Decode after a caller has already prefetched a complete receiver prompt."""
+    if not math.isfinite(repetition_penalty) or repetition_penalty < 1:
+        raise ValueError("repetition_penalty must be finite and >= 1")
     eos = model.generation_config.eos_token_id
     eos = set(eos if isinstance(eos, list) else [eos])
     eos.add(tokenizer.eos_token_id)
@@ -76,6 +79,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
         raise ValueError("The prompt leaves no room for generated tokens in the model context.")
     if on_progress is not None:
         on_progress({"phase": "decode", "tokens": 0})
+    from transformers.generation.logits_process import RepetitionPenaltyLogitsProcessor
+    penalty = RepetitionPenaltyLogitsProcessor(float(repetition_penalty)) if repetition_penalty > 1 else None
     warpers = []
     if temperature > 0:
         from transformers.generation.logits_process import TemperatureLogitsWarper, TopKLogitsWarper, TopPLogitsWarper
@@ -102,10 +107,15 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
         })
     for step in range(remaining):
         logits = output.logits[:, -1].float()
+        # Penalize only this stage's generated history, never source/prompt IDs.
+        # Clone to keep the raw-logit observer and model output unmodified.
+        scores = logits
+        if penalty is not None and generated:
+            history = torch.tensor([generated], device=logits.device, dtype=torch.long)
+            scores = penalty(history, logits.clone())
         if temperature == 0:
-            token = logits.argmax(dim=-1).view(1, 1)
+            token = scores.argmax(dim=-1).view(1, 1)
         else:
-            scores = logits
             for warper in warpers:
                 scores = warper(None, scores)
             token = torch.multinomial(torch.softmax(scores, dim=-1), 1)
@@ -136,7 +146,7 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
 
 @torch.inference_mode()
 def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
-             temperature=0.0, top_p=1.0, top_k=0, on_progress=None, on_snapshot=None, on_token=None):
+             temperature=0.0, top_p=1.0, top_k=0, repetition_penalty=1.0, on_progress=None, on_snapshot=None, on_token=None):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
@@ -146,7 +156,7 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
     answer, generated, cap_hit, counts = generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
-        temperature=temperature, top_p=top_p, top_k=top_k, on_progress=on_progress, on_snapshot=on_snapshot,
+        temperature=temperature, top_p=top_p, top_k=top_k, repetition_penalty=repetition_penalty, on_progress=on_progress, on_snapshot=on_snapshot,
         on_token=on_token,
     )
     return answer, generated, cap_hit, counts

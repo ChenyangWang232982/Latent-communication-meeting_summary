@@ -27,6 +27,8 @@ def add_workflow_arguments(parser):
     parser.add_argument("--temperature", type=float, default=0.0, help="0 retains greedy decoding; Qwen3 non-thinking sampling control: 0.7")
     parser.add_argument("--top-p", type=float, default=1.0, help="Shared generation nucleus threshold; sampling control: 0.8")
     parser.add_argument("--top-k", type=int, default=0, help="0 disables top-k filtering; sampling control: 20")
+    parser.add_argument("--repetition-penalty", type=float, default=1.0,
+                        help="Generated-only token penalty shared across sender/receivers; 1 disables, try 1.1")
     from vector.cli import add_arguments
     add_arguments(parser)
 
@@ -56,7 +58,8 @@ def model_config(args):
         vector_routing=args.vector_routing, embedding_model=args.embedding_model, vector_weight=args.vector_weight,
         fp32_lm_head=getattr(args, "fp32_lm_head", False),
         temperature=getattr(args, "temperature", 0.0), top_p=getattr(args, "top_p", 1.0),
-        top_k=getattr(args, "top_k", 0))
+        top_k=getattr(args, "top_k", 0),
+        repetition_penalty=getattr(args, "repetition_penalty", 1.0))
 
 
 def sha256(data: bytes):

@@ -7,6 +7,7 @@ from statistics import mean, median
 from meeting_evaluation.metrics import score_receiver_kv_results
 from .config import VARIANTS
 from .storage import atomic_json
+from .repetition import repetition_metrics
 
 
 def paired_interval(samples, repetitions=2000):
@@ -54,6 +55,14 @@ def write_reports(store, completed, failures, planned):
                 "receiver_cap_hits": sum(bool(m["output_cap_hit"]) for m in measurements),
             }
         result["additional_resources"] = extra
+        repetition = [{"id": sample["id"], "variant": name,
+                       "receiver": repetition_metrics(sample["result"].get("answers", {}).get(name, "")),
+                       "sender": repetition_metrics(sample["result"].get("handoffs", {}).get(name, ""))}
+                      for sample in completed for name in VARIANTS]
+        atomic_json(store.directory / "repetition.json", repetition)
+        result["repetition"] = {name: {
+            "receiver_samples_with_duplicate_bullets": sum(row["receiver"]["duplicate_bullet_excess"] > 0 for row in repetition if row["variant"] == name),
+            "sender_samples_with_duplicate_bullets": sum(row["sender"]["duplicate_bullet_excess"] > 0 for row in repetition if row["variant"] == name)} for name in VARIANTS}
     atomic_json(store.directory / "summary.json", result)
     lines = ["Experiment 1: paired draft-summary comparison (review disabled)",
              f"Planned: {planned}; completed: {len(completed)}; failed: {len(failures)}",
@@ -71,6 +80,10 @@ def write_reports(store, completed, failures, planned):
         lines.append(f"{name} | {rouge} | {q['supported_claim_rate']:.4f} | "
                      f"{eff['mean_pipeline_seconds_excluding_model_load']:.3f} | {peak_text} | "
                      f"{extra['handoff_cap_hits']}/{extra['receiver_cap_hits']}")
+    if completed:
+        lines.append("\nExact duplicate bullet diagnostics (not semantic or factual evaluation):")
+        for name, counts in result["repetition"].items():
+            lines.append(f"{name}: receiver samples={counts['receiver_samples_with_duplicate_bullets']}; sender samples={counts['sender_samples_with_duplicate_bullets']}")
     lines.extend(["", result["comparison_note"], result["memory_note"], result["payload_note"], result["quality_note"]])
     (store.directory / "summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     fields = ["id", "variant", "rouge_l_f1", "supported_claim_rate", "source_positions", "selected_positions",

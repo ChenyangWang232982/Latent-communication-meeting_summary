@@ -77,6 +77,33 @@ class RefillCacheTest(unittest.TestCase):
             self.assertEqual(rows[-1]["eos_logits"], [{"token_id": 2, "logit": 3.0}])
             self.assertEqual(rows[0]["top1_top2_margin"], 3.0)
 
+    def test_generated_only_penalty_breaks_loop_without_mutating_raw_logits(self):
+        from unittest.mock import patch
+        import torch
+        import receiver_kv_workflow.cache as cache
+        class Tokenizer:
+            eos_token_id = 2
+            def decode(self, ids, **kwargs):
+                return str(ids)
+        logits = torch.tensor([[[10., 9.8, 9.7]]])
+        output = SimpleNamespace(logits=logits, past_key_values=None)
+        model = SimpleNamespace(generation_config=SimpleNamespace(eos_token_id=2))
+        observed = []
+        with patch.object(cache, "forward_tokens", return_value=output):
+            baseline = cache.generate_from_prefill(model, Tokenizer(), output, next_position=1, context_limit=5)
+            penalized = cache.generate_from_prefill(model, Tokenizer(), output, next_position=1,
+                context_limit=5, repetition_penalty=1.1,
+                on_token=lambda raw, token, step: observed.append(raw.clone()))
+        self.assertEqual(baseline[0], "[0, 0, 0, 0]")
+        self.assertEqual(penalized[0], "[0, 1]")
+        self.assertFalse(penalized[2])  # natural EOS remains available
+        for raw in observed:
+            torch.testing.assert_close(raw, logits[:, -1])
+        for invalid in (0, .9, float("nan"), float("inf")):
+            with self.assertRaises(ValueError):
+                cache.generate_from_prefill(model, Tokenizer(), output, next_position=1,
+                    context_limit=5, repetition_penalty=invalid)
+
     def test_uses_exact_selected_ids_and_original_positions_without_old_cache(self):
         import torch
         from receiver_kv_workflow.cache import refill_selected_cache

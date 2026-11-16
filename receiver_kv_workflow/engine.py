@@ -31,6 +31,7 @@ class ReceiverKVConfig:
     temperature: float = 0.0
     top_p: float = 1.0
     top_k: int = 0
+    repetition_penalty: float = 1.0
 
 
 class ReceiverKVRunner:
@@ -53,6 +54,8 @@ class ReceiverKVRunner:
             raise ValueError("temperature must be finite and non-negative")
         if not math.isfinite(config.top_p) or not 0 < config.top_p <= 1 or config.top_k < 0:
             raise ValueError("top_p must be in (0, 1] and top_k must be non-negative")
+        if not math.isfinite(config.repetition_penalty) or config.repetition_penalty < 1:
+            raise ValueError("repetition_penalty must be finite and >= 1")
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -155,6 +158,8 @@ class ReceiverKVRunner:
                     ) + [self.tokenizer.eos_token_id] if value is not None}),
                     "temperature": self.config.temperature, "top_p": self.config.top_p,
                     "top_k": self.config.top_k, "seed": self.config.seed,
+                    "repetition_penalty": self.config.repetition_penalty,
+                    "repetition_history_scope": "generated_only",
                 })
 
         emit("queued", "Preparing transcript", reviewStatus="pending" if review else "skipped")
@@ -281,6 +286,7 @@ class ReceiverKVRunner:
                     self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
                     context_limit=self.context_limit,
                     temperature=self.config.temperature, top_p=self.config.top_p, top_k=self.config.top_k,
+                    repetition_penalty=self.config.repetition_penalty,
                     on_progress=generation_progress("routed_kv receiver"),
                     on_snapshot=generation_snapshot("routed_kv_receiver"),
                     on_token=token_observer("routed_kv_receiver"),
@@ -327,6 +333,7 @@ class ReceiverKVRunner:
                     self.model, self.tokenizer, None, sender_prompt,
                     absolute_start=0, context_limit=self.context_limit,
                     temperature=self.config.temperature, top_p=self.config.top_p, top_k=self.config.top_k,
+                    repetition_penalty=self.config.repetition_penalty,
                     on_progress=generation_progress("specialist_text sender"),
                     on_snapshot=generation_snapshot("specialist_text_sender"),
                     on_token=token_observer("specialist_text_sender"),
@@ -346,6 +353,7 @@ class ReceiverKVRunner:
                     self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
                     context_limit=self.context_limit,
                     temperature=self.config.temperature, top_p=self.config.top_p, top_k=self.config.top_k,
+                    repetition_penalty=self.config.repetition_penalty,
                     on_progress=generation_progress("specialist_text receiver"),
                     on_snapshot=generation_snapshot("specialist_text_receiver"),
                     on_token=token_observer("specialist_text_receiver"),

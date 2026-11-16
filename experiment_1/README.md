@@ -244,3 +244,29 @@ repetition of a run within a fixed environment, not guaranteed bitwise reproduci
 across hardware or libraries. Use more than one seed when assessing final robustness;
 do not pool greedy and sampling conditions in a single mean. No new generation
 length cap, repetition penalty or automatic retry is added.
+
+
+### Generated-only repetition control
+
+Add `--repetition-penalty 1.1` to the sampling experiment or diagnostic command.
+Default 1.0 disables it. The identical setting applies to routed receiver, text
+sender and text receiver; each stage starts with empty generated history. Source
+and prompt tokens are excluded. Positive logits for previously generated tokens
+are divided by the penalty, negative logits multiplied, before sampling filters.
+Greedy decoding also supports it. EOS is not blocked. Raw-logit traces stay raw.
+
+No routing/prompt change, output rewriting, automatic retry or new length cap is
+introduced. Repetition penalties can affect necessary repeated names and terms;
+this is an experimental intervention, not a guarantee of factual correctness.
+
+`summary.txt` now reports sender/receiver sample counts with repeated bullets.
+`repetition.json` reports per-sample bullet counts, excess duplicates and maximum
+multiplicity. Matching normalizes whitespace and case across sections but does not
+merge different owners. It misses paraphrases and prose repetition; zero does not
+prove semantic uniqueness. Existing quality, token, cap-hit and live status metrics
+remain available. Judge quality and source fidelity as well as termination.
+
+Use a new output directory, e.g. `--output-dir test_result/repetition_control`,
+first with 3 samples. To isolate the penalty, run a matched control with 1.0 and
+otherwise identical sampling settings, seed, model and input. Do not resume old
+runs after changing decoding configuration. Review stays disabled.
