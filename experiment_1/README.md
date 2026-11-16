@@ -129,3 +129,41 @@ cat "$RUN_DIR/live/00000/routed_kv_receiver.status.json"
 
 Snapshots require a restarted process with updated code. Do not use a modified
 code version to resume an old manifest. Keep the old run and start a new directory.
+
+
+## Full-source generation diagnostic (not a formal variant)
+
+```bash
+python -m experiment_1.diagnose_generation \
+  --input input/meetingbank_speaker_4k_8k_test.jsonl \
+  --sample-index 0 \
+  --condition both \
+  --model Qwen/Qwen3-8B \
+  --device cuda \
+  --role-budget-ratio 0.25 \
+  --speaker-neighbor-blocks 1 \
+  --vector-routing \
+  --seed 12
+```
+
+Use the exact input and zero-based row index of the repeating sample, or replace
+`--sample-index` with `--sample-id 'exact record id'`. The default runs the full
+cache control first, then routing. Use `--condition full` or `routed` to run one
+condition separately. Both use the same record, model, prompt suffix, absolute
+continuation position, greedy decoding and seed. The full control still executes
+the selectors but retains every source KV position rather than their subset.
+Each run reconstructs its own immutable full cache using the same prefill path.
+The control is only exposed by this diagnostic entry point, not formal variant CLI.
+
+Results are isolated in `test_result/generation_diagnostic/<UTC timestamp>/`:
+`prompt.json` records source/suffix fingerprints and EOS IDs;
+`full/summary.txt` and `routed/summary.txt` are saved after each condition finishes.
+During generation, inspect `full/live/00000/routed_kv_receiver.partial.txt` or
+`routed/live/00000/routed_kv_receiver.partial.txt`, and corresponding status JSONs.
+The inner stage retains its engine name; the outer folder identifies the condition.
+A manifest records input/code/config/environment fingerprints. These controls are
+not quality-scored or aggregated with experiment 1. No new output limit or automatic
+repetition stop is applied. If interrupted, the latest partial snapshot is preserved.
+If only routed output loops, investigate cache selection/continuation behavior;
+if both loop, investigate shared generation, prompt and model behavior. Neither
+outcome alone establishes a complete causal explanation.

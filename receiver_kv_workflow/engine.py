@@ -85,7 +85,8 @@ class ReceiverKVRunner:
             routing_audit: bool = False, review: bool = False,
             on_state: Callable[[dict], None] | None = None,
             on_variant: Callable[[str, str], None] | None = None,
-            on_generation: Callable[[dict], None] | None = None) -> dict:
+            on_generation: Callable[[dict], None] | None = None,
+            diagnostic_full_source: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -98,6 +99,8 @@ class ReceiverKVRunner:
             raise ValueError("variants must be routed_kv and/or specialist_text")
         if review and 'routed_kv' not in requested:
             raise ValueError('Summary review requires the routed_kv variant')
+        if diagnostic_full_source and (requested != ("routed_kv",) or review):
+            raise ValueError("Full-source diagnostic requires only routed_kv and review=False")
         def emit(stage: str, message: str, **fields) -> None:
             if on_state is not None:
                 on_state({"stage": stage, "message": message, **fields})
@@ -209,6 +212,11 @@ class ReceiverKVRunner:
                 detail = f" seeds={len(seed_selection)}, +/-{self.config.speaker_neighbor_blocks} blocks"
                 self.progress(f"{record_id}: speaker KV selection {len(selected)}/{baseline_positions} positions{detail}")
                 emit("selected", f"Selected {len(selected)} KV positions; {len(prefix)} source positions")
+            if diagnostic_full_source:
+                # Diagnostic control only. Clone all rows of the same source
+                # cache; keep the identical suffix and original continuation.
+                selected = list(range(len(prefix)))
+                emit("full_source_control", f"Diagnostic: retaining all {len(selected)} source positions")
             answers, measurements, handoffs = {}, {}, {}
             if "routed_kv" in requested:
                 emit("summary", "Generating the summary", metrics={"selectedPositions": len(selected)})
@@ -378,6 +386,7 @@ class ReceiverKVRunner:
             "routing_audit": audit,
             "id": record_id, "answers": answers, "variants": measurements, "handoffs": handoffs,
             "source_positions": len(prefix), "context_limit": self.context_limit,
+            "diagnostic_full_source": diagnostic_full_source,
             "source_cache_bytes": source_bytes, "prefill_seconds": prefill_seconds,
             "selection_seconds": selection_seconds, "roles": role_metrics,
             "selected_source_positions": selected,
