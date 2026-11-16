@@ -15,6 +15,8 @@ import random
 import tempfile
 from typing import Any, Iterable, Mapping
 
+from .token_filter import add_token_arguments, load_token_filter, write_report
+
 
 DEFAULT_DATASET = "huuuyeah/meetingbank"
 DEFAULT_OUTPUT = Path("input/meetingbank_test.jsonl")
@@ -29,6 +31,8 @@ class PreparationReport:
     records_skipped: int
     source_columns: list[str]
     created_at_utc: str
+    token_filter: dict
+    seed: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--require-speakers", action="store_true",
                         help="Require structured speaker-labelled turns for the speaker-block workflow.")
     parser.add_argument("--overwrite", action="store_true", help="Replace an existing output JSONL deliberately.")
+    add_token_arguments(parser)
     return parser.parse_args()
 
 
@@ -86,34 +91,45 @@ def normalize_row(row: Mapping[str, Any], index: int, *, require_speakers: bool 
 
 
 def export_rows(rows: Iterable[dict[str, Any]], output: Path, *, max_records: int, overwrite: bool,
-                require_speakers: bool = False) -> tuple[int, int, list[str]]:
+                require_speakers: bool = False, token_filter=None, seed: int = 7,
+                selected_records: list | None = None) -> tuple[int, int, list[str]]:
     if max_records < 0:
         raise ValueError("--max-records must be 0 or positive")
     if output.exists() and not overwrite:
         raise FileExistsError(f"Output already exists: {output}. Use --overwrite to replace it deliberately.")
     output.parent.mkdir(parents=True, exist_ok=True)
     written, skipped, columns = 0, 0, set()
+    records = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            skipped += 1
+            continue
+        columns.update(str(key) for key in row)
+        record = normalize_row(row, index, require_speakers=require_speakers)
+        if record is None:
+            skipped += 1
+            continue
+        if token_filter is None or token_filter.retain(record):
+            records.append(record)
+    if not records:
+        raise ValueError("No eligible MeetingBank records remain after schema and transcript-length filtering.")
+    if max_records and len(records) < max_records:
+        raise ValueError(f"Requested {max_records} records but only {len(records)} are eligible after filtering. "
+                         "Reduce --max-records or explicitly adjust the token bounds.")
+    records = _sample(records, max_records, seed)
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=output.parent, suffix=".jsonl.tmp") as handle:
             temporary = Path(handle.name)
-            for index, row in enumerate(rows):
-                if max_records and written >= max_records:
-                    break
-                if not isinstance(row, Mapping):
-                    skipped += 1
-                    continue
-                columns.update(str(key) for key in row)
-                record = normalize_row(row, index, require_speakers=require_speakers)
-                if record is None:
-                    skipped += 1
-                    continue
+            for record in records:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
                 written += 1
             if not written:
                 raise ValueError("No valid MeetingBank rows contained both transcript and summary.")
             handle.flush()
         temporary.replace(output)
+        if selected_records is not None:
+            selected_records.extend(records)
     except Exception:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -184,18 +200,18 @@ def _sample(rows: list[dict[str, Any]], max_records: int, seed: int) -> list[dic
 
 def main() -> None:
     args = parse_args()
+    if args.output.exists() and not args.overwrite:
+        raise FileExistsError(f"Output already exists: {args.output}. Use --overwrite to replace it deliberately.")
+    token_filter = load_token_filter(args)
     if args.input:
         if args.input.is_dir():
             rows = _official_meetingbank_rows(args.input, args.split)
-            rows = _sample(rows, args.max_records, args.seed)
-            max_records = 0
             print(
-                f"Loaded official diarized MeetingBank split={args.split}: {len(rows)} selected rows "
+                f"Loaded official diarized MeetingBank split={args.split}: {len(rows)} candidate rows "
                 f"from {args.input}", flush=True,
             )
         else:
             rows = _read_local(args.input)
-            max_records = args.max_records
             print(f"Loaded local MeetingBank export: {args.input} ({len(rows)} rows)", flush=True)
         dataset_name = str(args.input)
     else:
@@ -205,19 +221,20 @@ def main() -> None:
             raise RuntimeError("Missing dependency: install datasets (for example: pip install datasets).") from error
         rows = load_dataset(args.dataset, split=args.split, cache_dir=str(args.cache_dir) if args.cache_dir else None)
         dataset_name = args.dataset
-        max_records = args.max_records
         print(f"Loaded {args.dataset} split={args.split}: {len(rows)} rows", flush=True)
+    selected = []
     written, skipped, columns = export_rows(
-        rows, args.output, max_records=max_records, overwrite=args.overwrite,
-        require_speakers=args.require_speakers,
+        rows, args.output, max_records=args.max_records, overwrite=args.overwrite,
+        require_speakers=args.require_speakers, token_filter=token_filter, seed=args.seed,
+        selected_records=selected,
     )
     report = PreparationReport(
         dataset=dataset_name, split=args.split, output=str(args.output), records_written=written,
         records_skipped=skipped, source_columns=columns,
         created_at_utc=datetime.now(timezone.utc).isoformat(),
+        token_filter=token_filter.report(selected), seed=args.seed,
     )
-    report_path = args.output.with_suffix(args.output.suffix + ".report.json")
-    report_path.write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report_path = write_report(args.output, asdict(report))
     print(f"Wrote {written} normalized records: {args.output}")
     print(f"Preparation report: {report_path}")
 

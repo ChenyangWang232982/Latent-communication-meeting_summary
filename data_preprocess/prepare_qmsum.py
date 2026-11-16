@@ -20,6 +20,8 @@ import random
 import tempfile
 from typing import Any, Iterable
 
+from .token_filter import add_token_arguments, load_token_filter, write_report
+
 
 DEFAULT_QUESTION = "Create an evidence-grounded meeting summary covering the most important facts."
 
@@ -88,7 +90,8 @@ def general_queries(row: dict[str, Any]) -> Iterable[dict[str, Any]]:
         yield {"query": query, "answer": answer}
 
 
-def normalize(rows: Iterable[dict[str, Any]], *, max_records: int, seed: int = 7) -> list[dict[str, str]]:
+def normalize(rows: Iterable[dict[str, Any]], *, max_records: int, seed: int = 7,
+              token_filter=None) -> list[dict[str, Any]]:
     if max_records < 1:
         raise ValueError("--max-records must be positive for a controlled benchmark export.")
     records = []
@@ -106,17 +109,20 @@ def normalize(rows: Iterable[dict[str, Any]], *, max_records: int, seed: int = 7
         summary = _text(query.get("answer") or query.get("summary"))
         if not summary:
             continue
-        records.append({
+        record = {
             "id": meeting_id,
             "transcript": transcript,
             "summary": summary,
             "question": _text(query.get("query")) or DEFAULT_QUESTION,
-        })
+        }
         seen_meetings.add(meeting_id)
+        if token_filter is None or token_filter.retain(record):
+            records.append(record)
     if not records:
-        raise ValueError("No speaker-labelled QMSum general-summary records were found.")
+        raise ValueError("No eligible speaker-labelled QMSum records remain after transcript-length filtering.")
     if len(records) < max_records:
-        raise ValueError(f"Requested {max_records} meetings but found only {len(records)} eligible QMSum meetings.")
+        raise ValueError(f"Requested {max_records} meetings but found only {len(records)} eligible QMSum meetings "
+                         "after filtering. Reduce --max-records or explicitly adjust the token bounds.")
     return random.Random(seed).sample(records, max_records)
 
 
@@ -139,14 +145,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-records", type=int, default=25)
     parser.add_argument("--seed", type=int, default=7, help="Deterministic meeting-level sample seed.")
     parser.add_argument("--overwrite", action="store_true")
+    add_token_arguments(parser)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    records = normalize(_read(args.input), max_records=args.max_records, seed=args.seed)
+    if args.output.exists() and not args.overwrite:
+        raise FileExistsError(f"Output already exists: {args.output}. Use --overwrite to replace it deliberately.")
+    token_filter = load_token_filter(args)
+    records = normalize(_read(args.input), max_records=args.max_records, seed=args.seed, token_filter=token_filter)
     write(records, args.output, overwrite=args.overwrite)
+    report_path = write_report(args.output, {
+        "input": str(args.input), "output": str(args.output), "seed": args.seed,
+        "token_filter": token_filter.report(records),
+    })
     print(f"Wrote {len(records)} speaker-labelled QMSum records: {args.output}")
+    print(f"Preparation report: {report_path}")
 
 
 if __name__ == "__main__":
