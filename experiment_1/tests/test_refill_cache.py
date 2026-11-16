@@ -7,6 +7,36 @@ from types import SimpleNamespace
 @unittest.skipUnless(importlib.util.find_spec("torch") and importlib.util.find_spec("transformers"),
                      "requires the model environment")
 class RefillCacheTest(unittest.TestCase):
+    def test_seeded_sampling_is_repeatable_filtered_and_observer_neutral(self):
+        import torch
+        from receiver_kv_workflow.cache import generate_from_prefill
+
+        class Tokenizer:
+            eos_token_id = 4
+            def decode(self, ids, **kwargs):
+                return str(ids)
+
+        model = SimpleNamespace(generation_config=SimpleNamespace(eos_token_id=4))
+        logits = torch.tensor([[[2.0, 1.9, 1.8, 1.7, -10.0]]])
+        original = logits.clone()
+        for seed in range(8):
+            observed = []
+            torch.manual_seed(seed)
+            a = generate_from_prefill(model, Tokenizer(), SimpleNamespace(logits=logits),
+                                     next_position=1, context_limit=2, temperature=.7, top_p=.8, top_k=3,
+                                     on_token=lambda raw, token, step: observed.append((raw.clone(), token)))
+            torch.rand(17)
+            torch.manual_seed(seed)
+            b = generate_from_prefill(model, Tokenizer(), SimpleNamespace(logits=logits),
+                                     next_position=1, context_limit=2, temperature=.7, top_p=.8, top_k=3)
+            self.assertEqual(a, b)
+            self.assertIn(observed[0][1], (0, 1, 2))
+            torch.testing.assert_close(observed[0][0], original[:, -1])
+            torch.testing.assert_close(logits, original)
+        greedy = generate_from_prefill(model, Tokenizer(), SimpleNamespace(logits=logits),
+                                       next_position=1, context_limit=2, temperature=0, top_p=.01, top_k=1)
+        self.assertEqual(greedy[0], "[0]")
+
     def test_token_observation_preserves_decode_and_saves_eos_logits(self):
         import json
         import tempfile

@@ -211,3 +211,36 @@ under matched precision. The first-divergence comparator deliberately rejects
 FP32-vs-default as mismatched settings. Do not combine precision conditions in
 formal means; any apparent recovery is evidence about numerical sensitivity,
 not proof that all KV-routing failures are resolved.
+
+
+## Qwen3 non-thinking sampling control
+
+Qwen's official model card recommends temperature 0.7, top_p 0.8, top_k 20,
+min_p 0 for non-thinking mode:
+https://huggingface.co/Qwen/Qwen3-8B#best-practices
+The explicit greedy/endless-repetition warning in that card is scoped to thinking
+mode; it is not proof of the cause of this workflow's non-thinking loops.
+
+Keep existing precision settings and add these flags to the formal experiment or
+diagnostic command to isolate decoding as the next experimental change:
+
+```bash
+--temperature 0.7 --top-p 0.8 --top-k 20
+```
+
+Default temperature stays 0 (greedy), top_p 1 and top_k 0, preserving the previous
+control. Thinking remains disabled. Min-p filtering is not applied, equivalent to
+min_p 0. The implementation uses Transformers' temperature, top-k and top-p
+logit warpers in that order, then samples. The decoder seed is independently reset
+to the configured seed before routed generation, natural-language sender generation,
+and natural-language receiver generation. A preceding variant's output length must
+not determine the next stage's RNG starting state. All three stages use the same
+sampling settings. Source selection and embedding ranking are unchanged.
+
+Sampling settings and seed are recorded in both manifests and actual-input logs.
+Per-token logits remain RAW logits, before temperature/top-k/top-p transformations;
+the sampled token need not be the raw argmax. Seeded sampling supports controlled
+repetition of a run within a fixed environment, not guaranteed bitwise reproducibility
+across hardware or libraries. Use more than one seed when assessing final robustness;
+do not pool greedy and sampling conditions in a single mean. No new generation
+length cap, repetition penalty or automatic retry is added.

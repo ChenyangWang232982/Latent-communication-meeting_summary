@@ -28,6 +28,9 @@ class ReceiverKVConfig:
     embedding_model: str = "models/Qwen3-Embedding-0.6B"
     vector_weight: float = 0.3
     fp32_lm_head: bool = False
+    temperature: float = 0.0
+    top_p: float = 1.0
+    top_k: int = 0
 
 
 class ReceiverKVRunner:
@@ -46,6 +49,10 @@ class ReceiverKVRunner:
             raise ValueError("review_temperature must be finite and non-negative")
         if not math.isfinite(config.review_top_p) or not 0 < config.review_top_p <= 1:
             raise ValueError("review_top_p must be in (0, 1]")
+        if not math.isfinite(config.temperature) or config.temperature < 0:
+            raise ValueError("temperature must be finite and non-negative")
+        if not math.isfinite(config.top_p) or not 0 < config.top_p <= 1 or config.top_k < 0:
+            raise ValueError("top_p must be in (0, 1] and top_k must be non-negative")
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -146,7 +153,8 @@ class ReceiverKVRunner:
                         if isinstance(self.model.generation_config.eos_token_id, (list, tuple))
                         else [self.model.generation_config.eos_token_id]
                     ) + [self.tokenizer.eos_token_id] if value is not None}),
-                    "temperature": 0.0,
+                    "temperature": self.config.temperature, "top_p": self.config.top_p,
+                    "top_k": self.config.top_k, "seed": self.config.seed,
                 })
 
         emit("queued", "Preparing transcript", reviewStatus="pending" if review else "skipped")
@@ -272,6 +280,7 @@ class ReceiverKVRunner:
                 answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
                     context_limit=self.context_limit,
+                    temperature=self.config.temperature, top_p=self.config.top_p, top_k=self.config.top_k,
                     on_progress=generation_progress("routed_kv receiver"),
                     on_snapshot=generation_snapshot("routed_kv_receiver"),
                     on_token=token_observer("routed_kv_receiver"),
@@ -312,10 +321,12 @@ class ReceiverKVRunner:
                 if sender_prompt.shape[1] >= self.context_limit:
                     raise ValueError(f"{record_id}: specialist text sender prompt exhausts the model context limit.")
                 specialist_start = time.perf_counter()
+                self.torch.manual_seed(self.config.seed)
                 generation_input("specialist_text_sender", sender_prompt[0].tolist(), [], [], "text")
                 handoff, handoff_tokens, handoff_cap_hit, handoff_counts = generate(
                     self.model, self.tokenizer, None, sender_prompt,
                     absolute_start=0, context_limit=self.context_limit,
+                    temperature=self.config.temperature, top_p=self.config.top_p, top_k=self.config.top_k,
                     on_progress=generation_progress("specialist_text sender"),
                     on_snapshot=generation_snapshot("specialist_text_sender"),
                     on_token=token_observer("specialist_text_sender"),
@@ -329,10 +340,12 @@ class ReceiverKVRunner:
                         f"{record_id}: specialist handoff leaves no room for output in the model context; no input was truncated."
                     )
                 receiver_start = time.perf_counter()
+                self.torch.manual_seed(self.config.seed)
                 generation_input("specialist_text_receiver", receiver_prompt[0].tolist(), [], [], "text")
                 answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
                     context_limit=self.context_limit,
+                    temperature=self.config.temperature, top_p=self.config.top_p, top_k=self.config.top_k,
                     on_progress=generation_progress("specialist_text receiver"),
                     on_snapshot=generation_snapshot("specialist_text_receiver"),
                     on_token=token_observer("specialist_text_receiver"),
