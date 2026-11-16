@@ -98,3 +98,34 @@ terminal control sequences. Progress does not change decoding or impose output c
 Restart to load updated code. Existing experiment manifests validate code hashes;
 a run created before this change must remain intact and cannot be resumed with
 modified code. Start a new experiment directory after updating.
+
+
+## Inspecting unexpectedly long generations
+
+Experiment 1 saves diagnostic snapshots after the first 16 generated tokens,
+every 256 tokens thereafter, and at normal termination:
+
+- `live/00000/routed_kv_receiver.partial.txt`
+- `live/00000/specialist_text_sender.partial.txt`
+- `live/00000/specialist_text_receiver.partial.txt`
+- matching `*.status.json` files with token count, raw tail including special
+  tokens, tail token IDs, configured EOS IDs, termination status, and repetition flag.
+
+The numeric folder is the zero-based sample index. These are incomplete diagnostic
+outputs, not scored summaries or resume checkpoints. Interruptions retain the latest
+snapshot, not necessarily every token. A repeated-tail warning only detects exact
+short token patterns and does not prove semantic repetition; it never stops generation.
+Inspect the actual text before changing prompts, sampling, or stopping rules.
+Snapshot decoding and disk writes add some diagnostic overhead, included in timings;
+use the same code and instrumentation for both communication variants.
+
+```bash
+# Set this to the experiment directory printed at startup.
+RUN_DIR=test_result/experiment_1/REPLACE_WITH_RUN_DIRECTORY
+find "$RUN_DIR/live" -name '*.status.json'
+tail -n 40 "$RUN_DIR/live/00000/routed_kv_receiver.partial.txt"
+cat "$RUN_DIR/live/00000/routed_kv_receiver.status.json"
+```
+
+Snapshots require a restarted process with updated code. Do not use a modified
+code version to resume an old manifest. Keep the old run and start a new directory.

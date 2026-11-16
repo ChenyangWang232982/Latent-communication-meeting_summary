@@ -10,6 +10,7 @@ from .resources import ResourceRecorder
 from .scoring import score_sample
 from .storage import RunStore, atomic_json
 from .progress import ExperimentProgress
+from .generation_trace import GenerationTrace
 
 
 def run(args, runner_factory=ReceiverKVRunner):
@@ -57,10 +58,11 @@ def _run(args, runner_factory, display):
                 raise ValueError("Cannot resume timing measurements on different hardware or model revision")
             atomic_json(runtime_path, runtime)
         resources = ResourceRecorder(runner)
+        trace = GenerationTrace(store.directory, index, record.id, display.log)
         try:
             resources.begin()
             result = runner.run(record.id, record.context, variants=VARIANTS, review=False,
-                                on_variant=resources, on_state=display.state)
+                                on_variant=resources, on_state=display.state, on_generation=trace)
             result["shared_prefill_selection_peak_allocated_bytes"] = resources.shared_peak_allocated_bytes
             result["gold_answer"] = record.answer
             sample = score_sample(result, record, resources.values)

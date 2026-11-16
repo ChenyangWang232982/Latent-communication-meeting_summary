@@ -84,7 +84,8 @@ class ReceiverKVRunner:
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...],
             routing_audit: bool = False, review: bool = False,
             on_state: Callable[[dict], None] | None = None,
-            on_variant: Callable[[str, str], None] | None = None) -> dict:
+            on_variant: Callable[[str, str], None] | None = None,
+            on_generation: Callable[[dict], None] | None = None) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -105,6 +106,11 @@ class ReceiverKVRunner:
             if on_state is None:
                 return None
             return lambda event: emit(name, name, **event)
+
+        def generation_snapshot(name):
+            if on_generation is None:
+                return None
+            return lambda event: on_generation({"stage": name, **event})
 
         emit("queued", "Preparing transcript", reviewStatus="pending" if review else "skipped")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
@@ -218,6 +224,7 @@ class ReceiverKVRunner:
                     self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
                     context_limit=self.context_limit,
                     on_progress=generation_progress("routed_kv receiver"),
+                    on_snapshot=generation_snapshot("routed_kv_receiver"),
                 )
                 del incoming
                 self._sync()
@@ -259,6 +266,7 @@ class ReceiverKVRunner:
                     self.model, self.tokenizer, None, sender_prompt,
                     absolute_start=0, context_limit=self.context_limit,
                     on_progress=generation_progress("specialist_text sender"),
+                    on_snapshot=generation_snapshot("specialist_text_sender"),
                 )
                 self._sync()
                 specialist_seconds = time.perf_counter() - specialist_start
@@ -273,6 +281,7 @@ class ReceiverKVRunner:
                     self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
                     context_limit=self.context_limit,
                     on_progress=generation_progress("specialist_text receiver"),
+                    on_snapshot=generation_snapshot("specialist_text_receiver"),
                 )
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start

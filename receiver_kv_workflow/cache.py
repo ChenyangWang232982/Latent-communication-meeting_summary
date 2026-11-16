@@ -44,7 +44,7 @@ def forward_tokens(model, ids, cache, absolute_start, **kwargs):
 
 @torch.inference_mode()
 def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit,
-                          temperature=0.0, top_p=1.0, on_progress=None):
+                          temperature=0.0, top_p=1.0, on_progress=None, on_snapshot=None):
     """Decode after a caller has already prefetched a complete receiver prompt."""
     eos = model.generation_config.eos_token_id
     eos = set(eos if isinstance(eos, list) else [eos])
@@ -56,6 +56,22 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
         raise ValueError("The prompt leaves no room for generated tokens in the model context.")
     if on_progress is not None:
         on_progress({"phase": "decode", "tokens": 0})
+    def snapshot(finished=False):
+        if on_snapshot is None:
+            return
+        # Diagnostics only: never change logits, RNG state or stopping rules.
+        tail = generated[-256:]
+        repeated = any(len(tail) >= width * 3 and
+                       tail[-width:] == tail[-2 * width:-width] == tail[-3 * width:-2 * width]
+                       for width in range(1, min(64, len(tail) // 3) + 1))
+        on_snapshot({
+            "tokens": len(generated), "text": tokenizer.decode(generated, skip_special_tokens=True),
+            "raw_tail": tokenizer.decode(tail, skip_special_tokens=False),
+            "tail_token_ids": tail, "repeated_tail": repeated,
+            "eos_token_ids": sorted(value for value in eos if value is not None),
+            "finished": finished,
+            "stop_reason": ("eos" if stopped else "context_limit") if finished else None,
+        })
     for step in range(remaining):
         logits = output.logits[:, -1].float()
         if temperature == 0:
@@ -73,6 +89,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
         if value in eos:
             stopped = True
             break
+        if on_snapshot is not None and (len(generated) == 16 or len(generated) % 256 == 0):
+            snapshot()
         if step + 1 < remaining:
             output = forward_tokens(model, token, output.past_key_values, next_position, logits_to_keep=1)
             next_position += 1
@@ -80,6 +98,7 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
     content = generated[:-1] if stopped else generated
     terminal_tokens = len(generated) - len(content)
     counts = {'answer_tokens': len(content), 'terminal_tokens': terminal_tokens}
+    snapshot(finished=True)
     if on_progress is not None:
         on_progress({"phase": "decode", "tokens": len(generated), "finished": True,
                      "stop_reason": "eos" if stopped else "context_limit"})
@@ -88,7 +107,7 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
 
 @torch.inference_mode()
 def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
-             temperature=0.0, top_p=1.0, on_progress=None):
+             temperature=0.0, top_p=1.0, on_progress=None, on_snapshot=None):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
@@ -98,6 +117,6 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
     answer, generated, cap_hit, counts = generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
-        temperature=temperature, top_p=top_p, on_progress=on_progress,
+        temperature=temperature, top_p=top_p, on_progress=on_progress, on_snapshot=on_snapshot,
     )
     return answer, generated, cap_hit, counts
