@@ -83,7 +83,8 @@ class ReceiverKVRunner:
 
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...],
             routing_audit: bool = False, review: bool = False,
-            on_state: Callable[[dict], None] | None = None) -> dict:
+            on_state: Callable[[dict], None] | None = None,
+            on_variant: Callable[[str, str], None] | None = None) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -193,9 +194,11 @@ class ReceiverKVRunner:
                 selection_seconds += time.perf_counter() - boundary_start + block_seconds
                 detail = f" seeds={len(seed_selection)}, +/-{self.config.speaker_neighbor_blocks} blocks"
                 self.progress(f"{record_id}: speaker KV selection {len(selected)}/{baseline_positions} positions{detail}")
-            answers, measurements = {}, {}
+            answers, measurements, handoffs = {}, {}, {}
             if "routed_kv" in requested:
                 emit("summary", "Generating the summary", metrics={"selectedPositions": len(selected)})
+                if on_variant is not None:
+                    on_variant("routed_kv", "start")
                 self.torch.manual_seed(self.config.seed)
                 receiver_start = time.perf_counter()
                 ids = selected
@@ -230,19 +233,24 @@ class ReceiverKVRunner:
                         "receiver_output_tokens": generated_tokens,
                     },
                 }
+                if on_variant is not None:
+                    on_variant("routed_kv", "end")
             if "specialist_text" in requested:
+                if on_variant is not None:
+                    on_variant("specialist_text", "start")
                 self.progress(f"{record_id}: specialist_text sender started")
                 excerpts, evidence_tokens, excerpt_count = selected_evidence_excerpts(self.tokenizer, transcript, selected)
                 sender_prompt = self._tensor(specialist_sender_prompt(self.tokenizer, excerpts))
                 if sender_prompt.shape[1] >= self.context_limit:
                     raise ValueError(f"{record_id}: specialist text sender prompt exhausts the model context limit.")
                 specialist_start = time.perf_counter()
-                handoff, handoff_tokens, _, _ = generate(
+                handoff, handoff_tokens, handoff_cap_hit, handoff_counts = generate(
                     self.model, self.tokenizer, None, sender_prompt,
                     absolute_start=0, context_limit=self.context_limit,
                 )
                 self._sync()
                 specialist_seconds = time.perf_counter() - specialist_start
+                handoffs["specialist_text"] = handoff
                 receiver_prompt = self._tensor(specialist_text_prompt(self.tokenizer, handoff))
                 if receiver_prompt.shape[1] >= self.context_limit:
                     raise ValueError(
@@ -264,6 +272,9 @@ class ReceiverKVRunner:
                     "positions_vs_full_percent": None,
                     "cache_bytes_vs_full_percent": None,
                     "specialist_handoff_tokens": handoff_tokens,
+                    "specialist_handoff_cap_hit": handoff_cap_hit,
+                    "specialist_handoff_generation_counts": handoff_counts,
+                    "handoff_utf8_bytes": len(handoff.encode("utf-8")),
                     "specialist_count": 1,
                     "specialist_seconds": specialist_seconds,
                     "receiver_seconds": receiver_seconds,
@@ -282,6 +293,8 @@ class ReceiverKVRunner:
                     "retrieved_evidence_tokens": evidence_tokens,
                     "retrieved_excerpt_count": excerpt_count,
                 }
+                if on_variant is not None:
+                    on_variant("specialist_text", "end")
             review_result = None
             if review:
                 from .review_checks import change_log, missing_sections, split_review_response
@@ -341,7 +354,7 @@ class ReceiverKVRunner:
         return {
             "vector_routing": vector_metrics,
             "routing_audit": audit,
-            "id": record_id, "answers": answers, "variants": measurements,
+            "id": record_id, "answers": answers, "variants": measurements, "handoffs": handoffs,
             "source_positions": len(prefix), "context_limit": self.context_limit,
             "source_cache_bytes": source_bytes, "prefill_seconds": prefill_seconds,
             "selection_seconds": selection_seconds, "roles": role_metrics,

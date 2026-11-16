@@ -153,11 +153,8 @@ def selected_evidence_excerpts(tokenizer, transcript: str, selected_positions: l
         start, end = max(start, transcript_start), min(end, transcript_end)
         if start < end:
             intervals.append((start - transcript_start, end - transcript_start))
-    # Tiny/degenerate tokenizers can spend a protected prompt-floor budget before
-    # reaching source tokens.  A text control must remain runnable in that case;
-    # use the complete transcript rather than emitting a malformed empty prompt.
     if not intervals:
-        intervals = [(0, len(transcript))]
+        raise ValueError("No transcript evidence was selected; refusing to give only the text control the full source.")
     merged = []
     for start, end in sorted(intervals):
         # Adjacent tokenizer offsets can be separated only by whitespace. Keep

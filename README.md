@@ -25,6 +25,7 @@ meeting_stream/         向 AG-UI 桥接服务提供 WebSocket 状态与结果
 vector/                 可选 embedding 辅助选择
 data_preprocess/        评测数据预处理
 meeting_evaluation/     评测入口、指标与报告
+experiment_1/           KV 与自然语言交接的逐样本对照实验
 requirements.txt        pip 依赖
 requirements.yml        Conda 环境配置
 ```
@@ -114,6 +115,8 @@ python -m receiver_kv_workflow.run \
 
 ## 评测
 
+正式实验 1 的独立入口见 [experiment_1/README.md](experiment_1/README.md)，包含逐样本摘要、断点恢复、截断记录和 CUDA 峰值统计。该实验比较两种通信流程的初稿，均不运行 review。
+
 单个数据集评测会比较 `routed_kv` 和 `specialist_text`，报告摘要质量和通信效率：
 
 ```bash
@@ -191,6 +194,7 @@ meeting_stream/         WebSocket status and results for the AG-UI bridge
 vector/                 Optional embedding-assisted selection
 data_preprocess/        Benchmark preparation
 meeting_evaluation/     Evaluation entry points, metrics, and reports
+experiment_1/           Paired KV vs natural-language handoff experiment
 requirements.txt        pip dependencies
 requirements.yml        Conda environment configuration
 ```
@@ -279,6 +283,8 @@ Use `--seed 7` for summary generation and `--review-seed 42` for organization; b
 
 
 ### Evaluation
+
+See [experiment_1/README.md](experiment_1/README.md) for the standalone paired experiment with sample-level summaries, resume, truncation flags and CUDA peak measurements. It compares draft summaries with review disabled for both workflows.
 
 Evaluate both `routed_kv` and `specialist_text` on one dataset:
 
