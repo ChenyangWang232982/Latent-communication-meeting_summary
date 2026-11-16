@@ -86,7 +86,8 @@ class ReceiverKVRunner:
             on_state: Callable[[dict], None] | None = None,
             on_variant: Callable[[str, str], None] | None = None,
             on_generation: Callable[[dict], None] | None = None,
-            diagnostic_full_source: bool = False) -> dict:
+            diagnostic_full_source: bool = False,
+            diagnostic_refill_selected: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
         from .cache import forward_tokens, generate, select_cache, size_bytes
         from .scoring import query_scores
@@ -99,8 +100,10 @@ class ReceiverKVRunner:
             raise ValueError("variants must be routed_kv and/or specialist_text")
         if review and 'routed_kv' not in requested:
             raise ValueError('Summary review requires the routed_kv variant')
-        if diagnostic_full_source and (requested != ("routed_kv",) or review):
-            raise ValueError("Full-source diagnostic requires only routed_kv and review=False")
+        if diagnostic_full_source and diagnostic_refill_selected:
+            raise ValueError("Full-source and selected-refill controls are mutually exclusive")
+        if (diagnostic_full_source or diagnostic_refill_selected) and (requested != ("routed_kv",) or review):
+            raise ValueError("Cache diagnostic requires only routed_kv and review=False")
         def emit(stage: str, message: str, **fields) -> None:
             if on_state is not None:
                 on_state({"stage": stage, "message": message, **fields})
@@ -225,7 +228,12 @@ class ReceiverKVRunner:
                 self.torch.manual_seed(self.config.seed)
                 receiver_start = time.perf_counter()
                 ids = selected
-                incoming = select_cache(source, ids)
+                if diagnostic_refill_selected:
+                    from .cache import refill_selected_cache
+                    emit("selected_refill", f"Recomputing {len(ids)} selected tokens at original positions")
+                    incoming = refill_selected_cache(self.model, self._tensor(prefix), ids)
+                else:
+                    incoming = select_cache(source, ids)
                 absolute_start, payload_bytes = len(prefix), size_bytes(incoming)
                 incoming_bytes = size_bytes(incoming)
                 answer, generated_tokens, output_cap_hit, generation_counts = generate(
@@ -387,6 +395,7 @@ class ReceiverKVRunner:
             "id": record_id, "answers": answers, "variants": measurements, "handoffs": handoffs,
             "source_positions": len(prefix), "context_limit": self.context_limit,
             "diagnostic_full_source": diagnostic_full_source,
+            "diagnostic_refill_selected": diagnostic_refill_selected,
             "source_cache_bytes": source_bytes, "prefill_seconds": prefill_seconds,
             "selection_seconds": selection_seconds, "roles": role_metrics,
             "selected_source_positions": selected,

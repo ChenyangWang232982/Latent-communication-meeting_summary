@@ -22,6 +22,7 @@ class DiagnosticTest(unittest.TestCase):
                 full = kwargs["diagnostic_full_source"]
                 calls.append((sample_id, context, full, kwargs["variants"], kwargs["review"]))
                 return {"answers": {"routed_kv": "full answer" if full else "routed answer"},
+                        "diagnostic_refill_selected": kwargs["diagnostic_refill_selected"],
                         "diagnostic_full_source": full, "source_positions": 2,
                         "selected_source_positions": [0, 1] if full else [0],
                         "variants": {"routed_kv": {"generated_tokens": 2}}}
@@ -44,3 +45,10 @@ class DiagnosticTest(unittest.TestCase):
             self.assertFalse(status["diagnostic_full_source"])
             self.assertEqual(status["retained_positions"], 1)
             self.assertFalse((directory / "summary.json").exists())
+            args.condition = "refill"
+            with patch("experiment_1.components.generation_diagnostic.ReceiverKVRunner", Runner), \
+                 patch("experiment_1.components.generation_diagnostic.prompt_parts", return_value=([1, 2], [3], [])):
+                refill_directory = run(args)
+            refill_status = json.loads((refill_directory / "refill/status.json").read_text())
+            self.assertTrue(refill_status["diagnostic_refill_selected"])
+            self.assertFalse(refill_status["diagnostic_full_source"])

@@ -167,3 +167,27 @@ repetition stop is applied. If interrupted, the latest partial snapshot is prese
 If only routed output loops, investigate cache selection/continuation behavior;
 if both loop, investigate shared generation, prompt and model behavior. Neither
 outcome alone establishes a complete causal explanation.
+
+
+### Selected-token refill control
+
+Use `--condition refill` on the same input, sample and configuration as the failing
+routed run. This control takes the exact selected prefix token IDs (including
+protected prompt framing), recomputes their KV with no old cache, and preserves
+original position IDs. It then uses the identical summary suffix at the original
+continuation position with greedy decoding. It does not decode/re-tokenize evidence,
+add natural-language coordinates, compact positions, or change generation limits.
+Thus it tests recomputing selected representations versus slicing representations
+originally computed with all preceding context. It is not a natural-language sender.
+
+Outputs: `refill/summary.txt`, `refill/status.json`, and
+`refill/live/00000/routed_kv_receiver.partial.txt` under the printed diagnostic run
+folder. Compare `selected_position_sha256` in refill and routed status files;
+they must match for this comparison. Also compare `prompt.json` source/suffix
+fingerprints and manifest model/config/environment. `--condition all` runs full,
+refill, then routed in one loaded runner; either generation can still loop, so
+individual conditions are useful for inspecting snapshots before the others finish.
+Normal refill and looping routed output implicate retained KV representations or
+their use, but do not by themselves prove an implementation bug. Looping refill
+also points toward the selected evidence, original position gaps, prompt/model
+interaction or other shared factors. Formal experiment variants are unchanged.

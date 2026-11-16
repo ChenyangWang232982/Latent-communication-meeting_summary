@@ -42,6 +42,25 @@ def forward_tokens(model, ids, cache, absolute_start, **kwargs):
     )
 
 
+def refill_selected_cache(model, prefix_ids, selected_positions):
+    """Diagnostic: recompute selected tokens with their original RoPE positions.
+
+    No decoding/re-tokenization, added coordinates or compacted position IDs.
+    Unlike slicing old KV, each retained token now attends only to retained
+    predecessors when its hidden states are computed.
+    """
+    if not selected_positions or selected_positions != sorted(set(selected_positions)):
+        raise ValueError("Selected positions must be nonempty, unique and chronological")
+    if selected_positions[0] < 0 or selected_positions[-1] >= prefix_ids.shape[1]:
+        raise ValueError("Selected position outside prefix")
+    indices = torch.tensor(selected_positions, device=prefix_ids.device, dtype=torch.long)
+    ids = prefix_ids.index_select(1, indices)
+    output = model(input_ids=ids, past_key_values=None,
+                   attention_mask=torch.ones_like(ids), position_ids=indices.unsqueeze(0),
+                   use_cache=True, return_dict=True, logits_to_keep=1)
+    return output.past_key_values
+
+
 @torch.inference_mode()
 def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit,
                           temperature=0.0, top_p=1.0, on_progress=None, on_snapshot=None):

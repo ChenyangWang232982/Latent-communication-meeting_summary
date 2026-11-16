@@ -21,7 +21,8 @@ def arguments():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--sample-id", help="Exact record ID of the repeating sample")
     group.add_argument("--sample-index", type=int, default=0, help="Zero-based input row index (default: 0)")
-    parser.add_argument("--condition", choices=("full", "routed", "both"), default="both")
+    parser.add_argument("--condition", choices=("full", "routed", "refill", "both", "all"), default="both",
+                        help="refill recomputes the selected token IDs at original positions; all runs full, refill, routed")
     parser.add_argument("--output-dir", type=Path, default=Path("test_result/generation_diagnostic"))
     parser.add_argument("--model", default="Qwen/Qwen3-8B")
     parser.add_argument("--device", default="cuda")
@@ -73,7 +74,8 @@ def run(args):
             "tokenizer_eos_token_id": runner.tokenizer.eos_token_id,
             "enable_thinking": False, "temperature": 0.0,
         })
-        conditions = ("full", "routed") if args.condition == "both" else (args.condition,)
+        conditions = (("full", "refill", "routed") if args.condition == "all" else
+                      ("full", "routed") if args.condition == "both" else (args.condition,))
         for index, condition in enumerate(conditions):
             display.sample(index, len(conditions), f"{record.id}: {condition}")
             folder = directory / condition
@@ -82,6 +84,7 @@ def run(args):
             try:
                 result = runner.run(record.id, record.context, variants=("routed_kv",), review=False,
                                     diagnostic_full_source=condition == "full",
+                                    diagnostic_refill_selected=condition == "refill",
                                     on_state=display.state, on_generation=trace)
             except BaseException as error:
                 atomic_json(folder / "status.json", {"status": "interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
@@ -92,6 +95,7 @@ def run(args):
             atomic_json(folder / "status.json", {
                 "status": "completed", "condition": condition,
                 "diagnostic_full_source": result["diagnostic_full_source"],
+                "diagnostic_refill_selected": result.get("diagnostic_refill_selected", False),
                 "source_positions": result["source_positions"],
                 "retained_positions": len(result["selected_source_positions"]),
                 "selected_position_sha256": fingerprint(result["selected_source_positions"]),
