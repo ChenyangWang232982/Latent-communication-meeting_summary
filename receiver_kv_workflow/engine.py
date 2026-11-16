@@ -27,6 +27,7 @@ class ReceiverKVConfig:
     vector_routing: bool = False
     embedding_model: str = "models/Qwen3-Embedding-0.6B"
     vector_weight: float = 0.3
+    fp32_lm_head: bool = False
 
 
 class ReceiverKVRunner:
@@ -68,6 +69,10 @@ class ReceiverKVRunner:
         self.progress("loading model")
         self.model = AutoModelForCausalLM.from_pretrained(config.model, dtype=dtype, attn_implementation="sdpa")
         self.model = self.model.to(self.device).eval()
+        if config.fp32_lm_head:
+            from .precision import enable_fp32_lm_head
+            enable_fp32_lm_head(self.model)
+            self.progress("FP32 LM head enabled; transformer and KV cache keep their loaded dtype")
         self.semantic_router = None
         if config.vector_routing:
             from vector.routing import SemanticRouter
@@ -133,6 +138,8 @@ class ReceiverKVRunner:
                     "cache_condition": condition, "config": asdict(self.config),
                     "model_revision": getattr(self.model.config, "_commit_hash", None),
                     "model_dtype": str(getattr(self.model, "dtype", None)),
+                    "lm_head_weight_dtype": str(self.model.get_output_embeddings().weight.dtype),
+                    "lm_head_output_dtype": getattr(self.model.get_output_embeddings(), "last_output_dtype", None),
                     "attention_backend": self.model.config._attn_implementation,
                     "eos_token_ids": sorted({value for value in (
                         list(self.model.generation_config.eos_token_id)

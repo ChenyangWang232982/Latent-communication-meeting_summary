@@ -174,3 +174,40 @@ is loaded by the comparator. The report locates a divergence; it does not by its
 prove why that divergence occurs. Input/code/config/environment manifests remain
 in each run folder. Changed source code cannot resume an earlier formal manifest;
 keep old results and start a new run after updating.
+
+
+## FP32 vocabulary projection control
+
+Add `--fp32-lm-head` to either experiment or cache-diagnostic commands to test
+rounding in the final vocabulary projection. Default remains the loaded model
+precision. This creates a separate FP32 output weight and computes its linear
+projection with autocast and TF32 disabled for that projection only. Input
+embeddings, transformer layers and KV caches keep their loaded precision; original
+position IDs, greedy decoding, selected positions and EOS rules are unchanged.
+It does not restore precision lost in the checkpoint weights or transformer states.
+Extra FP32 output weights use more GPU memory, and projection time may change.
+
+```bash
+python -m experiment_1.diagnose_generation \
+  --input input/meetingbank_speaker_4k_8k_test.jsonl \
+  --sample-index 0 \
+  --condition routed \
+  --output-dir test_result/debug_fp32_head \
+  --model Qwen/Qwen3-8B \
+  --device cuda \
+  --role-budget-ratio 0.25 \
+  --speaker-neighbor-blocks 1 \
+  --vector-routing \
+  --seed 12 \
+  --fp32-lm-head
+```
+
+First check whether the originally repeating routed sample now ends normally.
+`*.input.json` records `config.fp32_lm_head`, `lm_head_weight_dtype`, and the last
+observed `lm_head_output_dtype`; enabled runs should report `torch.float32` for
+both head fields while `model_dtype` remains the loaded transformer dtype.
+Repeat with `--condition refill` and the same precision flag to compare conditions
+under matched precision. The first-divergence comparator deliberately rejects
+FP32-vs-default as mismatched settings. Do not combine precision conditions in
+formal means; any apparent recovery is evidence about numerical sensitivity,
+not proof that all KV-routing failures are resolved.

@@ -22,6 +22,8 @@ def add_workflow_arguments(parser):
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--span-tokens", type=int, default=32)
     parser.add_argument("--query-batch-tokens", type=int, default=8)
+    parser.add_argument("--fp32-lm-head", action="store_true",
+                        help="Numerical control: compute only the vocabulary output projection in FP32")
     from vector.cli import add_arguments
     add_arguments(parser)
 
@@ -48,7 +50,8 @@ def model_config(args):
     return ReceiverKVConfig(model=args.model, device=args.device, seed=args.seed,
         role_budget_ratio=args.role_budget_ratio, speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
-        vector_routing=args.vector_routing, embedding_model=args.embedding_model, vector_weight=args.vector_weight)
+        vector_routing=args.vector_routing, embedding_model=args.embedding_model, vector_weight=args.vector_weight,
+        fp32_lm_head=getattr(args, "fp32_lm_head", False))
 
 
 def sha256(data: bytes):

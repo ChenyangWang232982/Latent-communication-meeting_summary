@@ -27,7 +27,8 @@ def compare(reference, candidate):
     left = json.loads(identity_path(reference).read_text(encoding="utf-8"))
     right = json.loads(identity_path(candidate).read_text(encoding="utf-8"))
     keys = ("sample_id", "source_token_sha256", "suffix_token_sha256", "config",
-            "model_revision", "model_dtype", "attention_backend", "temperature", "eos_token_ids")
+            "model_revision", "model_dtype", "attention_backend", "temperature", "eos_token_ids",
+            "lm_head_weight_dtype", "lm_head_output_dtype")
     differences = [key for key in keys if left.get(key) != right.get(key)]
     result = {
         "reference": str(reference), "candidate": str(candidate),
