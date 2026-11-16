@@ -101,6 +101,11 @@ class ReceiverKVRunner:
             if on_state is not None:
                 on_state({"stage": stage, "message": message, **fields})
 
+        def generation_progress(name):
+            if on_state is None:
+                return None
+            return lambda event: emit(name, name, **event)
+
         emit("queued", "Preparing transcript", reviewStatus="pending" if review else "skipped")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
         query_text = dict(ROLE_QUERIES)
@@ -139,6 +144,7 @@ class ReceiverKVRunner:
                 emit("selection", "Selecting relevant meeting context")
                 selection_start = time.perf_counter()
                 for index, (role, query) in enumerate(queries.items(), start=1):
+                    emit("selection", f"Selector: {role}", completed=index - 1, total=len(queries))
                     self.progress(f"{record_id}: selector {role} started ({index - 1}/{len(queries)} complete)")
                     scores = query_scores(self.model, source, self._tensor(query), query_batch=self.config.query_batch_tokens)
                     role_scores.append(scores)
@@ -146,6 +152,7 @@ class ReceiverKVRunner:
                     messages.append(selected)
                     role_metrics[role] = {"query_tokens": len(query), "selected_positions": len(selected)}
                     selection_probe_tokens += len(query)
+                    emit("selection", f"Selector: {role}", completed=index, total=len(queries))
                 self._sync()
                 selection_seconds = time.perf_counter() - selection_start
             selected = union_positions(messages)
@@ -159,6 +166,7 @@ class ReceiverKVRunner:
                 selected = select_complete_blocks(speaker_blocks, selected, role_scores, protected)
                 attention_seed_selection = list(selected)
                 if self.semantic_router is not None:
+                    emit("embedding", f"Embedding/ranking {len(speaker_blocks)} speaker blocks")
                     self.progress(f"{record_id}: semantic speaker-block ranking started")
                     pooled = [0.0] * len(prefix)
                     for scores in role_scores:
@@ -194,6 +202,7 @@ class ReceiverKVRunner:
                 selection_seconds += time.perf_counter() - boundary_start + block_seconds
                 detail = f" seeds={len(seed_selection)}, +/-{self.config.speaker_neighbor_blocks} blocks"
                 self.progress(f"{record_id}: speaker KV selection {len(selected)}/{baseline_positions} positions{detail}")
+                emit("selected", f"Selected {len(selected)} KV positions; {len(prefix)} source positions")
             answers, measurements, handoffs = {}, {}, {}
             if "routed_kv" in requested:
                 emit("summary", "Generating the summary", metrics={"selectedPositions": len(selected)})
@@ -208,6 +217,7 @@ class ReceiverKVRunner:
                 answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, incoming, self._tensor(suffix), absolute_start=absolute_start,
                     context_limit=self.context_limit,
+                    on_progress=generation_progress("routed_kv receiver"),
                 )
                 del incoming
                 self._sync()
@@ -239,6 +249,7 @@ class ReceiverKVRunner:
                 if on_variant is not None:
                     on_variant("specialist_text", "start")
                 self.progress(f"{record_id}: specialist_text sender started")
+                emit("text_mapping", "Mapping selected positions to source evidence")
                 excerpts, evidence_tokens, excerpt_count = selected_evidence_excerpts(self.tokenizer, transcript, selected)
                 sender_prompt = self._tensor(specialist_sender_prompt(self.tokenizer, excerpts))
                 if sender_prompt.shape[1] >= self.context_limit:
@@ -247,6 +258,7 @@ class ReceiverKVRunner:
                 handoff, handoff_tokens, handoff_cap_hit, handoff_counts = generate(
                     self.model, self.tokenizer, None, sender_prompt,
                     absolute_start=0, context_limit=self.context_limit,
+                    on_progress=generation_progress("specialist_text sender"),
                 )
                 self._sync()
                 specialist_seconds = time.perf_counter() - specialist_start
@@ -260,6 +272,7 @@ class ReceiverKVRunner:
                 answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
                     context_limit=self.context_limit,
+                    on_progress=generation_progress("specialist_text receiver"),
                 )
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start

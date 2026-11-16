@@ -9,9 +9,18 @@ from .reporting import write_reports
 from .resources import ResourceRecorder
 from .scoring import score_sample
 from .storage import RunStore, atomic_json
+from .progress import ExperimentProgress
 
 
 def run(args, runner_factory=ReceiverKVRunner):
+    display = ExperimentProgress()
+    try:
+        return _run(args, runner_factory, display)
+    finally:
+        display.close()
+
+
+def _run(args, runner_factory, display):
     records = load_records("jsonl", args.input)
     records = records[:args.num_samples] if args.num_samples else records
     if not records:
@@ -22,17 +31,22 @@ def run(args, runner_factory=ReceiverKVRunner):
         raise ValueError("Every quality-evaluation sample must have a nonempty reference summary")
     config = model_config(args)
     store = RunStore(args.output_dir, args.resume, reproducibility(args, records, config))
-    print(f"Experiment directory: {store.directory}; selected {len(records)} samples", flush=True)
+    display.log(f"Experiment directory: {store.directory}; selected {len(records)} samples")
     completed, failures = [], []
     runner = None
     for index, record in enumerate(records):
+        display.sample(index, len(records), record.id)
         previous = store.load(index, record.id)
         if previous and previous["status"] == "completed":
             completed.append(previous)
-            print(f"Resumed {index + 1}/{len(records)}: {record.id}", flush=True)
+            display.log(f"Resumed {index + 1}/{len(records)}: {record.id}")
+            display.finish_sample("resumed")
             continue
         if runner is None:
-            runner = runner_factory(config, progress=lambda message: print(f"[experiment_1] {message}", flush=True))
+            runner = runner_factory(config, progress=display.log)
+            # Structured state events drive the bars; suppress duplicate legacy
+            # engine messages after model loading.
+            runner.progress = lambda _: None
             runtime = {"device": str(runner.device), "model_revision": getattr(getattr(getattr(runner, "model", None), "config", None), "_commit_hash", None)}
             if runner.device.type == "cuda":
                 props = runner.torch.cuda.get_device_properties(runner.device)
@@ -45,7 +59,8 @@ def run(args, runner_factory=ReceiverKVRunner):
         resources = ResourceRecorder(runner)
         try:
             resources.begin()
-            result = runner.run(record.id, record.context, variants=VARIANTS, review=False, on_variant=resources)
+            result = runner.run(record.id, record.context, variants=VARIANTS, review=False,
+                                on_variant=resources, on_state=display.state)
             result["shared_prefill_selection_peak_allocated_bytes"] = resources.shared_peak_allocated_bytes
             result["gold_answer"] = record.answer
             sample = score_sample(result, record, resources.values)
@@ -60,7 +75,8 @@ def run(args, runner_factory=ReceiverKVRunner):
         store.save(index, sample)
         atomic_json(store.directory / "progress.json", {"planned": len(records), "completed": len(completed), "failed": len(failures),
                                                        "last_sample_id": record.id})
-        print(f"{index + 1}/{len(records)}: {record.id}: {sample['status']}", flush=True)
+        display.log(f"{index + 1}/{len(records)}: {record.id}: {sample['status']}")
+        display.finish_sample(sample['status'])
     atomic_json(store.directory / "progress.json", {"planned": len(records), "completed": len(completed),
                                                    "failed": len(failures), "finished": True})
     write_reports(store, completed, failures, len(records))

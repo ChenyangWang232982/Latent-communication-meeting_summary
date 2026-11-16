@@ -81,3 +81,20 @@ Verify without loading model weights:
 ```bash
 python -m unittest discover -s experiment_1/tests -v
 ```
+
+
+## Live progress
+
+Interactive terminals show sample progress and a separate current-stage bar.
+Selection reports completed role queries out of five. Source prefill, embedding,
+evidence mapping, routed-KV generation, natural-language sender and final receiver
+are displayed separately. Generation updates every 16 tokens and reports token
+count, elapsed time, token rate, and EOS/context-limit termination. Generation has
+no known final token count, so no percentage or completion ETA is claimed.
+Prompt prefill is a single model call; it has no internal token-by-token progress.
+When stderr is redirected, plain stage messages and throttled token updates replace
+terminal control sequences. Progress does not change decoding or impose output caps.
+
+Restart to load updated code. Existing experiment manifests validate code hashes;
+a run created before this change must remain intact and cannot be resumed with
+modified code. Start a new experiment directory after updating.

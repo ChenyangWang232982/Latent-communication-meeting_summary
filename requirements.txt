@@ -10,3 +10,4 @@ tokenizers
 sentencepiece
 protobuf
 safetensors
+tqdm>=4.66

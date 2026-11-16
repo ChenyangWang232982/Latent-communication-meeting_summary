@@ -19,7 +19,7 @@ class FakeRunner:
         type(self).loads += 1
         self.device = SimpleNamespace(type="cpu")
 
-    def run(self, sample_id, transcript, *, variants, review, on_variant):
+    def run(self, sample_id, transcript, *, variants, review, on_variant, on_state=None):
         assert not review
         assert variants == ("routed_kv", "specialist_text")
         type(self).calls.append(sample_id)

@@ -44,7 +44,7 @@ def forward_tokens(model, ids, cache, absolute_start, **kwargs):
 
 @torch.inference_mode()
 def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit,
-                          temperature=0.0, top_p=1.0):
+                          temperature=0.0, top_p=1.0, on_progress=None):
     """Decode after a caller has already prefetched a complete receiver prompt."""
     eos = model.generation_config.eos_token_id
     eos = set(eos if isinstance(eos, list) else [eos])
@@ -54,6 +54,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
     remaining = context_limit - next_position
     if remaining < 1:
         raise ValueError("The prompt leaves no room for generated tokens in the model context.")
+    if on_progress is not None:
+        on_progress({"phase": "decode", "tokens": 0})
     for step in range(remaining):
         logits = output.logits[:, -1].float()
         if temperature == 0:
@@ -66,6 +68,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
             token = sorted_ids.gather(-1, torch.multinomial(sorted_probs, 1))
         value = token.item()
         generated.append(value)
+        if on_progress is not None and len(generated) % 16 == 0:
+            on_progress({"phase": "decode", "tokens": len(generated)})
         if value in eos:
             stopped = True
             break
@@ -76,19 +80,24 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
     content = generated[:-1] if stopped else generated
     terminal_tokens = len(generated) - len(content)
     counts = {'answer_tokens': len(content), 'terminal_tokens': terminal_tokens}
+    if on_progress is not None:
+        on_progress({"phase": "decode", "tokens": len(generated), "finished": True,
+                     "stop_reason": "eos" if stopped else "context_limit"})
     return tokenizer.decode(content, skip_special_tokens=True), len(generated), not stopped, counts
 
 
 @torch.inference_mode()
 def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
-             temperature=0.0, top_p=1.0):
+             temperature=0.0, top_p=1.0, on_progress=None):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
+    if on_progress is not None:
+        on_progress({"phase": "prompt_prefill", "prompt_tokens": suffix.shape[1]})
     output = forward_tokens(model, suffix, cache, absolute_start, logits_to_keep=1)
     answer, generated, cap_hit, counts = generate_from_prefill(
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
-        temperature=temperature, top_p=top_p,
+        temperature=temperature, top_p=top_p, on_progress=on_progress,
     )
     return answer, generated, cap_hit, counts
