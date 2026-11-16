@@ -13,13 +13,8 @@ VARIANTS = ("routed_kv", "specialist_text")
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def arguments():
-    parser = argparse.ArgumentParser(description="Experiment 1: paired draft-summary quality and resource use; review is disabled.")
-    parser.add_argument("--input", type=Path, required=True, help="Normalized speaker-labelled JSONL with reference summaries")
-    parser.add_argument("--benchmark", choices=("meetingbank", "ami", "icsi", "qmsum_committee"), default="meetingbank")
-    parser.add_argument("--output-dir", type=Path, default=Path("test_result/experiment_1"))
-    parser.add_argument("--resume", type=Path, help="Resume an existing experiment directory with identical inputs/settings/code")
-    parser.add_argument("--num-samples", type=int, default=25, help="First N records in the prepared input; 0 means all")
+def add_workflow_arguments(parser):
+    """Use identical model/routing defaults in formal and diagnostic entry points."""
     parser.add_argument("--model", default="Qwen/Qwen3-8B")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=12)
@@ -29,6 +24,16 @@ def arguments():
     parser.add_argument("--query-batch-tokens", type=int, default=8)
     from vector.cli import add_arguments
     add_arguments(parser)
+
+
+def arguments():
+    parser = argparse.ArgumentParser(description="Experiment 1: paired draft-summary quality and resource use; review is disabled.")
+    parser.add_argument("--input", type=Path, required=True, help="Normalized speaker-labelled JSONL with reference summaries")
+    parser.add_argument("--benchmark", choices=("meetingbank", "ami", "icsi", "qmsum_committee"), default="meetingbank")
+    parser.add_argument("--output-dir", type=Path, default=Path("test_result/experiment_1"))
+    parser.add_argument("--resume", type=Path, help="Resume an existing experiment directory with identical inputs/settings/code")
+    parser.add_argument("--num-samples", type=int, default=25, help="First N records in the prepared input; 0 means all")
+    add_workflow_arguments(parser)
     args = parser.parse_args()
     if args.num_samples < 0:
         parser.error("--num-samples must be non-negative")

@@ -35,8 +35,7 @@ class DiagnosticTest(unittest.TestCase):
                              model="fake", device="cpu", seed=12, role_budget_ratio=.25, span_tokens=32,
                              query_batch_tokens=8, speaker_neighbor_blocks=1, vector_routing=False,
                              embedding_model="fake", vector_weight=.3)
-            with patch("experiment_1.components.generation_diagnostic.ReceiverKVRunner", Runner), \
-                 patch("experiment_1.components.generation_diagnostic.prompt_parts", return_value=([1, 2], [3], [])):
+            with patch("experiment_1.components.generation_diagnostic.ReceiverKVRunner", Runner):
                 directory = run(args)
             self.assertEqual(calls, [("repeat", "A: content", True, ("routed_kv",), False),
                                      ("repeat", "A: content", False, ("routed_kv",), False)])
@@ -46,8 +45,7 @@ class DiagnosticTest(unittest.TestCase):
             self.assertEqual(status["retained_positions"], 1)
             self.assertFalse((directory / "summary.json").exists())
             args.condition = "refill"
-            with patch("experiment_1.components.generation_diagnostic.ReceiverKVRunner", Runner), \
-                 patch("experiment_1.components.generation_diagnostic.prompt_parts", return_value=([1, 2], [3], [])):
+            with patch("experiment_1.components.generation_diagnostic.ReceiverKVRunner", Runner):
                 refill_directory = run(args)
             refill_status = json.loads((refill_directory / "refill/status.json").read_text())
             self.assertTrue(refill_status["diagnostic_refill_selected"])

@@ -63,7 +63,8 @@ def refill_selected_cache(model, prefix_ids, selected_positions):
 
 @torch.inference_mode()
 def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit,
-                          temperature=0.0, top_p=1.0, on_progress=None, on_snapshot=None):
+                          temperature=0.0, top_p=1.0, on_progress=None, on_snapshot=None,
+                          on_token=None):
     """Decode after a caller has already prefetched a complete receiver prompt."""
     eos = model.generation_config.eos_token_id
     eos = set(eos if isinstance(eos, list) else [eos])
@@ -102,6 +103,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
             sorted_probs = sorted_probs.masked_fill(discard, 0)
             token = sorted_ids.gather(-1, torch.multinomial(sorted_probs, 1))
         value = token.item()
+        if on_token is not None:
+            on_token(logits, value, len(generated))
         generated.append(value)
         if on_progress is not None and len(generated) % 16 == 0:
             on_progress({"phase": "decode", "tokens": len(generated)})
@@ -126,7 +129,7 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
 
 @torch.inference_mode()
 def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
-             temperature=0.0, top_p=1.0, on_progress=None, on_snapshot=None):
+             temperature=0.0, top_p=1.0, on_progress=None, on_snapshot=None, on_token=None):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
@@ -137,5 +140,6 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
         temperature=temperature, top_p=top_p, on_progress=on_progress, on_snapshot=on_snapshot,
+        on_token=on_token,
     )
     return answer, generated, cap_hit, counts

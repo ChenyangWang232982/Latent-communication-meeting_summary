@@ -9,7 +9,7 @@ From the repository root, with the prepared speaker-labelled JSONL:
 ```bash
 conda activate latent-agents
 python -m experiment_1 \
-  --input input/meetingbank_speaker_test.jsonl \
+  --input input/meetingbank_speaker_4k_8k_test.jsonl \
   --benchmark meetingbank \
   --num-samples 3 \
   --model Qwen/Qwen3-8B \
@@ -83,61 +83,43 @@ python -m unittest discover -s experiment_1/tests -v
 ```
 
 
-## Live progress
+## Live progress and generation records
 
-Interactive terminals show sample progress and a separate current-stage bar.
-Selection reports completed role queries out of five. Source prefill, embedding,
-evidence mapping, routed-KV generation, natural-language sender and final receiver
-are displayed separately. Generation updates every 16 tokens and reports token
-count, elapsed time, token rate, and EOS/context-limit termination. Generation has
-no known final token count, so no percentage or completion ETA is claimed.
-Prompt prefill is a single model call; it has no internal token-by-token progress.
-When stderr is redirected, plain stage messages and throttled token updates replace
-terminal control sequences. Progress does not change decoding or impose output caps.
+Interactive terminals show overall sample progress, completed role selectors,
+and the current generation stage. Decode counters update every 16 tokens with
+elapsed time and token rate. Prompt prefill and embedding have no internal
+percentage. Redirected output uses plain stage messages. No output cap or
+repetition stopping rule is added.
 
-Restart to load updated code. Existing experiment manifests validate code hashes;
-a run created before this change must remain intact and cannot be resumed with
-modified code. Start a new experiment directory after updating.
+Each stage saves records below `live/<zero-based sample index>/`:
 
+| Suffix | Contents |
+|---|---|
+| `.input.json` | Actual prefix/suffix token IDs, selected and protected positions, hashes, config, model revision/dtype, backend and EOS IDs; saved BEFORE generation |
+| `.tokens.jsonl` | One row per generated token, zero-based step, actual token ID, top 8 raw logits, top-1/top-2 margin and EOS logits |
+| `.partial.txt` | Text after token 16, every 256 tokens thereafter, and normal completion |
+| `.status.json` | Snapshot token count, raw tail, repetition flag and termination reason |
 
-## Inspecting unexpectedly long generations
+Stage names are `routed_kv_receiver`, `specialist_text_sender`, and
+`specialist_text_receiver`. The same token observer runs on all three stages.
+Token logs buffer 16 rows and flush on snapshots, EOS and normal Python interruption;
+a hard process kill may lose the last buffered rows. Exact repeated-tail warnings
+are diagnostic only and do not prove semantic repetition. These partial files are
+not scored outputs or completion checkpoints.
 
-Experiment 1 saves diagnostic snapshots after the first 16 generated tokens,
-every 256 tokens thereafter, and at normal termination:
+Top-k collection and disk writes add diagnostic overhead, included in measured
+runtime. Do not compare timings across versions with different instrumentation.
+Source/selection fingerprints are available even if the first variant loops;
+there is no need to wait for a completed pair. Model sampling and logits are not
+modified by observers. Full-vocabulary logits are not saved at every step.
 
-- `live/00000/routed_kv_receiver.partial.txt`
-- `live/00000/specialist_text_sender.partial.txt`
-- `live/00000/specialist_text_receiver.partial.txt`
-- matching `*.status.json` files with token count, raw tail including special
-  tokens, tail token IDs, configured EOS IDs, termination status, and repetition flag.
-
-The numeric folder is the zero-based sample index. These are incomplete diagnostic
-outputs, not scored summaries or resume checkpoints. Interruptions retain the latest
-snapshot, not necessarily every token. A repeated-tail warning only detects exact
-short token patterns and does not prove semantic repetition; it never stops generation.
-Inspect the actual text before changing prompts, sampling, or stopping rules.
-Snapshot decoding and disk writes add some diagnostic overhead, included in timings;
-use the same code and instrumentation for both communication variants.
-
-```bash
-# Set this to the experiment directory printed at startup.
-RUN_DIR=test_result/experiment_1/REPLACE_WITH_RUN_DIRECTORY
-find "$RUN_DIR/live" -name '*.status.json'
-tail -n 40 "$RUN_DIR/live/00000/routed_kv_receiver.partial.txt"
-cat "$RUN_DIR/live/00000/routed_kv_receiver.status.json"
-```
-
-Snapshots require a restarted process with updated code. Do not use a modified
-code version to resume an old manifest. Keep the old run and start a new directory.
-
-
-## Full-source generation diagnostic (not a formal variant)
+## Independent cache controls
 
 ```bash
 python -m experiment_1.diagnose_generation \
   --input input/meetingbank_speaker_4k_8k_test.jsonl \
   --sample-index 0 \
-  --condition both \
+  --condition refill \
   --model Qwen/Qwen3-8B \
   --device cuda \
   --role-budget-ratio 0.25 \
@@ -146,48 +128,49 @@ python -m experiment_1.diagnose_generation \
   --seed 12
 ```
 
-Use the exact input and zero-based row index of the repeating sample, or replace
-`--sample-index` with `--sample-id 'exact record id'`. The default runs the full
-cache control first, then routing. Use `--condition full` or `routed` to run one
-condition separately. Both use the same record, model, prompt suffix, absolute
-continuation position, greedy decoding and seed. The full control still executes
-the selectors but retains every source KV position rather than their subset.
-Each run reconstructs its own immutable full cache using the same prefill path.
-The control is only exposed by this diagnostic entry point, not formal variant CLI.
+Use the same input and sample as the failing formal run. An exact `--sample-id`
+can replace the zero-based index. `full` retains all old KV, `routed` slices old
+KV, and `refill` recomputes exactly the selected token IDs at their original
+position IDs. The summary suffix and original continuation position stay the same.
+There is no evidence decoding/re-tokenization or extra natural-language sender
+in refill. `both` runs full then routed; `all` runs full, refill, routed. Each
+condition still executes the selectors and reconstructs its own full source cache.
+These controls are not registered as formal experiment variants or quality-scored.
 
-Results are isolated in `test_result/generation_diagnostic/<UTC timestamp>/`:
-`prompt.json` records source/suffix fingerprints and EOS IDs;
-`full/summary.txt` and `routed/summary.txt` are saved after each condition finishes.
-During generation, inspect `full/live/00000/routed_kv_receiver.partial.txt` or
-`routed/live/00000/routed_kv_receiver.partial.txt`, and corresponding status JSONs.
-The inner stage retains its engine name; the outer folder identifies the condition.
-A manifest records input/code/config/environment fingerprints. These controls are
-not quality-scored or aggregated with experiment 1. No new output limit or automatic
-repetition stop is applied. If interrupted, the latest partial snapshot is preserved.
-If only routed output loops, investigate cache selection/continuation behavior;
-if both loop, investigate shared generation, prompt and model behavior. Neither
-outcome alone establishes a complete causal explanation.
+Outputs are in `test_result/generation_diagnostic/<UTC timestamp>/<condition>/`.
+Each condition has `summary.txt`, `status.json`, and the same `live/00000/`
+generation records as formal runs. Actual input records replace the earlier
+standalone `prompt.json`; there is no duplicate prompt rendering in the wrapper.
+If either generation loops, its latest partial output and token records remain
+inspectable. Ctrl+C retains the latest diagnostic files.
 
+## First divergence and logits
 
-### Selected-token refill control
+Old runs do not contain per-step logits; rerun the normal condition and formal
+candidate with this version. A normal refill run is useful because it should
+have the same selected positions as routed. Set the two directory paths below:
 
-Use `--condition refill` on the same input, sample and configuration as the failing
-routed run. This control takes the exact selected prefix token IDs (including
-protected prompt framing), recomputes their KV with no old cache, and preserves
-original position IDs. It then uses the identical summary suffix at the original
-continuation position with greedy decoding. It does not decode/re-tokenize evidence,
-add natural-language coordinates, compact positions, or change generation limits.
-Thus it tests recomputing selected representations versus slicing representations
-originally computed with all preceding context. It is not a natural-language sender.
+```bash
+NORMAL_DIR=test_result/generation_diagnostic/REPLACE_WITH_NORMAL_RUN
+FORMAL_DIR=test_result/experiment_1/REPLACE_WITH_FORMAL_RUN
 
-Outputs: `refill/summary.txt`, `refill/status.json`, and
-`refill/live/00000/routed_kv_receiver.partial.txt` under the printed diagnostic run
-folder. Compare `selected_position_sha256` in refill and routed status files;
-they must match for this comparison. Also compare `prompt.json` source/suffix
-fingerprints and manifest model/config/environment. `--condition all` runs full,
-refill, then routed in one loaded runner; either generation can still loop, so
-individual conditions are useful for inspecting snapshots before the others finish.
-Normal refill and looping routed output implicate retained KV representations or
-their use, but do not by themselves prove an implementation bug. Looping refill
-also points toward the selected evidence, original position gaps, prompt/model
-interaction or other shared factors. Formal experiment variants are unchanged.
+python -m experiment_1.compare_generation \
+  --reference "$NORMAL_DIR/refill/live/00000/routed_kv_receiver.tokens.jsonl" \
+  --candidate "$FORMAL_DIR/live/00000/routed_kv_receiver.tokens.jsonl"
+```
+
+The comparator checks sample ID, source/suffix token hashes, model config/revision,
+dtype, attention backend, EOS and temperature before comparing actual generated
+token IDs. It reports selected-position hash equality separately, allowing a full
+control with different positions to be explicitly identified. The first divergence
+contains both actual top-8 logit records, EOS scores and winner margins. At that
+step, both runs have the same preceding generated token sequence, so their scores
+can be compared. No later scores under different generated prefixes are treated
+as evidence of the first cause. A short interrupted trace with matching tokens is
+reported only as a matching prefix, not as identical completed output.
+
+`first_divergence.json` is saved beside the candidate trace by default. No model
+is loaded by the comparator. The report locates a divergence; it does not by itself
+prove why that divergence occurs. Input/code/config/environment manifests remain
+in each run folder. Changed source code cannot resume an earlier formal manifest;
+keep old results and start a new run after updating.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import math
 import time
 from typing import Callable
@@ -86,6 +86,7 @@ class ReceiverKVRunner:
             on_state: Callable[[dict], None] | None = None,
             on_variant: Callable[[str, str], None] | None = None,
             on_generation: Callable[[dict], None] | None = None,
+            on_token: Callable | None = None,
             diagnostic_full_source: bool = False,
             diagnostic_refill_selected: bool = False) -> dict:
         """Return transient answers plus auditable measurement fields for one record."""
@@ -117,6 +118,29 @@ class ReceiverKVRunner:
             if on_generation is None:
                 return None
             return lambda event: on_generation({"stage": name, **event})
+
+        def token_observer(name):
+            if on_token is None:
+                return None
+            return lambda logits, token, step: on_token(name, logits, token, step)
+
+        def generation_input(name, prompt_ids, source_ids, positions, condition):
+            if on_generation is not None:
+                on_generation({
+                    "stage": name, "event": "input", "sample_id": record_id,
+                    "prefix_token_ids": source_ids, "suffix_token_ids": prompt_ids,
+                    "selected_positions": positions, "protected_positions": protected if source_ids else [],
+                    "cache_condition": condition, "config": asdict(self.config),
+                    "model_revision": getattr(self.model.config, "_commit_hash", None),
+                    "model_dtype": str(getattr(self.model, "dtype", None)),
+                    "attention_backend": self.model.config._attn_implementation,
+                    "eos_token_ids": sorted({value for value in (
+                        list(self.model.generation_config.eos_token_id)
+                        if isinstance(self.model.generation_config.eos_token_id, (list, tuple))
+                        else [self.model.generation_config.eos_token_id]
+                    ) + [self.tokenizer.eos_token_id] if value is not None}),
+                    "temperature": 0.0,
+                })
 
         emit("queued", "Preparing transcript", reviewStatus="pending" if review else "skipped")
         prefix, suffix, protected = prompt_parts(self.tokenizer, transcript)
@@ -228,6 +252,8 @@ class ReceiverKVRunner:
                 self.torch.manual_seed(self.config.seed)
                 receiver_start = time.perf_counter()
                 ids = selected
+                generation_input("routed_kv_receiver", suffix, prefix, ids,
+                                 "full" if diagnostic_full_source else "refill" if diagnostic_refill_selected else "routed")
                 if diagnostic_refill_selected:
                     from .cache import refill_selected_cache
                     emit("selected_refill", f"Recomputing {len(ids)} selected tokens at original positions")
@@ -241,6 +267,7 @@ class ReceiverKVRunner:
                     context_limit=self.context_limit,
                     on_progress=generation_progress("routed_kv receiver"),
                     on_snapshot=generation_snapshot("routed_kv_receiver"),
+                    on_token=token_observer("routed_kv_receiver"),
                 )
                 del incoming
                 self._sync()
@@ -278,11 +305,13 @@ class ReceiverKVRunner:
                 if sender_prompt.shape[1] >= self.context_limit:
                     raise ValueError(f"{record_id}: specialist text sender prompt exhausts the model context limit.")
                 specialist_start = time.perf_counter()
+                generation_input("specialist_text_sender", sender_prompt[0].tolist(), [], [], "text")
                 handoff, handoff_tokens, handoff_cap_hit, handoff_counts = generate(
                     self.model, self.tokenizer, None, sender_prompt,
                     absolute_start=0, context_limit=self.context_limit,
                     on_progress=generation_progress("specialist_text sender"),
                     on_snapshot=generation_snapshot("specialist_text_sender"),
+                    on_token=token_observer("specialist_text_sender"),
                 )
                 self._sync()
                 specialist_seconds = time.perf_counter() - specialist_start
@@ -293,11 +322,13 @@ class ReceiverKVRunner:
                         f"{record_id}: specialist handoff leaves no room for output in the model context; no input was truncated."
                     )
                 receiver_start = time.perf_counter()
+                generation_input("specialist_text_receiver", receiver_prompt[0].tolist(), [], [], "text")
                 answer, generated_tokens, output_cap_hit, generation_counts = generate(
                     self.model, self.tokenizer, None, receiver_prompt, absolute_start=0,
                     context_limit=self.context_limit,
                     on_progress=generation_progress("specialist_text receiver"),
                     on_snapshot=generation_snapshot("specialist_text_receiver"),
+                    on_token=token_observer("specialist_text_receiver"),
                 )
                 self._sync()
                 receiver_seconds = time.perf_counter() - receiver_start

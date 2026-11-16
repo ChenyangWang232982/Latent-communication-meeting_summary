@@ -62,7 +62,8 @@ def _run(args, runner_factory, display):
         try:
             resources.begin()
             result = runner.run(record.id, record.context, variants=VARIANTS, review=False,
-                                on_variant=resources, on_state=display.state, on_generation=trace)
+                                on_variant=resources, on_state=display.state, on_generation=trace,
+                                on_token=trace.token)
             result["shared_prefill_selection_peak_allocated_bytes"] = resources.shared_peak_allocated_bytes
             result["gold_answer"] = record.answer
             sample = score_sample(result, record, resources.values)
@@ -74,6 +75,8 @@ def _run(args, runner_factory, display):
             gc.collect()
             if runner.device.type == "cuda":
                 runner.torch.cuda.empty_cache()
+        finally:
+            trace.flush()
         store.save(index, sample)
         atomic_json(store.directory / "progress.json", {"planned": len(records), "completed": len(completed), "failed": len(failures),
                                                        "last_sample_id": record.id})

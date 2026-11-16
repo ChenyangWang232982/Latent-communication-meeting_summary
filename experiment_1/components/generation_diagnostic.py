@@ -1,16 +1,12 @@
-"""A full-source cache control, isolated from formal experiment scores."""
+"""Full, routed and refill cache controls, isolated from formal experiment scores."""
 import argparse
-import hashlib
-import json
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 from meeting_evaluation.records import load_records
 from receiver_kv_workflow.engine import ReceiverKVRunner
-from receiver_kv_workflow.prompts import prompt_parts
-from .config import model_config, reproducibility
-from .generation_trace import GenerationTrace
+from .config import add_workflow_arguments, model_config, reproducibility
+from .generation_trace import GenerationTrace, fingerprint
 from .progress import ExperimentProgress
 from .storage import atomic_json
 
@@ -24,20 +20,8 @@ def arguments():
     parser.add_argument("--condition", choices=("full", "routed", "refill", "both", "all"), default="both",
                         help="refill recomputes the selected token IDs at original positions; all runs full, refill, routed")
     parser.add_argument("--output-dir", type=Path, default=Path("test_result/generation_diagnostic"))
-    parser.add_argument("--model", default="Qwen/Qwen3-8B")
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--seed", type=int, default=12)
-    parser.add_argument("--role-budget-ratio", type=float, default=0.25)
-    parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
-    parser.add_argument("--span-tokens", type=int, default=32)
-    parser.add_argument("--query-batch-tokens", type=int, default=8)
-    from vector.cli import add_arguments
-    add_arguments(parser)
+    add_workflow_arguments(parser)
     return parser.parse_args()
-
-
-def fingerprint(ids):
-    return hashlib.sha256(json.dumps(ids, separators=(",", ":")).encode()).hexdigest()
 
 
 def run(args):
@@ -59,21 +43,13 @@ def run(args):
     # manifests and outputs: diagnostic controls are never aggregated as scores.
     args.benchmark = "diagnostic"
     manifest = reproducibility(args, [record], config)
-    manifest.update(condition=args.condition, diagnostic=True, config=asdict(config))
+    manifest.update(condition=args.condition, diagnostic=True, variants=["routed_kv"])
     atomic_json(directory / "manifest.json", manifest)
     display = ExperimentProgress()
     try:
         display.log(f"Diagnostic directory: {directory}; sample: {record.id}")
         runner = ReceiverKVRunner(config, progress=display.log)
         runner.progress = lambda _: None
-        prefix, suffix, _ = prompt_parts(runner.tokenizer, record.context)
-        atomic_json(directory / "prompt.json", {
-            "source_positions": len(prefix), "suffix_tokens": len(suffix),
-            "source_token_sha256": fingerprint(prefix), "suffix_token_sha256": fingerprint(suffix),
-            "model_eos_token_id": runner.model.generation_config.eos_token_id,
-            "tokenizer_eos_token_id": runner.tokenizer.eos_token_id,
-            "enable_thinking": False, "temperature": 0.0,
-        })
         conditions = (("full", "refill", "routed") if args.condition == "all" else
                       ("full", "routed") if args.condition == "both" else (args.condition,))
         for index, condition in enumerate(conditions):
@@ -85,11 +61,13 @@ def run(args):
                 result = runner.run(record.id, record.context, variants=("routed_kv",), review=False,
                                     diagnostic_full_source=condition == "full",
                                     diagnostic_refill_selected=condition == "refill",
-                                    on_state=display.state, on_generation=trace)
+                                    on_state=display.state, on_generation=trace, on_token=trace.token)
             except BaseException as error:
                 atomic_json(folder / "status.json", {"status": "interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
                                                        "error": str(error), "condition": condition})
                 raise
+            finally:
+                trace.flush()
             text = result["answers"]["routed_kv"]
             (folder / "summary.txt").write_text(text, encoding="utf-8")
             atomic_json(folder / "status.json", {
