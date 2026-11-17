@@ -48,6 +48,9 @@ def parse_reviews(text, claims, retrievals):
     if not isinstance(rows, list):
         raise ValueError('Grounding output requires an items array')
     expected = {item['id']: item for item in claims}
+    # grounding_request supplies a deduplicated packet shared by this category.
+    # All of those blocks are visible to the reviewer, not just each query's hits.
+    supplied = {i for claim in claims for i in retrievals[claim['id']]['evidence_block_ids']}
     result, seen = [], set()
     for row in rows:
         if not isinstance(row, dict) or row.get('id') not in expected or row['id'] in seen:
@@ -58,15 +61,37 @@ def parse_reviews(text, claims, retrievals):
             raise ValueError('Invalid grounding category or verdict')
         if not isinstance(row.get('reason'), str) or not row['reason'].strip():
             raise ValueError('Every grounding result needs a reason')
-        ids = row.get('evidence_block_ids')
-        allowed = retrievals[row['id']]['evidence_block_ids']
-        if not isinstance(ids, list) or any(type(i) is not int or i not in allowed for i in ids):
-            raise ValueError('Grounding cites a block not supplied for this claim')
+        reported = row.get('evidence_block_ids')
+        ids, invalid = [], []
+        for value in reported if isinstance(reported, list) else []:
+            # JSON strings containing decimal IDs are unambiguous transport variants.
+            normalized = int(value) if isinstance(value, str) and value.isascii() and value.isdecimal() else value
+            if type(normalized) is int and normalized in supplied:
+                ids.append(normalized)
+            else:
+                invalid.append(value)
+        ids = sorted(set(ids))
+        warnings = []
+        if not isinstance(reported, list):
+            warnings.append('evidence_block_ids is not a list')
+        if invalid:
+            warnings.append('Citations include blocks absent from this grounding packet')
         if row['verdict'] in ('supported', 'revised') and not ids:
-            raise ValueError('Supported/revised claims need source block references')
-        result.append({k: row.get(k) for k in (
+            warnings.append('Supported/revised claim has no valid source block citation')
+        parsed = {k: row.get(k) for k in (
             'id', 'category', 'topic', 'content', 'owners', 'deadline', 'status',
-            'verdict', 'reason', 'evidence_block_ids')})
+            'verdict', 'reason', 'evidence_block_ids')}
+        parsed['evidence_block_ids'] = ids
+        if warnings:
+            # Never accept an unsupported revision or deletion merely to continue.
+            # Preserve the original candidate as unverified, with full audit detail.
+            parsed.update(expected[row['id']], status='uncertain', verdict='uncertain',
+                          evidence_block_ids=[],
+                          reason='Grounding citation validation failed; original candidate retained as unverified. '
+                                 + '; '.join(warnings),
+                          citation_warnings=warnings, invalid_citations=invalid,
+                          reported_review=dict(row))
+        result.append(parsed)
     if seen != set(expected):
         raise ValueError('Grounding must account for every input claim')
     return result

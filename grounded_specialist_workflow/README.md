@@ -90,8 +90,13 @@ Each grounding result accounts for its input claim with a verdict:
 supported, revised, uncertain, or unsupported. Uncertain claims are retained with
 qualifications; clearly unsupported claims stay in the audit but are excluded from
 the final synthesis input. This is a model judgment, not an exact quote filter.
-JSON shape/claim IDs/citation bounds are checked to prevent silent data loss;
-invalid transport or context exhaustion fails explicitly with raw output saved.
+JSON shape and claim IDs are checked to prevent silent data loss. Citations may
+use any relevant block in the category's shared grounding packet; per-claim
+retrieval hits are hints, not exclusive citation lists. Decimal string IDs are
+normalized. Invalid or missing required citations retain the original candidate
+as uncertain, with citation warnings and the reported review preserved in audit;
+an invalid review cannot revise or delete that candidate. Other invalid transport
+or context exhaustion fails explicitly with raw output saved.
 No automatic retries, fabricated fallback or silent truncation. Very large evidence
 packets may exceed context; reduce retrieval pool usage/top-k/neighbors or use a
 compatible longer-context model. Reducing retrieval changes evidence coverage.

@@ -207,11 +207,17 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
                 raw = self._decode(f'grounding_{role}', chat(self.tokenizer, request), seed_offset=100 + index)
                 rows = parse_reviews(raw, items, retrievals)
                 self._save(f'grounded_{role}.json', rows)
+                for row in rows:
+                    if row.get('citation_warnings'):
+                        self._log(f"{row['id']}: invalid grounding citations; retained as uncertain (see audit)")
                 reviewed.extend(rows)
         self._save('grounded_claims.json', reviewed)
         # Preserve all machine judgments in the audit, including unsupported ones.
         accepted = [r for r in reviewed if r['verdict'] != 'unsupported']
-        request = synthesis_request(accepted)
+        # Keep the rejected model text in audit files only, outside synthesis.
+        synthesis_items = [{k: v for k, v in row.items() if k not in ('reported_review', 'invalid_citations')}
+                           for row in accepted]
+        request = synthesis_request(synthesis_items)
         (self.artifacts / 'summary.input.txt').write_text(request, encoding='utf-8')
         summary = self._decode('summary', chat(self.tokenizer, request), seed_offset=200)
         return dict(summary=summary, source_prefill_tokens=len(prefix), source_cache_bytes=source_bytes,
@@ -224,6 +230,7 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
                     total_decoder_output_tokens=sum(stage['output_tokens'] for stage in self.stages.values()),
                     extracted_claims=len(claims), grounded_claims=len(reviewed),
                     unsupported_claims=sum(r['verdict'] == 'unsupported' for r in reviewed),
+                    citation_warning_claims=sum(bool(r.get('citation_warnings')) for r in reviewed),
                     note='Hybrid workflow: source KV to specialists; structured text and verbatim retrieved '
                          'evidence for grounding; structured text to final summary. Grounding is model judgment, '
                          'not an independent quality score. Concurrent stage times overlap; use pipeline wall time.')

@@ -59,10 +59,32 @@ class GroundingTest(unittest.TestCase):
         rows = [dict(c, verdict='supported', reason='An explicit request', evidence_block_ids=[4]) for c in claims]
         self.assertEqual(len(parse_reviews(json.dumps({'items': rows}), claims, retrievals)), 2)
         rows[0]['evidence_block_ids'] = [8]
-        with self.assertRaisesRegex(ValueError, 'not supplied'):
-            parse_reviews(json.dumps({'items': rows}), claims, retrievals)
+        rows[0]['content'] = 'An invented corrected assertion'
+        parsed = parse_reviews(json.dumps({'items': rows}), claims, retrievals)
+        self.assertEqual(parsed[0]['verdict'], 'uncertain')
+        self.assertEqual(parsed[0]['content'], claims[0]['content'])
+        self.assertEqual(parsed[0]['evidence_block_ids'], [])
+        self.assertEqual(parsed[0]['invalid_citations'], [8])
+        self.assertEqual(parsed[0]['reported_review'], rows[0])
+        self.assertEqual(parsed[1]['verdict'], 'supported')
         with self.assertRaisesRegex(ValueError, 'every input claim'):
             parse_reviews('{"items": []}', claims, retrievals)
+
+    def test_citations_use_actual_shared_packet_and_normalize_string_ids(self):
+        claims = parse_claims(json.dumps({'items': [item(), item()]}), 'actions')
+        retrievals = {'actions:0': {'evidence_block_ids': [10]},
+                      'actions:1': {'evidence_block_ids': [20]}}
+        rows = [dict(c, verdict='revised', reason='A later statement updates this issue',
+                     evidence_block_ids=['20', 20]) for c in claims]
+        parsed = parse_reviews(json.dumps({'items': rows}), claims, retrievals)
+        self.assertEqual(parsed[0]['evidence_block_ids'], [20])
+        self.assertNotIn('citation_warnings', parsed[0])
+        # A global source ID not shown in this packet still cannot support a claim.
+        rows[0]['evidence_block_ids'] = [10, 99]
+        parsed = parse_reviews(json.dumps({'items': rows}), claims, retrievals)
+        self.assertEqual(parsed[0]['verdict'], 'uncertain')
+        rows[0]['evidence_block_ids'] = [True]
+        self.assertEqual(parse_reviews(json.dumps({'items': rows}), claims, retrievals)[0]['verdict'], 'uncertain')
 
     def test_pipeline_independent_routes_full_source_retrieval_and_failure_audit(self):
         import torch

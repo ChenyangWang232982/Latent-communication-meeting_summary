@@ -37,6 +37,7 @@ def extraction_suffix(tokenizer, transcript, prefix, role):
 def grounding_request(claims, retrievals, blocks):
     ids = sorted({i for claim in claims for i in retrievals[claim['id']]['evidence_block_ids']})
     packet = {
+        'available_evidence_block_ids': ids,
         'claims': [dict(c, retrieved_block_ids=retrievals[c['id']]['evidence_block_ids']) for c in claims],
         'evidence_in_meeting_order': [{k: blocks[i][k] for k in
             ('block_id', 'speaker', 'relative_position', 'text')} for i in ids],
@@ -55,7 +56,10 @@ def grounding_request(claims, retrievals, blocks):
         'id, category (context/decisions/actions/open_issues), topic, content, owners (array), '
         'deadline (string/null), status, verdict (supported/revised/uncertain/unsupported), '
         'reason, evidence_block_ids. Correct content and category when warranted; explain every revision. '
-        'For uncertain claims explicitly qualify the content. Cite only retrieved_block_ids for that claim. '
+        'For uncertain claims explicitly qualify the content. retrieved_block_ids are per-claim retrieval '
+        'hints, not citation restrictions: you may use any relevant evidence actually provided in '
+        'evidence_in_meeting_order. Cite only integer block_id values from available_evidence_block_ids. '
+        'Do not invent IDs, renumber blocks, or use array positions as IDs. '
         'Do not invent extra claims. Return only JSON.\n\n' + json.dumps(packet, ensure_ascii=False))
 
 
@@ -63,6 +67,8 @@ def synthesis_request(reviews):
     return (SUMMARY_REQUEST +
         '\nUse these machine-checked structured claims as the input. Their checks are fallible. '
         'Keep uncertain claims explicitly uncertain; omit unsupported assertions. '
+        'A claim with citation_warnings is an unverified original candidate, not an established fact or '
+        'a confirmed decision/action. Do not adopt text from its reported_review audit field. '
         'Reconcile overlapping items across specialists without inventing a compromise or treating the '
         'last listed claim as authoritative. Combine people only when their tasks and conditions match. '
         'Use exactly four sections: Key Context, Decisions, Action Items, Open Issues. '
