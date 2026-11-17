@@ -450,3 +450,27 @@ responses, original reports and annotations remain intact. Source checkpoint has
 are checked before reuse. Incomplete/API failures cannot be recovered by parsing.
 Rebuilt usage totals describe original calls, not new charges. New audit checklists
 are blank; earlier manual annotations remain in the original audit directory.
+
+
+### Evaluation boundaries / ??????
+
+The rubric now distinguishes explicit requests, assignments, acceptance and commitments;
+source-supported requests are eligible actions even without formal approval, owner or date.
+A hope alone does not assign a task. Motion/recommendation/final approval and individual
+agenda items must remain distinct. A segment cannot establish later outcomes it omits.
+A response to a concern does not imply resolution, and ongoing discussion does not imply
+absence of an existing case-specific plan. Source ambiguity/noisy transcription is flagged;
+harmless wording changes are acceptable, while material outcome/owner/date distortions
+remain errors. Coverage and factuality are separate, assessed across the whole summary;
+headings alone do not determine factuality or whether a task is asserted. Overlapping
+findings in factuality and unsupported_additions are not summed as independent errors.
+
+These are general instructions, with no meeting-specific names, locations, bill numbers,
+expected scores or keyword decisions. Applicability is grounded in the source, not the
+candidate's content. The judge still interprets these rules; local schema validation
+cannot certify semantic correctness or consistent application.
+
+Changing the rubric requires NEW API evaluation of BOTH workflows. Use a new judge output
+directory, e.g. `--output-dir "$RUN_DIR/judge/deepseek_pro_boundaries_01" --num-samples 1`.
+Old results remain under the old rubric; `reparse_judge` only repairs parsing and cannot
+reassess the new semantic criteria. Keep the revised rubric fixed for all formal samples.

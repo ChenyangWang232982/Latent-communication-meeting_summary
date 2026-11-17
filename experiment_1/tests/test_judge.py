@@ -41,6 +41,12 @@ class JudgeTest(unittest.TestCase):
             self.assertIn("Automated judgment", next((out / "audit").glob("*.md")).read_text())
             with self.assertRaisesRegex(ValueError, "Cannot resume"):
                 run_judge(run, out, {"seed": 7, "audit_pairs": 5}, client)
+            from unittest.mock import patch
+            with patch("experiment_1.components.judge_runner.SYSTEM", "changed evaluation boundaries"):
+                with self.assertRaisesRegex(ValueError, "Cannot resume"):
+                    run_judge(run, out, settings, client)
+            self.assertEqual(len(calls), 2)  # changed rubric never silently reuses scores or calls API
+
 
     def test_string_line_ids_and_free_reparse(self):
         from experiment_1.reparse_judge import reparse
