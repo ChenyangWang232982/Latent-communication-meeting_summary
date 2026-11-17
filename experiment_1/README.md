@@ -272,11 +272,11 @@ otherwise identical sampling settings, seed, model and input. Do not resume old
 runs after changing decoding configuration. Review stays disabled.
 
 
-### Offline token and quality reports / ????
+### Offline token and quality reports / 离线 token 与质量报告
 
 No summary regeneration or review is required for existing completed runs.
 Future runs automatically include the token table and lexical quality metrics.
-?????? samples/*.json?????????????????????????????
+直接读取已有的 `samples/*.json`，重新计算指标；不会重新生成摘要或调用评估 API。
 
 ```bash
 RUN_DIR=$(find test_result/experiment_1_25_seed12 -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
@@ -336,141 +336,8 @@ use the manual sheet for source-supported decisions/actions/owners/dates/omissio
 Sources: https://github.com/google-research/google-research/tree/master/rouge and
 https://github.com/Tiiiger/bert_score
 
+### Evaluation scope / 评估范围
 
-### SIEVE-inspired automatic evaluation / ?????????
+质量比较使用 ROUGE-1/2/L 和 BERTScore，分别报告，不合成总分。同时保留 token、耗时、显存和重复诊断。BERTScore 使用固定的编码器计算与参考摘要的相似度，不调用生成式 AI 裁判，不需要 API 密钥。已有实验结果保留，使用上面的 rescore 指令即可补算指标。
 
-Entry point: `python -m experiment_1.judge`. Components live under
-`components/judge_{client,rubric,runner}.py`. This is a task-adapted evaluation,
-not an implementation/reproduction of original SIEVE. It reads completed paired
-checkpoints and judges each summary independently against the COMPLETE source.
-Method labels, references and the other candidate are excluded from judge prompts.
-Cases and candidate order are seeded and randomized. Summary text is kept verbatim;
-style can still reveal a method, so anonymity cannot remove all judge biases.
-
-Five dimensions: background, decisions, actions, open_issues, unsupported_additions.
-For the first four, coverage and factuality are separate 0/1/2 scores (higher better).
-Coverage: none / partial / all essential information retained. Source-inapplicable
-coverage is null. Factuality: major error / minor error / supported; no candidate
-assertion is null, not a perfect score. Unsupported additions uses only factuality.
-Every dimension includes a reason, uncertainty flag and source-line evidence.
-JSON/range checks establish parseability, not entailment or the truth of judgments.
-Report each dimension separately, no weighted overall score. Means use only complete
-pairs with non-null and non-uncertain scores for BOTH arms for that measure;
-excluded counts and applicability disagreements are reported. These ordinal-score
-means are descriptive, not calibrated accuracy percentages.
-
-Use an independent, capable model through a chat-completions-compatible HTTP API.
-A local server reached through an SSH tunnel also works. Supply a model ID supported
-by YOUR service. Remote endpoints receive full transcripts and candidate summaries.
-The API must support temperature=0 and JSON object response_format; no silent fallback,
-implicit retry, local input truncation or synthetic score is applied. Configure a
-sufficient server-side context/output limit. Non-stop responses are marked failed.
-
-```bash
-export JUDGE_BASE_URL="https://YOUR_SERVICE/v1"
-export JUDGE_MODEL="YOUR_EVALUATOR_MODEL_ID"
-read -rsp "Judge API key: " JUDGE_API_KEY
-export JUDGE_API_KEY
-
-RUN_DIR=$(find test_result/experiment_1_25_seed12 -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
-python -m experiment_1.judge \
-  --run-dir "$RUN_DIR" \
-  --output-dir "$RUN_DIR/judge/evaluation_01"
-```
-
-Environment values above are placeholders. For an unauthenticated local API,
-JUDGE_API_KEY can be unset. No extra Python dependencies are required. To resume
-an interrupted run, repeat exactly the same command/settings/output directory.
-Completed OR failed calls remain recorded and are not silently billed again;
-use a new directory for a deliberate rerun after resolving an API failure.
-Evaluation code/input/model-setting changes require a new directory. The seed
-controls ordering/audit selection only; API determinism is not guaranteed.
-
-Outputs:
-- `judge_summary.txt/json`: per-dimension paired means, denominators and differences;
-  evaluator duration/usage recorded separately from original generation metrics.
-- `judge_scores.csv`: per-candidate dimensions, reasons and uncertainty.
-- `judgments/*.json`: raw output, parsed scores, provider usage/model metadata,
-  finish reason and failures. Failed parse/truncated outputs keep reported costs.
-- `judge_manifest.json`: inputs, code/rubric fingerprints, settings and private
-  candidate mapping. Keep mapping from human annotators during audit.
-- `audit/*.md` and `audit/checklist.csv`: default five randomly chosen pairs PLUS
-  pairs flagged uncertain, major factual error, judge failure or applicability
-  disagreement. Packet includes numbered source, anonymous candidate and automatic
-  judgment. Fill judge_correct/correction/source_lines/reviewer; annotations are
-  preserved on resume. These annotations do not automatically overwrite scores.
-
-This is an audit of the automated judge, not independent blinded human scoring:
-reviewers see its reasoning. First read source/candidate before the judgment to
-reduce anchoring. Random and flagged audits must be analyzed separately; flagged
-cases cannot estimate population error rates. If more errors are found, enlarge
-the random audit. `--audit-pairs` controls random pairs, not the number of flags.
-Costs are provider-reported token events; absent usage is unknown, not zero.
-Local code sends all text but cannot detect a remote server's hidden truncation.
-ROUGE/BERTScore/token reports remain available through `experiment_1.rescore`.
-
-
-### Cloud DeepSeek via root .env
-
-The judge automatically loads PROJECT_ROOT/.env (independent of working directory).
-Install `pip install 'python-dotenv>=1.0,<2'`. Copy `.env.example` to `.env` on the
-server and fill JUDGE_BASE_URL, JUDGE_MODEL, JUDGE_API_KEY from the cloud console.
-Local `.env` is gitignored and is not transferred by git pull; `.env.example` is tracked.
-Do not put keys into scripts, reports or command-line arguments. CLI model/URL
-options override shell variables; shell variables override .env. Clear stale shell
-values with `unset JUDGE_BASE_URL JUDGE_MODEL JUDGE_API_KEY` before using .env.
-
-DeepSeek official API docs describe chat-completions compatibility and JSON mode:
-https://api-docs.deepseek.com/ and https://api-docs.deepseek.com/guides/json_mode/
-Cloud providers may use different endpoint paths, model names and supported options.
-Use provider settings, not an assumed official DeepSeek address/model ID.
-The client sends JSON response_format and a JSON shape example. Empty/whitespace
-JSON responses remain failed judgments, and retain usage for accounting. No actual
-API call is made simply by loading .env or requesting --help.
-
-```bash
-# After filling the root .env:
-python -m experiment_1.judge --run-dir "$RUN_DIR" --output-dir "$RUN_DIR/judge/deepseek_01"
-```
-
-
-### Reparse saved judge responses without API calls
-
-Source evidence IDs may be integers (5), digit strings ("5") or line labels ("L5").
-The parser normalizes these to integers and still rejects out-of-range/ambiguous
-references. Source grounding is not established by this mechanical conversion.
-After updating code, recover format-only failures without paying for regeneration:
-
-```bash
-python -m experiment_1.reparse_judge --judge-dir "$RUN_DIR/judge/deepseek_pro_test_01"
-```
-
-New reports are written under `judge-dir/reparsed/<UTC timestamp>/`. Original raw
-responses, original reports and annotations remain intact. Source checkpoint hashes
-are checked before reuse. Incomplete/API failures cannot be recovered by parsing.
-Rebuilt usage totals describe original calls, not new charges. New audit checklists
-are blank; earlier manual annotations remain in the original audit directory.
-
-
-### Evaluation boundaries / ??????
-
-The rubric now distinguishes explicit requests, assignments, acceptance and commitments;
-source-supported requests are eligible actions even without formal approval, owner or date.
-A hope alone does not assign a task. Motion/recommendation/final approval and individual
-agenda items must remain distinct. A segment cannot establish later outcomes it omits.
-A response to a concern does not imply resolution, and ongoing discussion does not imply
-absence of an existing case-specific plan. Source ambiguity/noisy transcription is flagged;
-harmless wording changes are acceptable, while material outcome/owner/date distortions
-remain errors. Coverage and factuality are separate, assessed across the whole summary;
-headings alone do not determine factuality or whether a task is asserted. Overlapping
-findings in factuality and unsupported_additions are not summed as independent errors.
-
-These are general instructions, with no meeting-specific names, locations, bill numbers,
-expected scores or keyword decisions. Applicability is grounded in the source, not the
-candidate's content. The judge still interprets these rules; local schema validation
-cannot certify semantic correctness or consistent application.
-
-Changing the rubric requires NEW API evaluation of BOTH workflows. Use a new judge output
-directory, e.g. `--output-dir "$RUN_DIR/judge/deepseek_pro_boundaries_01" --num-samples 1`.
-Old results remain under the old rubric; `reparse_judge` only repairs parsing and cannot
-reassess the new semantic criteria. Keep the revised rubric fixed for all formal samples.
+Quality comparison uses ROUGE-1/2/L and BERTScore, reported separately without a composite score. Token accounting, runtime, memory and duplicate diagnostics remain available. BERTScore uses a fixed encoder rather than a generative judge. No evaluation API credentials are required. Historical evaluation artifacts are retained.
