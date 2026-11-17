@@ -3,9 +3,11 @@
 入口名称仍为 `grounded_specialist_workflow`。流程改为：
 
 ```text
-全文 + 发言块编号 → 一次原文 KV prefill → 全文话题发现
+全文 + 发言块编号 → 自然语言重叠窗口 → 增量话题目录与原文坐标
                                             ↓
-                         每话题 selector：注意力 + 语义匹配
+                                    一次原文 KV prefill
+                                            ↓
+                      保留话题坐标对应的块 + 注意力/语义路由补充
                                             ↓
                       同组话题 KV 取并集、去重、按原文顺序排列
                                             ↓
@@ -14,11 +16,20 @@
                                     最终摘要 agent
 ```
 
-Topic discovery reads the complete source KV and returns topic titles/scopes in
-first-appearance order. Each topic becomes a selector query, not a fixed action or
+Topic discovery reads fresh natural-language windows, each targeting 1/8 of source
+tokens with 1/4 overlap. Boundaries follow complete speaker blocks, so sizes and
+overlap are approximate; a single long turn stays intact. Overlap means there can
+be more than eight windows. Each call sees the current window and existing topic
+IDs/titles/scopes. The model reuses IDs for the same issue, including changed opinions,
+and proposes new topics when needed. Matching is model-based, with no similarity threshold.
+Topic block coordinates accumulate and deduplicate across windows; topics are ordered
+by earliest mapped source block. This mapping is not an independent evidence verification.
+
+After discovery, the full source is prefetched once. Each topic becomes a selector query, not a fixed action or
 decision role. Topic and source-block embeddings are computed in one encoder call;
 source vectors are reused. Attention and topic similarity rank complete speaker
-blocks; neighbor expansion follows. Topics may share blocks. All selected positions
+blocks. Every discovery-mapped block is retained along with ranked evidence; neighbor
+expansion follows. This can exceed the ranking budget. Topics may share blocks. All selected positions
 retain original order and absolute positions within the annotated source prompt.
 
 `[B0]`, `[B1]`, ... markers are added after speaker headers before prefill, so the
@@ -63,7 +74,7 @@ python -m grounded_specialist_workflow \
   --repetition-penalty 1.1
 ```
 
-- `--topic-budget-ratio`: initial positions per topic; neighbor expansion can exceed it.
+- `--topic-budget-ratio`: ranking budget per topic; mapped blocks and neighbor expansion can exceed it.
   Reuses the baseline config's internal `role_budget_ratio` field. The old CLI
   `--role-budget-ratio` has been replaced in this entry point only.
 - `--topics-per-specialist`: 0 sends all topics together; positive values set group size.
@@ -90,7 +101,9 @@ changes. Worker threads may not yield GPU speedup; measure wall time.
 
 `--output` is the final summary. `<stem>.artifacts/<timestamp>/` contains:
 
-- `topics.json`, `topic_discovery.txt`: discovered topics and raw discovery output.
+- `topics.json`: accumulated topic catalogue including deduplicated source block IDs.
+- `discovery_windows.json`: window block IDs and source-token sizes.
+- `topic_discovery_*.input.txt`, `topic_discovery_*.txt`: window prompts and raw responses.
 - `source_blocks.json`, `routing.json`: source text/coordinates and per-topic selections.
 - `groups.json`: group membership and deduplicated source positions/block IDs.
 - `specialist_group_*.input.txt`, `specialist_group_*.txt`, `report_group_*.json`: prompts and reports.
@@ -100,8 +113,10 @@ changes. Worker threads may not yield GPU speedup; measure wall time.
 - `summary.input.txt`, `summary.txt`, `*.partial.txt`: prompts/results and live output.
 - `config.json`, `stages.json`, `metrics.json`, `status.json`: settings and accounting.
 
-There are G+2 generation calls for G groups: discovery, G specialists, synthesis.
-The default uses three calls when topics are present. All N selectors still run.
+There are W+G+1 generation calls: W sequential discovery windows, G specialists,
+and final synthesis. All N selectors still run. Discovery-window prompts count the
+source window, overlap, catalogue and instructions on every call; generated catalogues
+also count in output totals. Full-source KV prefill is counted separately once.
 All are included in decoder token totals; embedding tokens are separate. Concurrent
 stage times overlap; use pipeline wall time, excluding model loading. Source block
 IDs in routing/group artifacts indicate supplied context, not verified claim-level citations.

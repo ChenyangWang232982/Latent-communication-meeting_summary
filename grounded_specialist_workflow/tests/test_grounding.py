@@ -10,6 +10,24 @@ from grounded_specialist_workflow.components.structure import parse_topics
 
 
 class TopicWorkflowTest(unittest.TestCase):
+    def test_discovery_windows_cover_source_and_reuse_topic_coordinates(self):
+        from grounded_specialist_workflow.components.discovery import discovery_windows, merge_topics
+        blocks = [dict(block_id=i, positions=list(range(i*10, (i+1)*10)), text=str(i)) for i in range(64)]
+        windows = list(discovery_windows(blocks))
+        self.assertEqual(len(windows[0]), 8)
+        self.assertEqual([b['block_id'] for b in windows[1]][:2], [6, 7])
+        self.assertEqual({b['block_id'] for w in windows for b in w}, set(range(64)))
+        catalogue = []
+        merge_topics(catalogue, json.dumps({'topics': [dict(id=None, title='Plan', scope='Plan choice',
+            block_ids=[6, 7])]}), windows[0])
+        merge_topics(catalogue, json.dumps({'topics': [dict(id='topic_000', title='Plan revised',
+            block_ids=[6, 7, 8, 9])]}), windows[1])
+        self.assertEqual(len(catalogue), 1)
+        self.assertEqual(catalogue[0]['source_block_ids'], [6, 7, 8, 9])
+        # A long indivisible turn remains intact, and the next window still advances.
+        oversized = [dict(block_id=i, positions=list(range(size))) for i, size in enumerate([1000, 1, 1])]
+        self.assertEqual([b['block_id'] for w in discovery_windows(oversized) for b in w], [0, 1, 2])
+
     def test_thinking_decode_keeps_json_and_counts_all_generated_tokens(self):
         import torch
         from receiver_kv_workflow.engine import ReceiverKVConfig
@@ -106,8 +124,10 @@ class TopicWorkflowTest(unittest.TestCase):
         def decode(stage, ids, **kwargs):
             calls.append((stage, kwargs.get('positions')))
             runner.stages[stage] = {'prompt_tokens': 2, 'output_tokens': 2}
-            if stage == 'topic_discovery':
-                return json.dumps({'topics': [{'title': str(i), 'scope': f'Issue {i}'} for i in range(topic_count)]})
+            if stage.startswith('topic_discovery_'):
+                return json.dumps({'topics': [{'id': None if stage.endswith('_000') else f'topic_{i:03d}',
+                    'title': str(i), 'scope': f'Issue {i}',
+                    'block_ids': [i % 4]} for i in range(topic_count)]})
             if stage.startswith('specialist_'):
                 if stage == 'specialist_group_000':
                     time.sleep(.03)  # Finish later than another queued topic.
@@ -126,6 +146,7 @@ class TopicWorkflowTest(unittest.TestCase):
              patch(target+'prompt_parts', return_value=(list(range(17)), [], [0])), \
              patch(target+'source_suffix', return_value=[1]), \
              patch(target+'source_blocks', return_value=blocks), \
+             patch(target+'discovery_windows', return_value=[blocks]) as window_mock, \
              patch(target+'topic_query', side_effect=lambda topic: topic['title']), \
              patch(target+'chat', return_value=[1]), \
              patch('receiver_kv_workflow.cache.forward_tokens', return_value=SimpleNamespace(past_key_values=object())), \
@@ -134,22 +155,33 @@ class TopicWorkflowTest(unittest.TestCase):
             for topic_count, width in ((0, 0), (3, 0), (5, 2), (3, 1)):
                 with self.subTest(topics=topic_count, width=width):
                     runner.specialists = SpecialistConfig(specialist_workers=2, topics_per_specialist=width)
+                    window_count = 2 if topic_count == 3 else 1
+                    window_mock.return_value = [blocks] * window_count
                     calls.clear()
                     encoding_calls.clear()
                     folder = Path(temp)/f'{topic_count}_{width}'
                     result = runner.run('meeting', 'transcript', artifact_dir=folder)
                     self.assertEqual(result['summary'], 'Final summary')
-                    self.assertEqual(calls[0][0], 'topic_discovery')
-                    self.assertEqual(calls[0][1], list(range(17)))
+                    self.assertEqual(calls[0][0], 'topic_discovery_000')
+                    self.assertIsNone(calls[0][1])
                     routes = json.loads((folder/'routing.json').read_text())
                     for i in range(topic_count):
                         expected = sorted([0]+blocks[i%4]['positions']+blocks[(i+2)%4]['positions'])
                         self.assertEqual(routes[f'topic_{i:03d}']['selected_positions'], expected)
                     merged = json.loads((folder/'topic_reports.json').read_text())
-                    self.assertEqual([c['topic_id'] for c in merged], [f'topic_{i:03d}' for i in range(topic_count)])
+                    topics = json.loads((folder/'topics.json').read_text())
+                    self.assertEqual([c['topic_id'] for c in merged], [t['id'] for t in topics])
+                    self.assertEqual([min(t['source_block_ids']) for t in topics],
+                                     sorted(i % 4 for i in range(topic_count)))
                     self.assertFalse((folder/'retrieval.json').exists())
                     self.assertFalse(result['evidence_review'])
                     self.assertEqual(result['topic_count'], topic_count)
+                    self.assertEqual(result['discovery_window_count'], window_count)
+                    self.assertTrue(all(positions is None for name, positions in calls
+                                        if name.startswith('topic_discovery_')))
+                    if window_count > 1:
+                        prompt = (folder/'topic_discovery_001.input.txt').read_text()
+                        self.assertIn('topic_000', prompt)
                     groups = json.loads((folder/'groups.json').read_text())
                     count = (topic_count + width - 1)//width if width else int(topic_count > 0)
                     self.assertEqual(len(groups), count)
@@ -159,9 +191,9 @@ class TopicWorkflowTest(unittest.TestCase):
                                            for p in routes[t['id']]['selected_positions']})
                         self.assertEqual(group['selected_positions'], expected)
                         self.assertIn(('specialist_'+group['id'], expected), calls)
-                    self.assertEqual(len(calls), count+2)
-                    self.assertEqual(result['total_decoder_input_tokens'], 21+topic_count+2*count)
-                    self.assertEqual(result['total_decoder_output_tokens'], 2*(count+2))
+                    self.assertEqual(len(calls), window_count+count+1)
+                    self.assertEqual(result['total_decoder_input_tokens'], 17+topic_count+2*(window_count+count+1))
+                    self.assertEqual(result['total_decoder_output_tokens'], 2*(window_count+count+1))
                     self.assertEqual(len(encoding_calls), 1)
                     self.assertEqual(result['embedding_input_tokens'], 4+topic_count)
             runner._decode = lambda *a, **k: 'invalid JSON'

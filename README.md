@@ -341,12 +341,14 @@ See [meeting_stream/README.md](meeting_stream/README.md) for the WebSocket servi
 ## Topic specialists / 动态话题专家
 
 The optional [grounded_specialist_workflow](grounded_specialist_workflow/README.md)
-discovers topics from full-source KV, unions selected KV across topics for joint analysis,
+discovers topics from overlapping natural-language windows (about 1/8 of source,
+1/4 overlap), reuses topic IDs and records block coordinates. It then unions selected KV across topics for joint analysis,
 and synthesizes structured reports. All topics share one specialist by default;
 `--topics-per-specialist` enables smaller groups. It supports concurrent groups and optional
 position weighting. Use `python -m grounded_specialist_workflow --help`.
 
-该入口先遍历全文发现话题，再为每个话题选择 KV，默认合并去重后按原文顺序一起交给一个 specialist。
+该入口先用自然语言窗口发现并归并话题（每块约全文 1/8，重叠约 1/4），记录原文坐标；
+再保留坐标对应的 KV 并用路由补充，默认合并去重后按原文顺序一起交给一个 specialist。
 可用 `--topics-per-specialist` 分组，并发数单独设置；最终汇总接收结构化报告，没有中间核查。
 
 ## Optional semantic block routing / 可选向量辅助块选择

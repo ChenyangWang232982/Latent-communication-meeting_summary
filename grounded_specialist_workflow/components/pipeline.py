@@ -1,4 +1,4 @@
-"""Full-source topics -> unioned topic-group KV -> reports -> synthesis."""
+"""Natural-language window discovery -> topic-group source KV -> reports -> synthesis."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 import json
@@ -13,8 +13,9 @@ from receiver_kv_workflow.selection import select_spans
 from receiver_kv_workflow.speaker_blocks import select_complete_blocks, expand_neighbor_blocks
 from vector.routing import combine_scores
 from .evidence import annotate_transcript, source_blocks
-from .prompts import DISCOVERY_REQUEST, chat, source_suffix, topic_query, analysis_request, synthesis_request
-from .structure import parse_topics, parse_object, split_thinking
+from .prompts import discovery_request, chat, source_suffix, topic_query, analysis_request, synthesis_request
+from .structure import parse_object, split_thinking
+from .discovery import discovery_windows, merge_topics
 
 
 @dataclass(frozen=True)
@@ -120,12 +121,23 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
     def _run(self, transcript, forward_tokens, query_scores, size_bytes):
         transcript = annotate_transcript(transcript)
         prefix, _, protected = prompt_parts(self.tokenizer, transcript)
-        discovery = source_suffix(self.tokenizer, transcript, prefix, DISCOVERY_REQUEST)
-        if len(prefix) + len(discovery) >= self.context_limit:
+        if len(prefix) >= self.context_limit:
             raise ValueError('The context exceeds the model limit; no transcript was truncated.')
         blocks = source_blocks(self.tokenizer, transcript, prefix, protected)
         units = [b['positions'] for b in blocks]
         self._save('source_blocks.json', blocks)
+        # Discovery reads fresh natural-language windows, not the immutable source KV.
+        topics, windows = [], list(discovery_windows(blocks))
+        self._save('discovery_windows.json', [dict(id=i, block_ids=[b['block_id'] for b in w],
+            source_tokens=sum(len(b['positions']) for b in w)) for i, w in enumerate(windows)])
+        for index, window in enumerate(windows):
+            self._log(f'Topic discovery window {index+1}/{len(windows)}; existing topics={len(topics)}')
+            request = discovery_request(window, topics)
+            stage = f'topic_discovery_{index:03d}'
+            (self.artifacts / f'{stage}.input.txt').write_text(request, encoding='utf-8')
+            raw = self._decode(stage, chat(self.tokenizer, request))
+            merge_topics(topics, raw, window)
+            self._save('topics.json', topics)
         self._log(f'Prepared {len(blocks)} speaker blocks; full source prefill started')
         start = time.perf_counter()
         with self.torch.inference_mode():
@@ -135,10 +147,6 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
         self._sync()
         prefill_seconds = time.perf_counter() - start
         source_bytes = size_bytes(source)
-        raw = self._decode('topic_discovery', discovery, source=source,
-                           positions=list(range(len(prefix))), absolute_start=len(prefix))
-        topics = parse_topics(raw)
-        self._save('topics.json', topics)
         self._log(f'Discovered {len(topics)} topics; embedding source blocks and topic queries')
         start = time.perf_counter()
         query_texts = [topic_query(t) for t in topics]
@@ -167,6 +175,8 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
             combined = [score + self.specialists.routing_recency_weight * blocks[i]['relative_position']
                         for i, score in enumerate(combined)]
             seeds = select_complete_blocks(units, baseline, [scores], protected, block_scores=combined)
+            # Preserve every discovery-mapped block; ranking can add complementary evidence.
+            seeds = sorted(set(seeds) | {p for block_id in topic['source_block_ids'] for p in units[block_id]})
             positions = expand_neighbor_blocks(seeds, units, protected, radius=self.config.speaker_neighbor_blocks)
             if not set(positions).difference(protected):
                 raise ValueError(f'{name}: no whole block fits; increase --topic-budget-ratio')
@@ -188,7 +198,9 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
         self._save('groups.json', groups)
         def analyze(index, group):
             name = group['id']
-            request = analysis_request(group['topics'], topics)
+            catalogue = [{k: t[k] for k in ('id', 'title', 'scope')} for t in topics]
+            members = [t for t in catalogue if t['id'] in {m['id'] for m in group['topics']}]
+            request = analysis_request(members, catalogue)
             (self.artifacts / f'specialist_{name}.input.txt').write_text(request, encoding='utf-8')
             suffix = source_suffix(self.tokenizer, transcript, prefix, request,
                                    enable_thinking=self.specialists.specialist_thinking)
@@ -215,10 +227,12 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
                     selection_probe_tokens=probe_tokens, prefill_seconds=prefill_seconds,
                     selection_seconds=selection_seconds, embedding_seconds=embedding_seconds,
                     stages=self.stages, evidence_review=False, topic_count=len(topics), group_count=len(groups),
+                    discovery_window_count=len(windows),
                     embedding_input_tokens=embedding_stats['embedding_input_tokens'],
                     total_decoder_input_tokens=len(prefix) + probe_tokens +
                         sum(stage['prompt_tokens'] for stage in self.stages.values()),
                     total_decoder_output_tokens=sum(stage['output_tokens'] for stage in self.stages.values()),
-                    note='Hybrid: full source KV for topic discovery; unioned topic-group KV to specialists; '
+                    note='Hybrid: overlapping natural-language windows for topic discovery; discovery-mapped '
+                         'blocks plus attention/semantic routing, unioned topic-group KV to specialists; '
                          'structured text to final summary. Source block IDs are selected context, not '
                          'verified claim citations. Concurrent stage times overlap; use pipeline wall time.')
