@@ -42,6 +42,35 @@ class JudgeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Cannot resume"):
                 run_judge(run, out, {"seed": 7, "audit_pairs": 5}, client)
 
+    def test_string_line_ids_and_free_reparse(self):
+        from experiment_1.reparse_judge import reparse
+        value = judgment()
+        for item in value["dimensions"].values():
+            item["evidence"][0]["source_lines"] = ["L1", "1", 1]
+        parsed = validate(json.dumps(value), "Approved", "Approved")
+        self.assertEqual(parsed["dimensions"]["actions"]["evidence"][0]["source_lines"], [1, 1, 1])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); (root / "samples").mkdir()
+            (root / "manifest.json").write_text(json.dumps({"sample_ids": ["x"]}))
+            (root / "samples/00000.json").write_text(json.dumps({"id": "x", "status": "completed", "source": "Approved", "result": {"answers": {"routed_kv": "Approved", "specialist_text": "Approved"}}}))
+            calls = []
+            def client(messages):
+                calls.append(messages)
+                return {"text": json.dumps(value), "finish_reason": "stop", "seconds": 1, "usage": {"total_tokens": 12}}
+            original = run_judge(root, root / "judge", {"seed": 12, "audit_pairs": 0}, client)
+            for path in (original / "judgments").glob("*.json"):
+                record = json.loads(path.read_text())
+                record.update(status="failed", error="ValueError: Invalid source line reference")
+                record.pop("judgment", None)
+                path.write_text(json.dumps(record))
+            before = {p: p.read_bytes() for p in original.rglob("*") if p.is_file()}
+            output = reparse(original)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(json.loads((output / "judge_summary.json").read_text())["completed_pairs"], 1)
+            self.assertEqual(json.loads((output / "reparse_manifest.json").read_text())["api_calls"], 0)
+            for path, content in before.items():
+                self.assertEqual(path.read_bytes(), content)
+
     def test_one_sample_makes_only_two_requests(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); (root / "samples").mkdir()

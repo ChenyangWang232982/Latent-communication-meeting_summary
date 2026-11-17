@@ -1,5 +1,6 @@
 """Task-adapted SIEVE-inspired rubric, not a reproduction of SIEVE."""
 import json
+import re
 
 DIMENSIONS = ("background", "decisions", "actions", "open_issues", "unsupported_additions")
 SYSTEM = """You evaluate meeting summaries against their complete source transcript.
@@ -64,8 +65,16 @@ def validate(text, source, summary):
             raise ValueError("Missing evidence list")
         for evidence in item["evidence"]:
             ids = evidence.get("source_lines")
-            if not isinstance(ids, list) or any(type(i) is not int or not 1 <= i <= count for i in ids):
+            if not isinstance(ids, list):
                 raise ValueError("Invalid source line reference")
+            normalized = []
+            for line in ids:
+                if isinstance(line, str) and re.fullmatch(r"[Ll]?[0-9]+", line.strip()):
+                    line = int(line.strip().lstrip("Ll"))
+                if type(line) is not int or not 1 <= line <= count:
+                    raise ValueError("Invalid source line reference")
+                normalized.append(line)
+            evidence["source_lines"] = normalized
             if not isinstance(evidence.get("summary_quote"), str) or not isinstance(evidence.get("explanation"), str):
                 raise ValueError("Invalid evidence object")
         # Mechanical checks cannot establish entailment; retain all judgments for audit.

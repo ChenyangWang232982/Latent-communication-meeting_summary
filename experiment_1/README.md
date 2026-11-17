@@ -432,3 +432,21 @@ API call is made simply by loading .env or requesting --help.
 # After filling the root .env:
 python -m experiment_1.judge --run-dir "$RUN_DIR" --output-dir "$RUN_DIR/judge/deepseek_01"
 ```
+
+
+### Reparse saved judge responses without API calls
+
+Source evidence IDs may be integers (5), digit strings ("5") or line labels ("L5").
+The parser normalizes these to integers and still rejects out-of-range/ambiguous
+references. Source grounding is not established by this mechanical conversion.
+After updating code, recover format-only failures without paying for regeneration:
+
+```bash
+python -m experiment_1.reparse_judge --judge-dir "$RUN_DIR/judge/deepseek_pro_test_01"
+```
+
+New reports are written under `judge-dir/reparsed/<UTC timestamp>/`. Original raw
+responses, original reports and annotations remain intact. Source checkpoint hashes
+are checked before reuse. Incomplete/API failures cannot be recovered by parsing.
+Rebuilt usage totals describe original calls, not new charges. New audit checklists
+are blank; earlier manual annotations remain in the original audit directory.
