@@ -76,3 +76,8 @@ meeting_evaluation/input/*
 !meeting_evaluation/input/.gitkeep
 meeting_evaluation/output/*
 !meeting_evaluation/output/.gitkeep
+
+# Local API credentials
+.env
+.env.*
+!.env.example

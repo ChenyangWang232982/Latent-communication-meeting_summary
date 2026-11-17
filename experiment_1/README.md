@@ -270,3 +270,165 @@ Use a new output directory, e.g. `--output-dir test_result/repetition_control`,
 first with 3 samples. To isolate the penalty, run a matched control with 1.0 and
 otherwise identical sampling settings, seed, model and input. Do not resume old
 runs after changing decoding configuration. Review stays disabled.
+
+
+### Offline token and quality reports / ????
+
+No summary regeneration or review is required for existing completed runs.
+Future runs automatically include the token table and lexical quality metrics.
+?????? samples/*.json?????????????????????????????
+
+```bash
+RUN_DIR=$(find test_result/experiment_1_25_seed12 -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+python -m experiment_1.rescore --run-dir "$RUN_DIR"
+```
+
+Outputs under `RUN_DIR/evaluation/<UTC timestamp>/`:
+- `summary.txt` and `summary.json`: mean stage input/output token events, totals,
+  aggregate token savings vs specialist_text, ROUGE and length diagnostics.
+- `tokens.json`: per-sample and aggregate token counts (missing accounting raises
+  an error, never silently treated as zero).
+- `per_sample.csv`: token breakdown and quality per paired sample.
+- `repetition.json`, `human_review.csv`: duplicate diagnostics and blank manual
+  annotation sheet; previous annotations remain in the source run.
+- `evaluation_manifest.json`: source checkpoint hashes, evaluator code hashes,
+  metric definition, optional semantic encoder settings and missing sample IDs.
+
+Token definitions: source prefill + selection queries + sender prompt + receiver
+prompt are decoder input events; sender handoff + receiver answer are output events.
+The handoff being generated once and then consumed is deliberately counted twice
+in its two roles. Shared prefill/selection is allocated once to EACH standalone
+workflow comparison; summing both arms is not the actual paired execution workload.
+Embedding encoder input tokens are reported separately in the efficiency note,
+not added to Qwen decoder tokens. Neither metric is a provider bill or FLOP count.
+
+Quality defaults: ROUGE-1/2/L precision/recall/F1, ASCII lowercase alphanumeric
+word counts and prediction/reference word-length ratio. Historical ROUGE-L stays
+unchanged: no stemming, whole-summary LCS (not ROUGE-Lsum). Quality means are macro
+averages; overlap precision/recall can help interpret verbose vs short summaries,
+but do not establish important-fact coverage. Markdown headings are not stripped,
+matching the historical metric definition. No metric rewrites the output.
+
+Optional semantic reference similarity (additional encoder download if uncached):
+
+```bash
+pip install -r experiment_1/requirements-quality.txt
+python -m experiment_1.rescore \
+  --run-dir "$RUN_DIR" \
+  --bertscore-model allenai/longformer-base-4096 \
+  --bertscore-layers 12 \
+  --device cuda
+```
+
+BERTScore uses batch size 1, no IDF weighting, no baseline rescaling, and the same
+encoder/layer configuration for both workflows. Longformer here accommodates
+longer summaries; scores should only be compared within this fixed evaluator
+configuration, not to scores from a different BERTScore encoder. Encoder context
+length is checked before scoring; overlength prediction OR reference raises an
+error instead of silently truncating or excluding one arm. Evaluation compute is
+separate from the original workflow time, memory and token costs. Semantic scores
+are optional and offline; the normal inference loop does not load this model.
+
+ROUGE measures reference lexical overlap; BERTScore measures reference contextual
+similarity. Neither validates whether a decision was reversed, a task owner was
+misassigned or a date was invented. Keep source-overlap labeled a lexical proxy;
+use the manual sheet for source-supported decisions/actions/owners/dates/omissions.
+Sources: https://github.com/google-research/google-research/tree/master/rouge and
+https://github.com/Tiiiger/bert_score
+
+
+### SIEVE-inspired automatic evaluation / ?????????
+
+Entry point: `python -m experiment_1.judge`. Components live under
+`components/judge_{client,rubric,runner}.py`. This is a task-adapted evaluation,
+not an implementation/reproduction of original SIEVE. It reads completed paired
+checkpoints and judges each summary independently against the COMPLETE source.
+Method labels, references and the other candidate are excluded from judge prompts.
+Cases and candidate order are seeded and randomized. Summary text is kept verbatim;
+style can still reveal a method, so anonymity cannot remove all judge biases.
+
+Five dimensions: background, decisions, actions, open_issues, unsupported_additions.
+For the first four, coverage and factuality are separate 0/1/2 scores (higher better).
+Coverage: none / partial / all essential information retained. Source-inapplicable
+coverage is null. Factuality: major error / minor error / supported; no candidate
+assertion is null, not a perfect score. Unsupported additions uses only factuality.
+Every dimension includes a reason, uncertainty flag and source-line evidence.
+JSON/range checks establish parseability, not entailment or the truth of judgments.
+Report each dimension separately, no weighted overall score. Means use only complete
+pairs with non-null and non-uncertain scores for BOTH arms for that measure;
+excluded counts and applicability disagreements are reported. These ordinal-score
+means are descriptive, not calibrated accuracy percentages.
+
+Use an independent, capable model through a chat-completions-compatible HTTP API.
+A local server reached through an SSH tunnel also works. Supply a model ID supported
+by YOUR service. Remote endpoints receive full transcripts and candidate summaries.
+The API must support temperature=0 and JSON object response_format; no silent fallback,
+implicit retry, local input truncation or synthetic score is applied. Configure a
+sufficient server-side context/output limit. Non-stop responses are marked failed.
+
+```bash
+export JUDGE_BASE_URL="https://YOUR_SERVICE/v1"
+export JUDGE_MODEL="YOUR_EVALUATOR_MODEL_ID"
+read -rsp "Judge API key: " JUDGE_API_KEY
+export JUDGE_API_KEY
+
+RUN_DIR=$(find test_result/experiment_1_25_seed12 -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+python -m experiment_1.judge \
+  --run-dir "$RUN_DIR" \
+  --output-dir "$RUN_DIR/judge/evaluation_01"
+```
+
+Environment values above are placeholders. For an unauthenticated local API,
+JUDGE_API_KEY can be unset. No extra Python dependencies are required. To resume
+an interrupted run, repeat exactly the same command/settings/output directory.
+Completed OR failed calls remain recorded and are not silently billed again;
+use a new directory for a deliberate rerun after resolving an API failure.
+Evaluation code/input/model-setting changes require a new directory. The seed
+controls ordering/audit selection only; API determinism is not guaranteed.
+
+Outputs:
+- `judge_summary.txt/json`: per-dimension paired means, denominators and differences;
+  evaluator duration/usage recorded separately from original generation metrics.
+- `judge_scores.csv`: per-candidate dimensions, reasons and uncertainty.
+- `judgments/*.json`: raw output, parsed scores, provider usage/model metadata,
+  finish reason and failures. Failed parse/truncated outputs keep reported costs.
+- `judge_manifest.json`: inputs, code/rubric fingerprints, settings and private
+  candidate mapping. Keep mapping from human annotators during audit.
+- `audit/*.md` and `audit/checklist.csv`: default five randomly chosen pairs PLUS
+  pairs flagged uncertain, major factual error, judge failure or applicability
+  disagreement. Packet includes numbered source, anonymous candidate and automatic
+  judgment. Fill judge_correct/correction/source_lines/reviewer; annotations are
+  preserved on resume. These annotations do not automatically overwrite scores.
+
+This is an audit of the automated judge, not independent blinded human scoring:
+reviewers see its reasoning. First read source/candidate before the judgment to
+reduce anchoring. Random and flagged audits must be analyzed separately; flagged
+cases cannot estimate population error rates. If more errors are found, enlarge
+the random audit. `--audit-pairs` controls random pairs, not the number of flags.
+Costs are provider-reported token events; absent usage is unknown, not zero.
+Local code sends all text but cannot detect a remote server's hidden truncation.
+ROUGE/BERTScore/token reports remain available through `experiment_1.rescore`.
+
+
+### Cloud DeepSeek via root .env
+
+The judge automatically loads PROJECT_ROOT/.env (independent of working directory).
+Install `pip install 'python-dotenv>=1.0,<2'`. Copy `.env.example` to `.env` on the
+server and fill JUDGE_BASE_URL, JUDGE_MODEL, JUDGE_API_KEY from the cloud console.
+Local `.env` is gitignored and is not transferred by git pull; `.env.example` is tracked.
+Do not put keys into scripts, reports or command-line arguments. CLI model/URL
+options override shell variables; shell variables override .env. Clear stale shell
+values with `unset JUDGE_BASE_URL JUDGE_MODEL JUDGE_API_KEY` before using .env.
+
+DeepSeek official API docs describe chat-completions compatibility and JSON mode:
+https://api-docs.deepseek.com/ and https://api-docs.deepseek.com/guides/json_mode/
+Cloud providers may use different endpoint paths, model names and supported options.
+Use provider settings, not an assumed official DeepSeek address/model ID.
+The client sends JSON response_format and a JSON shape example. Empty/whitespace
+JSON responses remain failed judgments, and retain usage for accounting. No actual
+API call is made simply by loading .env or requesting --help.
+
+```bash
+# After filling the root .env:
+python -m experiment_1.judge --run-dir "$RUN_DIR" --output-dir "$RUN_DIR/judge/deepseek_01"
+```

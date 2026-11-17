@@ -11,3 +11,6 @@ sentencepiece
 protobuf
 safetensors
 tqdm>=4.66
+
+# Root .env configuration for offline judge API.
+python-dotenv>=1.0,<2

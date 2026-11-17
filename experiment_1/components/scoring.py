@@ -1,5 +1,5 @@
 """Reuse summary metrics and retain paired sample-level observations."""
-from meeting_evaluation.metrics import rouge_l_f1, source_overlap_support
+from meeting_evaluation.metrics import reference_metrics, source_overlap_support
 from .config import VARIANTS
 
 
@@ -8,7 +8,7 @@ def score_sample(result, record, resources):
     for name in VARIANTS:
         answer = result["answers"][name]
         support = source_overlap_support(answer, record.context)
-        quality[name] = {"rouge_l_f1": rouge_l_f1(answer, record.answer), **support}
+        quality[name] = {**reference_metrics(answer, record.answer), **support}
         measurement = result["variants"][name]
         measurement.update(resources.get(name, {}))
         # Include excerpt mapping and prompt preparation omitted by the legacy stage timers.

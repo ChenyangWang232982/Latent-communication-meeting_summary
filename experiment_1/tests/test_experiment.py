@@ -107,6 +107,28 @@ class ExperimentTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "input_sha256"):
             run(self.args, FakeRunner)
 
+    def test_offline_rescore_reuses_tokens_and_preserves_saved_run(self):
+        from experiment_1.rescore import rescore
+        path, _ = run(self.args, FakeRunner)
+        original = {p.relative_to(path): p.read_bytes() for p in path.rglob("*") if p.is_file()}
+        destination = rescore(path, self.root / "rescored")
+        self.assertEqual(FakeRunner.loads, 1)
+        for relative, data in original.items():
+            self.assertEqual((path / relative).read_bytes(), data)
+        report = json.loads((destination / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["tokens"]["routed_kv"]["total_tokens"]["mean"], 10)
+        self.assertEqual(report["tokens"]["specialist_text"]["total_tokens"]["sum"], 28)
+        self.assertAlmostEqual(report["token_savings_kv_vs_text_percent"], 100 * 4 / 14)
+        self.assertEqual(report["metrics"]["quality"]["routed_kv"]["rouge_2_f1"], 1)
+        self.assertEqual(report["metrics"]["quality"]["specialist_text"]["rouge_l_precision"], 1)
+        self.assertAlmostEqual(report["metrics"]["quality"]["specialist_text"]["rouge_l_recall"], 1/3)
+        with (destination / "per_sample.csv").open(encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[0]["total_tokens"], "10")
+        self.assertIn("Logical decoder token events", (destination / "summary.txt").read_text(encoding="utf-8"))
+        with self.assertRaisesRegex(ValueError, "separate"):
+            rescore(path, path)
+
     def test_no_false_confidence_interval_for_one_pair(self):
         sample = {"quality": {"routed_kv": {"rouge_l_f1": .4}, "specialist_text": {"rouge_l_f1": .3}}}
         self.assertIsNone(paired_interval([sample])["bootstrap_95_percent_interval"])

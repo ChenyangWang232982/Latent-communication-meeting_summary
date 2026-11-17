@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import re
 from statistics import mean
 from typing import Any
@@ -31,6 +32,29 @@ def rouge_l_f1(prediction: str, reference: str) -> float | None:
     lcs = previous[-1]
     precision, recall = lcs / len(left), lcs / len(right)
     return 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+
+
+def reference_metrics(prediction: str, reference: str) -> dict:
+    """Unstemmed ASCII-token ROUGE; preserves the historical ROUGE-L definition."""
+    left, right = _tokens(prediction), _tokens(reference)
+    scores = {"prediction_words": len(left), "reference_words": len(right),
+              "word_length_ratio": len(left) / len(right) if right else None}
+    for n in (1, 2):
+        a = Counter(tuple(left[i:i+n]) for i in range(len(left) - n + 1))
+        b = Counter(tuple(right[i:i+n]) for i in range(len(right) - n + 1))
+        overlap = sum((a & b).values())
+        precision = overlap / sum(a.values()) if a else 0.0
+        recall = overlap / sum(b.values()) if b else 0.0
+        for suffix, value in (("precision", precision), ("recall", recall),
+                              ("f1", 2 * precision * recall / (precision + recall) if precision + recall else 0.0)):
+            scores[f"rouge_{n}_{suffix}"] = value if reference.strip() else None
+    f1 = rouge_l_f1(prediction, reference)
+    scores["rouge_l_f1"] = f1
+    # P/R recovered from F1 and lengths; no second LCS traversal.
+    lcs = f1 * (len(left) + len(right)) / 2 if f1 is not None else 0
+    scores["rouge_l_precision"] = lcs / len(left) if left and f1 is not None else (0.0 if f1 is not None else None)
+    scores["rouge_l_recall"] = lcs / len(right) if right and f1 is not None else (0.0 if f1 is not None else None)
+    return scores
 
 
 def source_overlap_support(summary: str, source: str, minimum_overlap: float = 0.45) -> dict[str, float]:
