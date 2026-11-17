@@ -28,6 +28,10 @@ def arguments():
     parser.add_argument("--review", action="store_true", help="Also save the routed_kv draft and review change log")
     parser.add_argument('--frame-context', action='store_true',
                         help='FRAME-inspired statements plus referenced source KV, followed by summary generation')
+    parser.add_argument('--frame-temperature', type=float, default=0.3, help='Fact extraction sampling temperature (default: 0.3)')
+    parser.add_argument('--frame-top-p', type=float, default=0.9, help='Fact extraction top_p (default: 0.9)')
+    parser.add_argument('--frame-repetition-penalty', type=float, default=1.1,
+                        help='Fact extraction generated-token repetition penalty (default: 1.1)')
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
@@ -65,17 +69,31 @@ def main():
     reference = args.reference.read_text(encoding="utf-8-sig") if args.reference else ""
     from meeting_evaluation.metrics import rouge_l_f1
     from vector.cli import config_kwargs
+    # Save live FRAME output even if interrupted or generation exhausts its context.
+    frame_base = args.output.with_suffix('') if args.output else args.output_dir / datetime.now().strftime('%Y%m%d_%H%M%S_%f') / 'routed_kv'
+    if args.frame_context:
+        log(f"Live facts output: {frame_base.with_name(frame_base.name + '.frame_facts.partial.txt')}")
+    def live_frame(event):
+        if args.frame_context and event.get('text') is not None:
+            frame_base.parent.mkdir(parents=True, exist_ok=True)
+            stage = event['stage']
+            frame_base.with_name(frame_base.name + f'.{stage}.partial.txt').write_text(event['text'], encoding='utf-8')
+            frame_base.with_name(frame_base.name + f'.{stage}.status.json').write_text(
+                json.dumps({k: event[k] for k in ('tokens', 'finished', 'stop_reason', 'repeated_tail') if k in event}, indent=2), encoding='utf-8')
     runner = ReceiverKVRunner(ReceiverKVConfig(
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         seed=args.seed, review_seed=args.review_seed, review_temperature=args.review_temperature,
         review_top_p=args.review_top_p,
         frame_context=args.frame_context,
+        frame_temperature=args.frame_temperature, frame_top_p=args.frame_top_p,
+        frame_repetition_penalty=args.frame_repetition_penalty,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         **config_kwargs(args),
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants),
-                        routing_audit=args.routing_audit, review="routed_kv" in args.variants and not args.frame_context)
+                        routing_audit=args.routing_audit, review="routed_kv" in args.variants and not args.frame_context,
+                        on_generation=live_frame if args.frame_context else None)
     answers = result["answers"]
     review_report = ({k: v for k, v in result['review'].items() if k not in ('answer', 'changes')}
                      if result['review'] is not None else None)

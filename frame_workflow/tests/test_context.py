@@ -35,7 +35,8 @@ class FrameContextTest(unittest.TestCase):
         runner = SimpleNamespace(tokenizer=object(), torch=torch, model=object(),
             context_limit=100, _sync=lambda: None, _tensor=lambda ids: torch.tensor([ids]), progress=lambda _: None,
             config=SimpleNamespace(seed=12, temperature=0, top_p=1, top_k=0,
-                repetition_penalty=1, review_seed=42, review_temperature=.3, review_top_p=.9))
+                repetition_penalty=1, review_seed=42, review_temperature=.3, review_top_p=.9,
+                frame_temperature=.3, frame_top_p=.9, frame_repetition_penalty=1.1))
         blocks = {f'B{i}': dict(speaker=str(i), positions=[1+2*i, 2+2*i]) for i in range(3)}
         raw = json.dumps({'facts': [dict(statement='A qualified claim', context_refs=['B0', 'B2'])]})
         requests, selected = [], []
@@ -49,7 +50,7 @@ class FrameContextTest(unittest.TestCase):
         target = 'frame_workflow.components.generation.'
         with patch(target+'context_blocks', return_value=blocks), patch(target+'suffix', side_effect=request_ids), \
              patch(target+'select_cache', side_effect=cache), patch(target+'size_bytes', return_value=100), \
-             patch(target+'generate', side_effect=[(raw, 20, False, {}), ('Final summary', 10, False, {})]):
+             patch(target+'generate', side_effect=[(raw, 20, False, {}), ('Final summary', 10, False, {})]) as generation:
             answer, result = run_frame(runner, 'source', [0]*7, [0], list(range(7)), 'immutable-source')
         self.assertEqual(answer, 'Final summary')
         self.assertEqual(selected, [list(range(7)), [0, 1, 2, 5, 6]])
@@ -58,6 +59,9 @@ class FrameContextTest(unittest.TestCase):
         self.assertNotIn('"B1"', requests[1])
         self.assertEqual(result['stages']['frame_facts']['output_tokens'], 20)
         self.assertEqual(result['stages']['frame_summary']['output_tokens'], 10)
+        self.assertEqual(generation.call_args_list[0].kwargs['temperature'], .3)
+        self.assertEqual(generation.call_args_list[0].kwargs['repetition_penalty'], 1.1)
+        self.assertEqual(generation.call_args_list[1].kwargs['repetition_penalty'], 1)
 
 
 if __name__ == '__main__':

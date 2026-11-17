@@ -41,7 +41,12 @@ python -m receiver_kv_workflow.run \
 ```
 
 `--seed` controls fact extraction, while `--review-*` controls final synthesis in
-this mode. Thinking stays disabled. The mode currently supports only `routed_kv`;
+this mode. Fact extraction has independent decoding controls: `--frame-temperature`
+(default 0.3), `--frame-top-p` (0.9), and `--frame-repetition-penalty` (1.1).
+The penalty applies to generated tokens, not source KV; it is not semantic deduplication
+and can affect wording and repeated identifiers. These settings are empirical starting
+points, not a guarantee against repetition. Set temperature 0 and penalty 1 to use the
+previous decoding settings. Thinking stays disabled. The mode currently supports only `routed_kv`;
 it is not registered as a paired communication experiment. `--review` does not add
 a third pass in FRAME mode.
 
@@ -53,6 +58,12 @@ prefill, selection probes, extraction prompt/output and synthesis prompt/output;
 embedding tokens remain separate. Payload bytes sum both stages' KV tensors and
 serialized statement/anchor metadata, and are logical accounting rather than network traffic.
 The full original cache remains resident, so referenced-KV reduction is not peak-memory reduction.
+
+During generation, sibling `.frame_facts.partial.txt` and `.frame_summary.partial.txt`
+save the latest decoded text (first 16 tokens, every 256 tokens, and completion).
+Their `.status.json` files record progress and an exact-tail repetition diagnostic;
+this does not automatically stop generation. With `--output-dir` the live path is
+printed at startup. Live outputs survive an interruption or context exhaustion.
 
 ```bash
 python -m unittest discover -s frame_workflow/tests

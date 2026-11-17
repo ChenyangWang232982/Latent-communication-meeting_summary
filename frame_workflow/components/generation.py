@@ -23,7 +23,10 @@ def run_frame(runner, transcript, prefix, protected, selected, source, *, on_gen
     started = time.perf_counter()
     blocks = context_blocks(runner.tokenizer, transcript, prefix, protected, selected)
     request = (
-        'Extract salient meeting facts as statements paired with their original source context. '
+        'Prepare consolidated notes for a meeting summary, not a turn-by-turn transcript inventory. '
+        'Extract distinct consequential facts: outcomes, responsibilities, unresolved issues and essential context. '
+        'Combine paraphrases of the same fact before writing. Preserve changes and qualifications '
+        'within a fact rather than creating another entry for every mention. '
         'Return JSON {"facts": [{"statement": "one self-contained claim", "context_refs": ["B0"]}]}. '
         'Use the [B<number>] anchors in the evidence. Reference every supplied block needed to '
         'interpret a claim: attribution, antecedents, conditions, later objections, revisions and confirmations. '
@@ -31,12 +34,14 @@ def run_frame(runner, transcript, prefix, protected, selected, source, *, on_gen
         'A speaker requesting a task is not automatically its owner. A suggestion or demonstration '
         'is not automatically an adopted decision. Distinguish agreement, tentative plans and pending approval. '
         'Merge repeated claims, retain distinct tasks, and avoid filler or incidental logistics unless consequential. '
+        'Keep each statement concise; context_refs supplies supporting context without copying it into prose. '
+        'List only blocks needed for that statement, not all available blocks. Stop after the complete facts object. '
         'Do not write a context paraphrase: context is supplied through referenced KV. '
         'Do not treat these facts as independently verified. Use the source language. No fixed fact count. '
         'Return only JSON. Available source anchors: ' + json.dumps(list(blocks)))
     stages = {}
 
-    def decode(stage, request, positions, seed, temperature, top_p):
+    def decode(stage, request, positions, seed, temperature, top_p, repetition_penalty):
         ids = suffix(runner.tokenizer, transcript, prefix, request)
         runner.progress(f'{stage}: {len(positions)} source KV positions')
         runner.torch.manual_seed(seed)
@@ -47,7 +52,7 @@ def run_frame(runner, transcript, prefix, protected, selected, source, *, on_gen
         answer, count, cap_hit, counts = generate(
             runner.model, runner.tokenizer, incoming, runner._tensor(ids), absolute_start=len(prefix),
             context_limit=runner.context_limit, temperature=temperature, top_p=top_p,
-            top_k=runner.config.top_k, repetition_penalty=runner.config.repetition_penalty,
+            top_k=runner.config.top_k, repetition_penalty=repetition_penalty,
             on_progress=lambda event: runner.progress(f'{stage}: {event["tokens"]} tokens')
                 if event.get('tokens') and (event['tokens'] % 256 == 0 or event.get('finished')) else None,
             on_snapshot=(lambda event: on_generation(dict(stage=stage, **event))) if on_generation else None)
@@ -55,13 +60,14 @@ def run_frame(runner, transcript, prefix, protected, selected, source, *, on_gen
         runner._sync()
         stages[stage] = dict(prompt_tokens=len(ids), output_tokens=count, output_cap_hit=cap_hit,
             generation_counts=counts, source_kv_positions=len(positions), source_kv_bytes=payload,
-            seconds=time.perf_counter()-started, seed=seed, temperature=temperature, top_p=top_p)
+            seconds=time.perf_counter()-started, seed=seed, temperature=temperature, top_p=top_p,
+            repetition_penalty=repetition_penalty)
         if cap_hit:
             raise RuntimeError(f'{stage}: model context exhausted before EOS')
         return answer
 
     raw = decode('frame_facts', request, selected, runner.config.seed,
-                 runner.config.temperature, runner.config.top_p)
+                 runner.config.frame_temperature, runner.config.frame_top_p, runner.config.frame_repetition_penalty)
     facts, positions, fallback = fact_context(raw, blocks, protected, selected)
     if fallback:
         runner.progress('FRAME references unavailable or malformed; keeping complete routed KV for synthesis')
@@ -77,7 +83,7 @@ def run_frame(runner, transcript, prefix, protected, selected, source, *, on_gen
         '\nFact records: ' + json.dumps(facts, ensure_ascii=False) +
         '\nSource anchor map: ' + json.dumps(reference_map, ensure_ascii=False))
     answer = decode('frame_summary', request, positions, runner.config.review_seed,
-                    runner.config.review_temperature, runner.config.review_top_p)
+                    runner.config.review_temperature, runner.config.review_top_p, runner.config.repetition_penalty)
     return answer, dict(facts=facts, raw_facts=raw, context_blocks=blocks,
         pipeline_seconds=time.perf_counter()-started,
         text_payload_bytes=len(json.dumps(facts, ensure_ascii=False).encode('utf-8'))+

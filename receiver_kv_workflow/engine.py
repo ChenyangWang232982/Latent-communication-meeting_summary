@@ -33,6 +33,9 @@ class ReceiverKVConfig:
     top_k: int = 0
     repetition_penalty: float = 1.0
     frame_context: bool = False
+    frame_temperature: float = 0.3
+    frame_top_p: float = 0.9
+    frame_repetition_penalty: float = 1.1
 
 
 class ReceiverKVRunner:
@@ -57,6 +60,12 @@ class ReceiverKVRunner:
             raise ValueError("top_p must be in (0, 1] and top_k must be non-negative")
         if not math.isfinite(config.repetition_penalty) or config.repetition_penalty < 1:
             raise ValueError("repetition_penalty must be finite and >= 1")
+        if not math.isfinite(config.frame_temperature) or config.frame_temperature < 0:
+            raise ValueError('frame_temperature must be finite and non-negative')
+        if not math.isfinite(config.frame_top_p) or not 0 < config.frame_top_p <= 1:
+            raise ValueError('frame_top_p must be in (0, 1]')
+        if not math.isfinite(config.frame_repetition_penalty) or config.frame_repetition_penalty < 1:
+            raise ValueError('frame_repetition_penalty must be finite and >= 1')
         import torch
         from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
