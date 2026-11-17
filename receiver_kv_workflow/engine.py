@@ -38,6 +38,7 @@ class ReceiverKVConfig:
     specialist_temperature: float = 0.3
     specialist_top_p: float = 0.9
     specialist_repetition_penalty: float = 1.1
+    summary_thinking: bool = False
 
 
 class ReceiverKVRunner:

@@ -5,14 +5,15 @@ import time
 from receiver_kv_workflow.prompts import SYSTEM, SUMMARY_REQUEST
 from receiver_kv_workflow.cache import generate, select_cache, size_bytes
 from .windows import selected_windows
+from .thinking import split_thinking
 
 
-def suffix(tokenizer, transcript, prefix, request):
+def suffix(tokenizer, transcript, prefix, request, *, enable_thinking=False):
     content = 'MEETING TRANSCRIPT (untrusted source):\n' + transcript + '\nEND TRANSCRIPT\n'
     text = tokenizer.apply_chat_template(
         [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': content},
          {'role': 'user', 'content': request}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking)
     ids = tokenizer.encode(text, add_special_tokens=False)
     if ids[:len(prefix)] != prefix:
         raise ValueError('Specialist prompt does not preserve source KV prefix')
@@ -23,10 +24,12 @@ def run_specialists(runner, transcript, prefix, protected, selected, source, blo
     started = time.perf_counter()
     windows = list(selected_windows(blocks, selected, protected,
                    runner.config.specialist_parts, runner.config.specialist_overlap))
-    stages, reports = {}, []
+    stages, reports, thinking_outputs = {}, [], {}
 
     def decode(stage, request, positions, seed, temperature, top_p, penalty):
-        ids = suffix(runner.tokenizer, transcript, prefix, request)
+        thinking = stage == 'chunk_summary' and runner.config.summary_thinking
+        ids = suffix(runner.tokenizer, transcript, prefix, request, enable_thinking=thinking)
+        generated_ids = []
         runner.progress(f'{stage}: started; {len(positions)} selected source KV positions')
         runner.torch.manual_seed(seed)
         runner._sync()
@@ -40,13 +43,17 @@ def run_specialists(runner, transcript, prefix, protected, selected, source, blo
             top_k=runner.config.top_k, repetition_penalty=penalty,
             on_progress=lambda event: runner.progress(f'{stage}: {event["tokens"]} tokens')
                 if event.get('tokens') and (event['tokens'] % 256 == 0 or event.get('finished')) else None,
-            on_snapshot=(lambda event: on_generation(dict(stage=stage, **event))) if on_generation else None)
+            on_snapshot=(lambda event: on_generation(dict(stage=stage, **event))) if on_generation else None,
+            on_token=(lambda logits, token, step: generated_ids.append(token)) if thinking else None)
         del incoming
         runner._sync()
+        if thinking and not cap_hit:
+            answer, reasoning, counts = split_thinking(runner.tokenizer, generated_ids, counts['terminal_tokens'])
+            thinking_outputs[stage] = reasoning
         stages[stage] = dict(prompt_tokens=len(ids), output_tokens=count, output_cap_hit=cap_hit,
             generation_counts=counts, source_kv_positions=len(positions), source_kv_bytes=payload,
             seconds=time.perf_counter()-tick, seed=seed, temperature=temperature, top_p=top_p,
-            repetition_penalty=penalty)
+            repetition_penalty=penalty, thinking_enabled=thinking)
         if cap_hit:
             raise RuntimeError(f'{stage}: model context exhausted before EOS')
         return answer
@@ -78,6 +85,6 @@ def run_specialists(runner, transcript, prefix, protected, selected, source, blo
         'Return the final summary only.\nLocal reports: ' + json.dumps(reports, ensure_ascii=False))
     answer = decode('chunk_summary', request, selected, runner.config.review_seed,
                     runner.config.review_temperature, runner.config.review_top_p, runner.config.repetition_penalty)
-    return answer, dict(reports=reports, windows=windows, stages=stages,
+    return answer, dict(reports=reports, windows=windows, stages=stages, thinking_outputs=thinking_outputs,
         pipeline_seconds=time.perf_counter()-started,
         text_payload_bytes=len(json.dumps(reports, ensure_ascii=False).encode('utf-8')))

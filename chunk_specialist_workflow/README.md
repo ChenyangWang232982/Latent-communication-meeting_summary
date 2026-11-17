@@ -47,7 +47,13 @@ python -m receiver_kv_workflow.run \
 ```
 
 `--specialist-*` controls local generation; `--review-*` controls final synthesis.
-Each local seed is `seed + window_index`. No thinking or fixed output-token/item
+Each local seed is `seed + window_index`. `--summary-thinking` optionally enables
+Qwen thinking ONLY for final synthesis, retaining the same selected KV and reports;
+local specialists stay non-thinking. Default is off for comparison. Only the answer
+after `</think>` becomes the final summary. Reasoning is saved separately in
+`.chunk_summary.thinking.txt` and `thinking_outputs` in the specialists artifact.
+Stage metrics split reasoning, delimiter, answer and terminal tokens; all generated
+tokens remain included in output totals. No fixed output-token/item
 limit is introduced; context exhaustion raises an error. `--review` does not add
 another review pass in this mode. Without `--chunk-specialists`, the original
 workflow still runs. Paired evaluation with specialist_text is not registered for

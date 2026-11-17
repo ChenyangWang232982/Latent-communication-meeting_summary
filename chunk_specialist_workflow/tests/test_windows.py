@@ -33,7 +33,7 @@ class ChunkSpecialistTest(unittest.TestCase):
             context_limit=100, progress=lambda _: None, _sync=lambda: None,
             _tensor=lambda ids: torch.tensor([ids]))
         requests, caches = [], []
-        def prompt(tokenizer, transcript, prefix, request):
+        def prompt(tokenizer, transcript, prefix, request, **kwargs):
             requests.append(request)
             return [9]
         def generate(model, tokenizer, cache, ids, **kwargs):
@@ -50,6 +50,39 @@ class ChunkSpecialistTest(unittest.TestCase):
         self.assertEqual(len(result['reports']), 2)
         self.assertLess(requests[-1].index('local report 1'), requests[-1].index('local report 2'))
         self.assertEqual(sum(x['output_tokens'] for x in result['stages'].values()), 6)
+
+    def test_thinking_only_at_synthesis_and_reasoning_excluded_from_answer(self):
+        import torch
+        from receiver_kv_workflow.engine import ReceiverKVConfig
+        from chunk_specialist_workflow.components.generation import run_specialists
+        pieces = {1: 'Reasoning', 2: '</think>', 3: 'Final answer', 4: '<eos>'}
+        tokenizer = SimpleNamespace(encode=lambda text, **kw: [2],
+            decode=lambda ids, **kw: ''.join(pieces[i] for i in ids if i not in (2,4)))
+        runner = SimpleNamespace(model=object(), tokenizer=tokenizer, torch=torch,
+            config=ReceiverKVConfig(device='cpu', summary_thinking=True), context_limit=100,
+            progress=lambda _: None, _sync=lambda: None, _tensor=lambda ids: torch.tensor([ids]))
+        flags = []
+        def prompt(*args, enable_thinking=False):
+            flags.append(enable_thinking)
+            return [9]
+        def generate(*args, **kwargs):
+            if kwargs['on_token'] is not None:
+                for index, token in enumerate([1,2,3,4]):
+                    kwargs['on_token'](None, token, index)
+                return 'Reasoning and final answer', 4, False, dict(answer_tokens=3, terminal_tokens=1)
+            return 'Local notes', 2, False, dict(answer_tokens=1, terminal_tokens=1)
+        target = 'chunk_specialist_workflow.components.generation.'
+        with patch(target+'suffix', side_effect=prompt), patch(target+'generate', side_effect=generate), \
+             patch(target+'select_cache', return_value=object()), patch(target+'size_bytes', return_value=100):
+            answer, result = run_specialists(runner, 'source', [0]*2, [0], [0,1], object(), [[1]])
+        self.assertEqual(flags, [False, True])
+        self.assertEqual(answer, 'Final answer')
+        self.assertEqual(result['thinking_outputs'], {'chunk_summary': 'Reasoning'})
+        counts = result['stages']['chunk_summary']['generation_counts']
+        self.assertEqual(counts, dict(thinking_tokens=1, delimiter_tokens=1, answer_tokens=1,
+                                     terminal_tokens=1, thinking_complete=True))
+        self.assertEqual(sum(counts[k] for k in ('thinking_tokens','delimiter_tokens','answer_tokens','terminal_tokens')),
+                         result['stages']['chunk_summary']['output_tokens'])
 
 
 if __name__ == '__main__':

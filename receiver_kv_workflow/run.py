@@ -27,6 +27,7 @@ def arguments():
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--review", action="store_true", help="Also save the routed_kv draft and review change log")
     parser.add_argument('--chunk-specialists', action='store_true', help='Independent specialists over selected KV windows')
+    parser.add_argument('--summary-thinking', action='store_true', help='Enable thinking only for final chunk_summary')
     parser.add_argument('--specialist-parts', type=int, default=8, help='Target selected-KV window size: selected tokens divided by this number')
     parser.add_argument('--specialist-overlap', type=float, default=0.25, help='Approximate overlap at complete speaker-block boundaries')
     parser.add_argument('--specialist-temperature', type=float, default=0.3)
@@ -44,6 +45,8 @@ def arguments():
     args = parser.parse_args()
     if args.chunk_specialists and args.variants != ['routed_kv']:
         parser.error('--chunk-specialists currently supports only --variants routed_kv')
+    if args.summary_thinking and not args.chunk_specialists:
+        parser.error('--summary-thinking requires --chunk-specialists')
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
     if min(args.span_tokens, args.query_batch_tokens) < 1 or args.speaker_neighbor_blocks < 0:
@@ -86,6 +89,7 @@ def main():
         seed=args.seed, review_seed=args.review_seed, review_temperature=args.review_temperature,
         review_top_p=args.review_top_p,
         chunk_specialists=args.chunk_specialists, specialist_parts=args.specialist_parts,
+        summary_thinking=args.summary_thinking,
         specialist_overlap=args.specialist_overlap,
         specialist_temperature=args.specialist_temperature, specialist_top_p=args.specialist_top_p,
         specialist_repetition_penalty=args.specialist_repetition_penalty,
@@ -111,6 +115,7 @@ def main():
                      "review": "routed_kv" in args.variants and not args.chunk_specialists,
                      "chunk_specialists": args.chunk_specialists, "save_review_details": args.review,
                      "specialist_parts": args.specialist_parts, "specialist_overlap": args.specialist_overlap,
+                     "summary_thinking": args.summary_thinking,
                      "specialist_temperature": args.specialist_temperature, "specialist_top_p": args.specialist_top_p,
                      "specialist_repetition_penalty": args.specialist_repetition_penalty,
                      "review_seed": args.review_seed if "routed_kv" in args.variants else None,
@@ -118,7 +123,7 @@ def main():
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
         "review": review_report,
-        "chunk_specialists": ({k: v for k, v in result['chunk_specialists'].items() if k not in ('reports', 'windows')}
+        "chunk_specialists": ({k: v for k, v in result['chunk_specialists'].items() if k not in ('reports', 'windows', 'thinking_outputs')}
                   if result['chunk_specialists'] else None),
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
                   "routed_kv and specialist_text use the identical selected source positions; only the specialist-to-receiver communication representation differs.",
@@ -150,6 +155,8 @@ def main():
         chunk_base = args.output.with_suffix('') if args.output else output_dir/'routed_kv'
         reports_path = chunk_base.with_name(chunk_base.name + '.specialists.json')
         reports_path.write_text(json.dumps(result['chunk_specialists'], ensure_ascii=False, indent=2), encoding='utf-8')
+        for stage, reasoning in result['chunk_specialists']['thinking_outputs'].items():
+            chunk_base.with_name(chunk_base.name + f'.{stage}.thinking.txt').write_text(reasoning, encoding='utf-8')
         log(f'Window reports and KV positions: {reports_path}')
     if args.routing_audit:
         from .routing_audit import render_audit
@@ -197,6 +204,8 @@ def main():
         for stage, values in result['chunk_specialists']['stages'].items():
             rows.append(f"{stage}: prompt={values['prompt_tokens']} | output={values['output_tokens']} | "
                         f"source KV positions={values['source_kv_positions']} | seconds={values['seconds']:.2f}")
+            if values['thinking_enabled']:
+                rows.append('  generation counts: ' + json.dumps(values['generation_counts']))
         accounting = result['variants']['routed_kv']['token_accounting']
         rows.append(f"Logical decoder token events (all stages): {sum(accounting.values())}")
     if report['review'] is not None:
