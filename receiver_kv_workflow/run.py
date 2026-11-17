@@ -26,6 +26,8 @@ def arguments():
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--review", action="store_true", help="Also save the routed_kv draft and review change log")
+    parser.add_argument('--frame-context', action='store_true',
+                        help='FRAME-inspired statements plus referenced source KV, followed by summary generation')
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
@@ -36,6 +38,8 @@ def arguments():
     parser.add_argument("--review-temperature", type=float, default=0.0, help="Review sampling temperature; 0 uses greedy decoding (default: 0)")
     parser.add_argument("--review-top-p", type=float, default=0.9, help="Review nucleus sampling threshold (default: 0.9)")
     args = parser.parse_args()
+    if args.frame_context and args.variants != ['routed_kv']:
+        parser.error('--frame-context currently supports only --variants routed_kv')
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
     if min(args.span_tokens, args.query_batch_tokens) < 1 or args.speaker_neighbor_blocks < 0:
@@ -66,11 +70,12 @@ def main():
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         seed=args.seed, review_seed=args.review_seed, review_temperature=args.review_temperature,
         review_top_p=args.review_top_p,
+        frame_context=args.frame_context,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         **config_kwargs(args),
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants),
-                        routing_audit=args.routing_audit, review="routed_kv" in args.variants)
+                        routing_audit=args.routing_audit, review="routed_kv" in args.variants and not args.frame_context)
     answers = result["answers"]
     review_report = ({k: v for k, v in result['review'].items() if k not in ('answer', 'changes')}
                      if result['review'] is not None else None)
@@ -84,12 +89,15 @@ def main():
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens,
                      "selection_strategy": "speaker",
-                     "review": "routed_kv" in args.variants, "save_review_details": args.review,
+                     "review": "routed_kv" in args.variants and not args.frame_context,
+                     "frame_context": args.frame_context, "save_review_details": args.review,
                      "review_seed": args.review_seed if "routed_kv" in args.variants else None,
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
         "review": review_report,
+        "frame": ({k: v for k, v in result['frame'].items() if k not in ('facts', 'raw_facts', 'context_blocks', 'summary_context_positions')}
+                  if result['frame'] else None),
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
                   "routed_kv and specialist_text use the identical selected source positions; only the specialist-to-receiver communication representation differs.",
                   "ROUGE-L is lexical reference overlap, not factual accuracy; no reference means N/A.",
@@ -98,6 +106,10 @@ def main():
                   "The full immutable source cache remains resident for controls and selectors; smaller receiver KV is not a claim of lower process peak memory.",
                   "Logical payload bytes are accounting, not measured network traffic."],
     }
+    if args.frame_context:
+        report['method'] = 'FRAME-inspired statements plus referenced original KV context'
+        report['notes'][1] = 'FRAME is a two-stage hybrid workflow; it is not a representation-only communication comparison.'
+        report['notes'].append('FRAME adds source block anchors before prefill; compare using the same source framing.')
     for variant, answer in answers.items():
         if variant == 'routed_kv' and result['review'] and result['review']['status'] == 'completed':
             answer = result['review']['answer']
@@ -113,6 +125,12 @@ def main():
         output_dir.mkdir(parents=True)
     metrics_dir.mkdir(parents=True)
     primary_variant = "routed_kv" if "routed_kv" in answers else next(iter(answers))
+    if result['frame']:
+        frame_base = args.output.with_suffix('') if args.output else output_dir/'routed_kv'
+        facts_path = frame_base.with_name(frame_base.name + '.facts.json')
+        facts_path.write_text(json.dumps(result['frame'], ensure_ascii=False, indent=2), encoding='utf-8')
+        frame_base.with_name(frame_base.name + '.facts.raw.txt').write_text(result['frame']['raw_facts'], encoding='utf-8')
+        log(f'Statements and source-KV references: {facts_path}')
     if args.routing_audit:
         from .routing_audit import render_audit
         audit_base = args.output.with_suffix("") if args.output else output_dir / "routing"
@@ -154,6 +172,14 @@ def main():
         counts = values['generation_counts']
         rows.append(f"  answer tokens={counts['answer_tokens']} | terminal tokens={counts['terminal_tokens']}")
     rows.extend(["", *report["notes"]])
+    if result['frame']:
+        rows.append('FRAME-inspired: statements as text, referenced source context as KV; no extra review pass.')
+        for stage, values in result['frame']['stages'].items():
+            rows.append(f"{stage}: prompt={values['prompt_tokens']} | output={values['output_tokens']} | "
+                        f"source KV positions={values['source_kv_positions']} | seconds={values['seconds']:.2f}")
+        accounting = result['variants']['routed_kv']['token_accounting']
+        rows.append(f"Logical decoder token events (both stages): {sum(accounting.values())}")
+        rows.append(f"Reference fallback: {result['frame']['reference_fallback']}")
     if report['review'] is not None:
         review = report['review']
         rows.append(f"Review: status={review['status']}")

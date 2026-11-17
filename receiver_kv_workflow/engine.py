@@ -32,6 +32,7 @@ class ReceiverKVConfig:
     top_p: float = 1.0
     top_k: int = 0
     repetition_penalty: float = 1.0
+    frame_context: bool = False
 
 
 class ReceiverKVRunner:
@@ -111,6 +112,12 @@ class ReceiverKVRunner:
         if not transcript.strip():
             raise ValueError(f"Transcript is empty: {record_id}")
         requested = tuple(dict.fromkeys(variants))
+        frame_result = None
+        if self.config.frame_context:
+            if requested != ('routed_kv',) or diagnostic_full_source or diagnostic_refill_selected:
+                raise ValueError('FRAME mode currently requires only routed_kv without cache diagnostics')
+            from frame_workflow.components.context import anchor_transcript
+            transcript = anchor_transcript(transcript)
         valid_variants = {"routed_kv", "specialist_text"}
         if not requested or any(name not in valid_variants for name in requested):
             raise ValueError("variants must be routed_kv and/or specialist_text")
@@ -265,7 +272,32 @@ class ReceiverKVRunner:
                 selected = list(range(len(prefix)))
                 emit("full_source_control", f"Diagnostic: retaining all {len(selected)} source positions")
             answers, measurements, handoffs = {}, {}, {}
-            if "routed_kv" in requested:
+            if self.config.frame_context:
+                from frame_workflow.components.generation import run_frame
+                emit('frame_facts', 'Extracting statements with source-KV references')
+                if on_variant is not None:
+                    on_variant('routed_kv', 'start')
+                answer, frame_result = run_frame(self, transcript, prefix, protected, selected, source,
+                                                on_generation=on_generation)
+                fact_stage, final_stage = (frame_result['stages'][name] for name in ('frame_facts', 'frame_summary'))
+                answers['routed_kv'] = answer
+                measurements['routed_kv'] = dict(
+                    incoming_positions=final_stage['source_kv_positions'],
+                    selected_source_positions=len(selected), incoming_cache_bytes=final_stage['source_kv_bytes'],
+                    logical_payload_bytes=fact_stage['source_kv_bytes']+final_stage['source_kv_bytes']+
+                        frame_result['text_payload_bytes'],
+                    positions_vs_full_percent=100*(final_stage['source_kv_positions']-len(prefix))/len(prefix),
+                    cache_bytes_vs_full_percent=100*(final_stage['source_kv_bytes']-source_bytes)/source_bytes,
+                    receiver_seconds=final_stage['seconds'], specialist_seconds=fact_stage['seconds'],
+                    pipeline_seconds_excluding_model_load=prefill_seconds+selection_seconds+frame_result['pipeline_seconds'],
+                    generated_tokens=final_stage['output_tokens'], output_cap_hit=final_stage['output_cap_hit'],
+                    generation_counts=final_stage['generation_counts'],
+                    token_accounting=dict(source_prefill_tokens=len(prefix), selection_probe_tokens=selection_probe_tokens,
+                        specialist_prompt_tokens=fact_stage['prompt_tokens'], specialist_handoff_tokens=fact_stage['output_tokens'],
+                        receiver_prompt_tokens=final_stage['prompt_tokens'], receiver_output_tokens=final_stage['output_tokens']))
+                if on_variant is not None:
+                    on_variant('routed_kv', 'end')
+            if "routed_kv" in requested and not self.config.frame_context:
                 emit("summary", "Generating the summary", metrics={"selectedPositions": len(selected)})
                 if on_variant is not None:
                     on_variant("routed_kv", "start")
@@ -393,7 +425,7 @@ class ReceiverKVRunner:
                 if on_variant is not None:
                     on_variant("specialist_text", "end")
             review_result = None
-            if review:
+            if review and not self.config.frame_context:
                 from .review_checks import change_log, missing_sections, split_review_response
                 draft = answers['routed_kv']
                 if not draft.strip():
@@ -435,7 +467,7 @@ class ReceiverKVRunner:
                                 'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit'],
                             }
                             self.progress(f"{record_id}: organization completed; same text as draft={organized == draft}")
-        if review:
+        if review and not self.config.frame_context:
             emit("completed", "Review complete" if review_result['status'] == 'completed' else "Review skipped; showing the draft",
                  reviewStatus=review_result['status'])
         else:
@@ -463,4 +495,5 @@ class ReceiverKVRunner:
             "seed_selected_positions": seed_selection,
             "baseline_selected_positions": baseline_positions,
             "review": review_result,
+            "frame": frame_result,
         }
