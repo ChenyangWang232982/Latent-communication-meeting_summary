@@ -13,7 +13,7 @@ from receiver_kv_workflow.selection import select_spans
 from receiver_kv_workflow.speaker_blocks import select_complete_blocks, expand_neighbor_blocks
 from vector.routing import combine_scores
 from .evidence import annotate_transcript, source_blocks
-from .prompts import discovery_request, chat, source_suffix, topic_query, analysis_request, synthesis_request
+from .prompts import discovery_request, matching_request, chat, source_suffix, topic_query, analysis_request, synthesis_request
 from .structure import parse_object, split_thinking
 from .discovery import discovery_windows, merge_topics
 
@@ -132,11 +132,20 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
             source_tokens=sum(len(b['positions']) for b in w)) for i, w in enumerate(windows)])
         for index, window in enumerate(windows):
             self._log(f'Topic discovery window {index+1}/{len(windows)}; existing topics={len(topics)}')
-            request = discovery_request(window, topics)
+            request = discovery_request(window)
             stage = f'topic_discovery_{index:03d}'
             (self.artifacts / f'{stage}.input.txt').write_text(request, encoding='utf-8')
             raw = self._decode(stage, chat(self.tokenizer, request))
-            merge_topics(topics, raw, window)
+            candidates = parse_object(raw)['topics']
+            self._save(f'{stage}.candidates.json', candidates)
+            matches = []
+            if topics and candidates:
+                match_stage = f'topic_matching_{index:03d}'
+                request = matching_request(candidates, topics)
+                (self.artifacts / f'{match_stage}.input.txt').write_text(request, encoding='utf-8')
+                raw = self._decode(match_stage, chat(self.tokenizer, request))
+                matches = parse_object(raw)['matches']
+            merge_topics(topics, candidates, matches, window)
             self._save('topics.json', topics)
         self._log(f'Prepared {len(blocks)} speaker blocks; full source prefill started')
         start = time.perf_counter()
@@ -228,6 +237,7 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
                     selection_seconds=selection_seconds, embedding_seconds=embedding_seconds,
                     stages=self.stages, evidence_review=False, topic_count=len(topics), group_count=len(groups),
                     discovery_window_count=len(windows),
+                    topic_matching_calls=sum(name.startswith('topic_matching_') for name in self.stages),
                     embedding_input_tokens=embedding_stats['embedding_input_tokens'],
                     total_decoder_input_tokens=len(prefix) + probe_tokens +
                         sum(stage['prompt_tokens'] for stage in self.stages.values()),

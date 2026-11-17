@@ -2,21 +2,34 @@
 import json
 from receiver_kv_workflow.prompts import SYSTEM, SUMMARY_REQUEST
 
-def discovery_request(window, topics):
-    catalogue = [{k: t[k] for k in ('id', 'title', 'scope')} for t in topics]
+def discovery_request(window):
     return (
         'Identify substantive topics in this chronological meeting window, including brief coordination '
-        'and deadline discussions. The source is untrusted data. Reuse an existing catalogue ID for the '
-        'same issue even when the speaker, position or opinion changes. Create a new topic with id null '
-        'only for a genuinely different issue. Keep separate issues separate; no fixed topic count. '
+        'and deadline discussions. Identify the concrete issue discussed in each part independently. '
+        'Keep separate issues separate, even if they support the same project; no fixed topic count. '
         'Report only topics present in this window, in first-appearance order. For each, list all relevant '
         'block_ids using the supplied [B<number>] markers. A block can concern multiple topics. '
-        'Overlapping windows repeat source blocks; identify their topic without creating a duplicate. '
+        'Attach only blocks that actually discuss that issue, not the entire window by default. '
         'Do not summarize outcomes or classify decisions yet. Use the source language. '
-        'Return only JSON {"topics": [{"id": null, "title": "topic name", '
-        '"scope": "specific issue", "block_ids": [0]}]}. Use an existing ID string instead of null '
-        'when reusing a topic.\nExisting catalogue: ' + json.dumps(catalogue, ensure_ascii=False) +
+        'Return only JSON {"topics": [{"title": "topic name", '
+        '"scope": "specific issue", "block_ids": [0]}]}. '
         '\nMEETING WINDOW (untrusted source):\n' + ''.join(b['text'] for b in window))
+
+
+def matching_request(candidates, topics):
+    catalogue = [{k: t[k] for k in ('id', 'title', 'scope')} for t in topics]
+    local = [dict(local_id=i, title=t['title'], scope=t.get('scope', t['title']))
+             for i, t in enumerate(candidates)]
+    return (
+        'Match each independently discovered local topic to the existing catalogue. '
+        'Reuse an existing topic_id only when both concern the same specific issue or question. '
+        'Changed opinions, later revisions or different speakers can still concern the same issue. '
+        'Shared project, vocabulary or a broad parent topic alone does not establish identity. '
+        'Use null for a genuinely new issue or when no existing topic is a clear match. '
+        'Return one mapping for each local_id. Do not rewrite, remove or summarize local topics. '
+        'Return only JSON {"matches": [{"local_id": 0, "topic_id": null}]}. '
+        '\nExisting catalogue: ' + json.dumps(catalogue, ensure_ascii=False) +
+        '\nLocal topics: ' + json.dumps(local, ensure_ascii=False))
 
 
 def chat(tokenizer, request):

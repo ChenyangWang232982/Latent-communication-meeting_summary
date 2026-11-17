@@ -1,9 +1,6 @@
 """Overlapping speaker windows and an incremental topic catalogue."""
 import math
 
-from .structure import parse_object
-
-
 def discovery_windows(blocks):
     """Target 1/8 of source tokens, with 1/4 overlap at speaker boundaries."""
     target = max(1, math.ceil(sum(len(b['positions']) for b in blocks) / 8))
@@ -24,11 +21,13 @@ def discovery_windows(blocks):
         start = next_start
 
 
-def merge_topics(catalogue, raw, window):
-    """The model chooses existing topic IDs; the program allocates new IDs."""
+def merge_topics(catalogue, candidates, matches, window):
+    """Match IDs only: local titles, scopes and evidence cannot be dropped by matching."""
     available = {b['block_id'] for b in window}
-    for item in parse_object(raw)['topics']:
-        found = next((t for t in catalogue if t['id'] == item.get('id')), None)
+    by_local = {m['local_id']: m.get('topic_id') for m in matches}
+    existing = {t['id']: t for t in catalogue}
+    for index, item in enumerate(candidates):
+        found = existing.get(by_local.get(index))
         if found is None:
             found = dict(id=f'topic_{len(catalogue):03d}', title=item['title'],
                          scope=item.get('scope', item['title']), source_block_ids=[])

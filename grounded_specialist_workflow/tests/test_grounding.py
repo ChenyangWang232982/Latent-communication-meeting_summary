@@ -18,12 +18,19 @@ class TopicWorkflowTest(unittest.TestCase):
         self.assertEqual([b['block_id'] for b in windows[1]][:2], [6, 7])
         self.assertEqual({b['block_id'] for w in windows for b in w}, set(range(64)))
         catalogue = []
-        merge_topics(catalogue, json.dumps({'topics': [dict(id=None, title='Plan', scope='Plan choice',
-            block_ids=[6, 7])]}), windows[0])
-        merge_topics(catalogue, json.dumps({'topics': [dict(id='topic_000', title='Plan revised',
-            block_ids=[6, 7, 8, 9])]}), windows[1])
+        merge_topics(catalogue, [dict(title='Plan', scope='Plan choice', block_ids=[6, 7])], [], windows[0])
+        merge_topics(catalogue, [dict(title='Plan revised', block_ids=[6, 7, 8, 9])],
+                     [dict(local_id=0, topic_id='topic_000')], windows[1])
         self.assertEqual(len(catalogue), 1)
         self.assertEqual(catalogue[0]['source_block_ids'], [6, 7, 8, 9])
+        # Matching sees only local identities and cannot drop an unmatched new issue.
+        merge_topics(catalogue, [dict(title='Plan', block_ids=[10]),
+                                 dict(title='A separate issue', block_ids=[11])],
+                     [dict(local_id=0, topic_id='topic_000')], windows[1])
+        self.assertEqual(len(catalogue), 2)
+        self.assertEqual(catalogue[0]['source_block_ids'], [6, 7, 8, 9, 10])
+        self.assertEqual(catalogue[1]['title'], 'A separate issue')
+        self.assertEqual(catalogue[1]['source_block_ids'], [11])
         # A long indivisible turn remains intact, and the next window still advances.
         oversized = [dict(block_id=i, positions=list(range(size))) for i, size in enumerate([1000, 1, 1])]
         self.assertEqual([b['block_id'] for w in discovery_windows(oversized) for b in w], [0, 1, 2])
@@ -125,9 +132,11 @@ class TopicWorkflowTest(unittest.TestCase):
             calls.append((stage, kwargs.get('positions')))
             runner.stages[stage] = {'prompt_tokens': 2, 'output_tokens': 2}
             if stage.startswith('topic_discovery_'):
-                return json.dumps({'topics': [{'id': None if stage.endswith('_000') else f'topic_{i:03d}',
-                    'title': str(i), 'scope': f'Issue {i}',
+                return json.dumps({'topics': [{'title': str(i), 'scope': f'Issue {i}',
                     'block_ids': [i % 4]} for i in range(topic_count)]})
+            if stage.startswith('topic_matching_'):
+                return json.dumps({'matches': [dict(local_id=i, topic_id=f'topic_{i:03d}')
+                                               for i in range(topic_count)]})
             if stage.startswith('specialist_'):
                 if stage == 'specialist_group_000':
                     time.sleep(.03)  # Finish later than another queued topic.
@@ -181,7 +190,11 @@ class TopicWorkflowTest(unittest.TestCase):
                                         if name.startswith('topic_discovery_')))
                     if window_count > 1:
                         prompt = (folder/'topic_discovery_001.input.txt').read_text()
+                        self.assertNotIn('topic_000', prompt)
+                        prompt = (folder/'topic_matching_001.input.txt').read_text()
                         self.assertIn('topic_000', prompt)
+                    matching_count = int(window_count > 1 and topic_count > 0)
+                    self.assertEqual(result['topic_matching_calls'], matching_count)
                     groups = json.loads((folder/'groups.json').read_text())
                     count = (topic_count + width - 1)//width if width else int(topic_count > 0)
                     self.assertEqual(len(groups), count)
@@ -191,9 +204,11 @@ class TopicWorkflowTest(unittest.TestCase):
                                            for p in routes[t['id']]['selected_positions']})
                         self.assertEqual(group['selected_positions'], expected)
                         self.assertIn(('specialist_'+group['id'], expected), calls)
-                    self.assertEqual(len(calls), window_count+count+1)
-                    self.assertEqual(result['total_decoder_input_tokens'], 17+topic_count+2*(window_count+count+1))
-                    self.assertEqual(result['total_decoder_output_tokens'], 2*(window_count+count+1))
+                    self.assertEqual(len(calls), window_count+matching_count+count+1)
+                    self.assertEqual(result['total_decoder_input_tokens'],
+                                     17+topic_count+2*(window_count+matching_count+count+1))
+                    self.assertEqual(result['total_decoder_output_tokens'],
+                                     2*(window_count+matching_count+count+1))
                     self.assertEqual(len(encoding_calls), 1)
                     self.assertEqual(result['embedding_input_tokens'], 4+topic_count)
             runner._decode = lambda *a, **k: 'invalid JSON'

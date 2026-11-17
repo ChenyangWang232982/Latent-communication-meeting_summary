@@ -3,7 +3,9 @@
 入口名称仍为 `grounded_specialist_workflow`。流程改为：
 
 ```text
-全文 + 发言块编号 → 自然语言重叠窗口 → 增量话题目录与原文坐标
+全文 + 发言块编号 → 自然语言重叠窗口 → 独立发现本块话题
+                                            ↓
+                           仅匹配候选话题与目录 ID → 目录与原文坐标
                                             ↓
                                     一次原文 KV prefill
                                             ↓
@@ -19,9 +21,12 @@
 Topic discovery reads fresh natural-language windows, each targeting 1/8 of source
 tokens with 1/4 overlap. Boundaries follow complete speaker blocks, so sizes and
 overlap are approximate; a single long turn stays intact. Overlap means there can
-be more than eight windows. Each call sees the current window and existing topic
-IDs/titles/scopes. The model reuses IDs for the same issue, including changed opinions,
-and proposes new topics when needed. Matching is model-based, with no similarity threshold.
+be more than eight windows. Discovery sees ONLY the current window, without the
+existing catalogue. A separate matching call then receives candidate titles/scopes
+and the existing catalogue, returning local-index-to-topic-ID mappings only. The
+program preserves all candidate topics and their original coordinates; unmatched
+candidates become new topics. The first nonempty window needs no matching call.
+Changed opinions can reuse the same topic. Matching is model-based, with no similarity threshold.
 Topic block coordinates accumulate and deduplicate across windows; topics are ordered
 by earliest mapped source block. This mapping is not an independent evidence verification.
 
@@ -104,6 +109,8 @@ changes. Worker threads may not yield GPU speedup; measure wall time.
 - `topics.json`: accumulated topic catalogue including deduplicated source block IDs.
 - `discovery_windows.json`: window block IDs and source-token sizes.
 - `topic_discovery_*.input.txt`, `topic_discovery_*.txt`: window prompts and raw responses.
+- `topic_discovery_*.candidates.json`: independently identified local topics and coordinates.
+- `topic_matching_*.input.txt`, `topic_matching_*.txt`: catalogue matching prompts and ID mappings.
 - `source_blocks.json`, `routing.json`: source text/coordinates and per-topic selections.
 - `groups.json`: group membership and deduplicated source positions/block IDs.
 - `specialist_group_*.input.txt`, `specialist_group_*.txt`, `report_group_*.json`: prompts and reports.
@@ -113,10 +120,12 @@ changes. Worker threads may not yield GPU speedup; measure wall time.
 - `summary.input.txt`, `summary.txt`, `*.partial.txt`: prompts/results and live output.
 - `config.json`, `stages.json`, `metrics.json`, `status.json`: settings and accounting.
 
-There are W+G+1 generation calls: W sequential discovery windows, G specialists,
-and final synthesis. All N selectors still run. Discovery-window prompts count the
-source window, overlap, catalogue and instructions on every call; generated catalogues
-also count in output totals. Full-source KV prefill is counted separately once.
+There are W+M+G+1 generation calls: W sequential discovery windows, M matching calls,
+G specialists and final synthesis. Matching is skipped when there is no existing
+catalogue or no local candidate. All N selectors still run. Discovery prompts count
+the source window, overlap and instructions; matching prompts count catalogue and
+local titles/scopes. All generated responses count in output totals. Metrics include
+`topic_matching_calls`. Full-source KV prefill is counted separately once.
 All are included in decoder token totals; embedding tokens are separate. Concurrent
 stage times overlap; use pipeline wall time, excluding model loading. Source block
 IDs in routing/group artifacts indicate supplied context, not verified claim-level citations.
