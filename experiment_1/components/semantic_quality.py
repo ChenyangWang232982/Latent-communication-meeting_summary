@@ -19,15 +19,23 @@ def add_bertscore(samples, model_name, layers, device):
     limit = min(limits)
     if getattr(config, "model_type", "") in ("roberta", "longformer"):
         limit = min(limit, config.max_position_embeddings - 2)
+    # BERTScore 0.3.13 strips input and adds a prefix space for these tokenizers.
+    # Check that same representation so its later truncation cannot drop content.
+    encoding_options = {"add_prefix_space": True} if getattr(config, "model_type", "") in ("roberta", "longformer", "gpt2") else {}
     pairs = [(sample, name) for sample in samples for name in VARIANTS]
     for sample, name in pairs:
         for label, text in (("prediction", sample["result"]["answers"][name]), ("reference", sample["reference"])):
-            count = len(tokenizer(text, add_special_tokens=True, truncation=False)["input_ids"])
+            count = len(tokenizer(text.strip(), add_special_tokens=True, truncation=False,
+                                  **encoding_options)["input_ids"])
             if count > limit:
                 raise ValueError(f"BERTScore {sample['id']} {name} {label}: {count}>{limit} encoder tokens. "
                                  "No text was truncated; select a longer-context encoder for ALL samples.")
     scorer = BERTScorer(model_type=model_name, num_layers=layers, device=device,
                         batch_size=1, idf=False, rescale_with_baseline=False, use_fast_tokenizer=False)
+    # BERTScorer creates its own tokenizer. Some checkpoints leave its maximum
+    # length at HF's ~1e30 sentinel, which overflows the Rust tokenizer backend
+    # when BERTScore passes it as max_length. Use the checked finite model limit.
+    scorer._tokenizer.model_max_length = limit
     predictions = [s["result"]["answers"][v] for s, v in pairs]
     references = [s["reference"] for s, v in pairs]
     precision, recall, f1 = scorer.score(predictions, references, batch_size=1)
