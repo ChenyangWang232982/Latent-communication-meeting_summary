@@ -6,15 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from grounded_specialist_workflow.components.evidence import retrieve
-from grounded_specialist_workflow.components.structure import parse_claims, parse_reviews, ROLES
+from grounded_specialist_workflow.components.structure import parse_topics
 
 
-def item():
-    return dict(topic='plan', content='Review the plan', owners=[], deadline=None, status='requested')
-
-
-class GroundingTest(unittest.TestCase):
+class TopicWorkflowTest(unittest.TestCase):
     def test_decode_generator_is_independent_of_global_rng(self):
         import torch
         from receiver_kv_workflow.cache import generate_from_prefill
@@ -29,7 +24,7 @@ class GroundingTest(unittest.TestCase):
         with patch('receiver_kv_workflow.cache.forward_tokens', return_value=output):
             self.assertEqual(run(False), run(True))
 
-    def test_role_cache_mutation_does_not_modify_source_or_other_role(self):
+    def test_topic_cache_mutation_does_not_modify_source_or_other_topic(self):
         import torch
         from transformers.cache_utils import DynamicCache
         from receiver_kv_workflow.cache import select_cache, pairs
@@ -41,118 +36,95 @@ class GroundingTest(unittest.TestCase):
         self.assertTrue(torch.equal(pairs(source)[0][0], tensor))
         self.assertTrue(torch.equal(pairs(second)[0][0], tensor[:, :, [0, 3, 4]]))
 
-    def test_recency_only_reranks_semantic_candidates_and_keeps_anchor(self):
-        # Last block is unrelated; weak time preference must not introduce it.
-        scores = [.95, .1, .90, .89, -.5]
-        base = retrieve(scores, candidate_pool=3, top_k=2, neighbors=0, recency_weight=0)
-        late = retrieve(scores, candidate_pool=3, top_k=2, neighbors=0, recency_weight=.1)
-        self.assertEqual(base['seed_block_ids'], [0, 2])
-        self.assertEqual(late['seed_block_ids'], [0, 3])
-        self.assertNotIn(4, late['evidence_block_ids'])
-        expanded = retrieve(scores, candidate_pool=3, top_k=3, neighbors=1, recency_weight=0)
-        self.assertEqual(expanded['evidence_block_ids'], [0, 1, 2, 3, 4])
+    def test_topics_are_dynamic_and_block_markers_preserve_speaker_grouping(self):
+        from grounded_specialist_workflow.components.evidence import annotate_transcript
+        from receiver_kv_workflow.speaker_blocks import speaker_ranges
+        topics = parse_topics(json.dumps({'topics': [{'title': f'Issue {i}'} for i in range(7)]}))
+        self.assertEqual(len(topics), 7)
+        self.assertEqual(topics[-1]['id'], 'topic_006')
+        source = 'Alice: Hello.\nAlice: More.\nBob: Later.\n'
+        annotated = annotate_transcript(source)
+        self.assertEqual(len(speaker_ranges(annotated)), 2)
+        self.assertEqual(annotated.replace('[B0]\n', '').replace('[B1]\n', ''), source)
 
-    def test_claim_ids_and_evidence_citations(self):
-        claims = parse_claims(json.dumps({'items': [item(), item()]}), 'actions')
-        self.assertEqual([c['id'] for c in claims], ['actions:0', 'actions:1'])
-        retrievals = {c['id']: {'evidence_block_ids': [1, 4]} for c in claims}
-        rows = [dict(c, verdict='supported', reason='An explicit request', evidence_block_ids=[4]) for c in claims]
-        self.assertEqual(len(parse_reviews(json.dumps({'items': rows}), claims, retrievals)), 2)
-        rows[0]['evidence_block_ids'] = [8]
-        rows[0]['content'] = 'An invented corrected assertion'
-        parsed = parse_reviews(json.dumps({'items': rows}), claims, retrievals)
-        self.assertEqual(parsed[0]['verdict'], 'uncertain')
-        self.assertEqual(parsed[0]['content'], claims[0]['content'])
-        self.assertEqual(parsed[0]['evidence_block_ids'], [])
-        self.assertEqual(parsed[0]['invalid_citations'], [8])
-        self.assertEqual(parsed[0]['reported_review'], rows[0])
-        self.assertEqual(parsed[1]['verdict'], 'supported')
-        with self.assertRaisesRegex(ValueError, 'every input claim'):
-            parse_reviews('{"items": []}', claims, retrievals)
-
-    def test_citations_use_actual_shared_packet_and_normalize_string_ids(self):
-        claims = parse_claims(json.dumps({'items': [item(), item()]}), 'actions')
-        retrievals = {'actions:0': {'evidence_block_ids': [10]},
-                      'actions:1': {'evidence_block_ids': [20]}}
-        rows = [dict(c, verdict='revised', reason='A later statement updates this issue',
-                     evidence_block_ids=['20', 20]) for c in claims]
-        parsed = parse_reviews(json.dumps({'items': rows}), claims, retrievals)
-        self.assertEqual(parsed[0]['evidence_block_ids'], [20])
-        self.assertNotIn('citation_warnings', parsed[0])
-        # A global source ID not shown in this packet still cannot support a claim.
-        rows[0]['evidence_block_ids'] = [10, 99]
-        parsed = parse_reviews(json.dumps({'items': rows}), claims, retrievals)
-        self.assertEqual(parsed[0]['verdict'], 'uncertain')
-        rows[0]['evidence_block_ids'] = [True]
-        self.assertEqual(parse_reviews(json.dumps({'items': rows}), claims, retrievals)[0]['verdict'], 'uncertain')
-
-    def test_pipeline_independent_routes_full_source_retrieval_and_failure_audit(self):
+    def test_dynamic_topic_queue_chronological_kv_and_ordered_synthesis(self):
         import torch
+        import time
         from receiver_kv_workflow.engine import ReceiverKVConfig
-        from grounded_specialist_workflow.components.pipeline import GroundingConfig, GroundedSpecialistRunner
+        from grounded_specialist_workflow.components.pipeline import SpecialistConfig, GroundedSpecialistRunner
         runner = GroundedSpecialistRunner.__new__(GroundedSpecialistRunner)
-        runner.config = ReceiverKVConfig(device='cpu', vector_routing=True, role_budget_ratio=.25,
+        runner.config = ReceiverKVConfig(device='cpu', vector_routing=True, role_budget_ratio=.5,
                                          vector_weight=0, speaker_neighbor_blocks=0)
-        runner.grounding = GroundingConfig(specialist_workers=2, evidence_top_k=1,
-                                           evidence_candidate_pool=2, evidence_neighbors=0)
+        runner.specialists = SpecialistConfig(specialist_workers=2)
         runner.torch, runner.device, runner.context_limit = torch, torch.device('cpu'), 1000
         runner.progress = lambda _: None
         runner._log_lock = threading.Lock()
         runner._metrics_lock = threading.Lock()
-        runner.tokenizer = SimpleNamespace(encode=lambda text, **k: [list(ROLES).index(
-            next(role for role in ROLES if text == requests[role]))])
-        from grounded_specialist_workflow.components.prompts import ROLE_REQUESTS
-        requests = ROLE_REQUESTS
+        runner.tokenizer = SimpleNamespace(encode=lambda text, **k: [int(text)])
         blocks = [dict(block_id=i, positions=list(range(1+4*i, 5+4*i)), relative_position=i/3,
                        text=f'Speaker {i}: text', speaker=str(i)) for i in range(4)]
-        calls = []
+        calls, encoding_calls = [], []
         def encode(texts):
-            # Query 0 deliberately retrieves block 3, absent from context role KV.
-            if texts[0].startswith('Instruct:'):
-                return torch.eye(4)[[3, 1, 2, 3]], {'embedding_input_tokens': 4}
-            return torch.eye(4), {'embedding_input_tokens': 4}
+            encoding_calls.append(texts)
+            return torch.eye(4).repeat((len(texts)+3)//4, 1)[:len(texts)], {'embedding_input_tokens': len(texts)}
         runner.semantic_router = SimpleNamespace(encode=encode)
         def scores(model, source, query, **kwargs):
             values = [0.0] * 17
-            for i in blocks[query.item()]['positions']:
-                values[i] = 1.0
+            for block_id in (query.item() % 4, (query.item()+2) % 4):
+                for i in blocks[block_id]['positions']:
+                    values[i] = 1.0
             return values
         def decode(stage, ids, **kwargs):
             calls.append((stage, kwargs.get('positions')))
             runner.stages[stage] = {'prompt_tokens': 2, 'output_tokens': 2}
+            if stage == 'topic_discovery':
+                return json.dumps({'topics': [{'title': str(i), 'scope': f'Issue {i}'} for i in range(topic_count)]})
             if stage.startswith('specialist_'):
-                return json.dumps({'items': [item()]})
-            if stage.startswith('grounding_'):
-                role = stage[len('grounding_'):]
-                i = ROLES.index(role)
-                return json.dumps({'items': [dict(item(), id=role+':0', category=role,
-                    verdict='supported', reason='Evidence supports the request', evidence_block_ids=[3 if i == 0 else i])]})
+                if stage == 'specialist_topic_000':
+                    time.sleep(.03)  # Finish later than another queued topic.
+                return json.dumps({'discussion': ['Initial proposal then deferral'], 'decisions': [],
+                                   'actions': [], 'open_issues': ['Pending'], 'final_status': 'deferred'})
             return 'Final summary'
         runner._decode = decode
         runner.model = object()
         target = 'grounded_specialist_workflow.components.pipeline.'
         with tempfile.TemporaryDirectory() as temp, \
+             patch(target+'annotate_transcript', side_effect=lambda text: text), \
              patch(target+'prompt_parts', return_value=(list(range(17)), [], [0])), \
-             patch(target+'extraction_suffix', return_value=[1]), \
+             patch(target+'source_suffix', return_value=[1]), \
              patch(target+'source_blocks', return_value=blocks), \
+             patch(target+'topic_query', side_effect=lambda topic: topic['title']), \
              patch(target+'chat', return_value=[1]), \
              patch('receiver_kv_workflow.cache.forward_tokens', return_value=SimpleNamespace(past_key_values=object())), \
              patch('receiver_kv_workflow.cache.size_bytes', return_value=100), \
              patch('receiver_kv_workflow.scoring.query_scores', side_effect=scores):
-            result = runner.run('meeting', 'transcript', artifact_dir=Path(temp)/'success')
-            self.assertEqual(result['summary'], 'Final summary')
-            routes = json.loads((Path(temp)/'success/routing.json').read_text())
-            for i, role in enumerate(ROLES):
-                self.assertEqual(routes[role]['selected_positions'], [0]+blocks[i]['positions'])
-            retrievals = json.loads((Path(temp)/'success/retrieval.json').read_text())
-            self.assertEqual(retrievals['context:0']['evidence_block_ids'], [3])
-            self.assertEqual(result['extracted_claims'], 4)
-            self.assertEqual(len(calls), 9)  # four specialists, four checks, one synthesis
+            for topic_count in (0, 3, 5):
+                with self.subTest(topics=topic_count):
+                    calls.clear()
+                    encoding_calls.clear()
+                    folder = Path(temp)/str(topic_count)
+                    result = runner.run('meeting', 'transcript', artifact_dir=folder)
+                    self.assertEqual(result['summary'], 'Final summary')
+                    self.assertEqual(calls[0][0], 'topic_discovery')
+                    self.assertEqual(calls[0][1], list(range(17)))
+                    routes = json.loads((folder/'routing.json').read_text())
+                    for i in range(topic_count):
+                        expected = sorted([0]+blocks[i%4]['positions']+blocks[(i+2)%4]['positions'])
+                        self.assertEqual(routes[f'topic_{i:03d}']['selected_positions'], expected)
+                    merged = json.loads((folder/'topic_reports.json').read_text())
+                    self.assertEqual([c['topic_id'] for c in merged], [f'topic_{i:03d}' for i in range(topic_count)])
+                    self.assertFalse((folder/'retrieval.json').exists())
+                    self.assertFalse(result['evidence_review'])
+                    self.assertEqual(result['topic_count'], topic_count)
+                    self.assertEqual(len(calls), topic_count+2)
+                    self.assertEqual(result['total_decoder_input_tokens'], 21+3*topic_count)
+                    self.assertEqual(result['total_decoder_output_tokens'], 2*(topic_count+2))
+                    self.assertEqual(len(encoding_calls), 1)
+                    self.assertEqual(result['embedding_input_tokens'], 4+topic_count)
             runner._decode = lambda *a, **k: 'invalid JSON'
             with self.assertRaises(ValueError):
                 runner.run('meeting', 'transcript', artifact_dir=Path(temp)/'failure')
-            status = json.loads((Path(temp)/'failure/status.json').read_text())
-            self.assertEqual(status['status'], 'failed')
+            self.assertEqual(json.loads((Path(temp)/'failure/status.json').read_text())['status'], 'failed')
 
 
 if __name__ == '__main__':

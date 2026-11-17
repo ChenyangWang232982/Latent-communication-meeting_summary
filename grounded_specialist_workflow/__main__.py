@@ -11,15 +11,11 @@ def main():
     parser.add_argument('--model', default='Qwen/Qwen3-8B')
     parser.add_argument('--embedding-model', default='models/Qwen3-Embedding-0.6B')
     parser.add_argument('--device', default='cuda')
-    parser.add_argument('--role-budget-ratio', type=float, default=0.25)
+    parser.add_argument('--topic-budget-ratio', type=float, default=0.25)
     parser.add_argument('--speaker-neighbor-blocks', type=int, default=1)
     parser.add_argument('--vector-weight', type=float, default=0.3)
     parser.add_argument('--specialist-workers', type=int, default=1,
-                        help='Concurrent specialist decodes sharing one model, each with independent KV/RNG (1-4)')
-    parser.add_argument('--evidence-top-k', type=int, default=4)
-    parser.add_argument('--evidence-candidate-pool', type=int, default=12)
-    parser.add_argument('--evidence-neighbors', type=int, default=1)
-    parser.add_argument('--evidence-recency-weight', type=float, default=0.0)
+                        help='Concurrent topic tasks sharing one model; independent KV/RNG per task')
     parser.add_argument('--routing-recency-weight', type=float, default=0.0)
     parser.add_argument('--seed', type=int, default=12)
     parser.add_argument('--temperature', type=float, default=0.7)
@@ -28,10 +24,9 @@ def main():
     parser.add_argument('--repetition-penalty', type=float, default=1.1)
     args = parser.parse_args()
     from receiver_kv_workflow.engine import ReceiverKVConfig
-    from .components.pipeline import GroundedSpecialistRunner, GroundingConfig
-    grounding = GroundingConfig(args.specialist_workers, args.evidence_top_k, args.evidence_candidate_pool,
-                                args.evidence_neighbors, args.evidence_recency_weight, args.routing_recency_weight)
-    config = ReceiverKVConfig(model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
+    from .components.pipeline import GroundedSpecialistRunner, SpecialistConfig
+    specialists = SpecialistConfig(args.specialist_workers, args.routing_recency_weight)
+    config = ReceiverKVConfig(model=args.model, device=args.device, role_budget_ratio=args.topic_budget_ratio,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks, vector_routing=True,
         embedding_model=args.embedding_model, vector_weight=args.vector_weight, seed=args.seed,
         temperature=args.temperature, top_p=args.top_p,
@@ -39,7 +34,7 @@ def main():
     transcript = args.transcript.read_text(encoding='utf-8-sig')
     def log(message):
         print(f'[{datetime.now():%H:%M:%S}] {message}', flush=True)
-    runner = GroundedSpecialistRunner(config, grounding, progress=log)
+    runner = GroundedSpecialistRunner(config, specialists, progress=log)
     stamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')
     artifacts = args.output.parent / (args.output.stem + '.artifacts') / stamp
     log(f'Artifacts: {artifacts}')

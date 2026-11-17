@@ -338,16 +338,15 @@ For implementation details, see [receiver_kv_workflow/README.md](receiver_kv_wor
 
 See [meeting_stream/README.md](meeting_stream/README.md) for the WebSocket service and SSH port forwarding.
 
-## Independent specialists with evidence retrieval / 独立专家与证据检索
+## Topic specialists / 动态话题专家
 
 The optional [grounded_specialist_workflow](grounded_specialist_workflow/README.md)
-routes separate source KV selections to four specialists, retrieves full-source
-evidence for each structured claim, checks the evidence in meeting order, and
-synthesizes the final summary. It supports concurrent specialist tasks and optional
+discovers topics from full-source KV, routes topic-specific KV to specialist tasks,
+and synthesizes their structured text. It supports concurrent topic tasks and optional
 position weighting. Use `python -m grounded_specialist_workflow --help`.
 
-该独立实验入口支持各类别 KV、全文证据检索与可选时间顺序加权；检索阶段复用全文块向量。
-specialist 接收 KV，核查和最终汇总使用文本，因此属于混合通信工作流。原有实验入口可用于对照。
+该入口先遍历全文发现话题，再为每个话题选择 KV，按原文顺序传给 specialist。
+话题数量由模型确定，并发数单独设置；最终汇总直接接收结构化报告，没有中间核查。
 
 ## Optional semantic block routing / 可选向量辅助块选择
 

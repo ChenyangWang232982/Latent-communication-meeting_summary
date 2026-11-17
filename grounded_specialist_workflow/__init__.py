@@ -1,1 +1,1 @@
-"""Independent role KV routing with full-source evidence retrieval."""
+"""Dynamic topic KV routing with structured specialist synthesis."""

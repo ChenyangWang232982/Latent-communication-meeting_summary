@@ -1,117 +1,92 @@
-# Grounded specialist workflow / 分类别 KV 与证据检索工作流
+# Topic specialist workflow / 动态话题工作流
 
-This experimental workflow has its own CLI. The existing `receiver_kv_workflow`
-and Experiment 1 remain the comparison baseline. This is a workflow change, not
-a representation-only intervention, and is not an external AI evaluation service.
+入口名称仍为 `grounded_specialist_workflow`。流程改为：
 
-## 流程 / Flow
+```text
+全文 + 发言块编号 → 一次原文 KV prefill → 全文话题发现
+                                            ↓
+                         每话题 selector：注意力 + 语义匹配
+                                            ↓
+                      独立 KV（多个相关片段按原文顺序排列）
+                                            ↓
+                     固定并发数的 specialist 队列 → 结构化报告
+                                            ↓
+                                    最终摘要 agent
+```
 
-1. 全文一次 prefill，建立不可变原文 KV；按连续发言人分块。
-2. 全文发言块只向量化一次，复用 Qwen3-Embedding。
-3. context、decisions、actions、open_issues 各自查询注意力、各自语义排序、各自预算和邻居扩张。
-   coordination 查询并入 actions。角色之间允许选中同一块，不取全角色并集后统一发送。
-4. 各 specialist 从原文 KV 提取独立可写副本，输出结构化条目。没有固定条目数量。
-5. 每条结论检索**全部原文块**，加入前后邻居并去重，按原会议顺序呈现证据。
-6. 按类别合并核查调用，每条都有独立检索结果、判定、理由和证据块 ID。
-7. 最后一个 agent 对结构化结果去重、归位，生成四章节摘要。
+Topic discovery reads the complete source KV and returns topic titles/scopes in
+first-appearance order. Each topic becomes a selector query, not a fixed action or
+decision role. Topic and source-block embeddings are computed in one encoder call;
+source vectors are reused. Attention and topic similarity rank complete speaker
+blocks; neighbor expansion follows. Topics may share blocks. All selected positions
+retain original order and absolute positions within the annotated source prompt.
 
-Each specialist receives selected **source KV**, with original absolute positions.
-It does not receive other specialists' generated KV. Cached hidden representations
-were computed with preceding source context, so separate selected positions do not
-imply strictly isolated knowledge. Grounding receives **verbatim retrieved text +
-structured claims**; synthesis receives **structured checked text**. This is a
-hybrid communication workflow. Model checks remain fallible, not factuality scores.
+`[B0]`, `[B1]`, ... markers are added after speaker headers before prefill, so the
+model can identify block order. Original words remain intact. This changes prompt
+tokens relative to the baseline and must be accounted for in comparisons.
 
-## Run / 使用
+No fixed topic count. The discovery model determines topic granularity and can
+still miss or split topics; there is no recursive topic creation or review stage.
+Each specialist reports discussion, decisions, actions, open issues and final
+status for ONE topic. Reports are held in memory and saved, then merged in discovery
+order regardless of completion order. Final synthesis receives structured text.
+This is a hybrid workflow, not KV-only communication or independently verified output.
 
-Use the existing `latent-agents` environment and downloaded Qwen3 embedding model.
-No additional dependencies or API keys. Input requires line-start speaker labels,
-as in `Alice: ...` or `Alice  01:23` (same parser as the baseline).
+## 使用 / Run
 
 ```bash
 conda activate latent-agents
 python -m grounded_specialist_workflow \
   --transcript input/meeting1.txt \
-  --output output/grounded_specialists/meeting1.txt \
+  --output output/topic_specialists/meeting1.txt \
   --model Qwen/Qwen3-8B \
   --embedding-model models/Qwen3-Embedding-0.6B \
   --device cuda \
-  --role-budget-ratio 0.25 \
+  --topic-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
   --specialist-workers 2 \
-  --evidence-top-k 4 \
-  --evidence-candidate-pool 12 \
-  --evidence-neighbors 1 \
-  --evidence-recency-weight 0.1 \
-  --routing-recency-weight 0 \
-  --seed 12
+  --seed 12 \
+  --temperature 0.7 \
+  --top-p 0.8 \
+  --top-k 20 \
+  --repetition-penalty 1.1
 ```
 
-`0.1` is a trial value, not an established optimum. First compare it with `0` on
-the same meeting and settings. Default time weights are both zero. Decoding defaults
-are temperature 0.7, top_p 0.8, top_k 20, generated-only repetition_penalty 1.1;
-all are configurable. Thinking is disabled. No extra output length or item-count
-cap: EOS or the loaded model's context boundary ends generation.
+- `--topic-budget-ratio`: initial positions per topic; neighbor expansion can exceed it.
+  Reuses the baseline config's internal `role_budget_ratio` field. The old CLI
+  `--role-budget-ratio` has been replaced in this entry point only.
+- `--specialist-workers`: parallel topic tasks, not the number of topics. One shared
+  model, independent writable KV and RNG per task; more workers need more memory.
+- `--routing-recency-weight`: optional initial ranking position bias, default 0.
+  Later statements do not automatically override earlier decisions.
+- Generation uses default model precision and no thinking. No fixed output-item
+  or token cap; EOS/model context ends generation. Oversize context raises an error.
 
-Model precision follows the existing loader: CUDA BF16 when supported, otherwise
-CUDA FP16, or CPU FP32. The output head uses the same loaded model precision.
+Selectors execute before parallel generation because attention scoring temporarily
+changes the model backend. This keeps the shared model safe from concurrent backend
+changes. Worker threads may not yield GPU speedup; measure wall time.
 
-## Position weighting / 位置加权
+## 输出 / Outputs
 
-Embeddings themselves are unchanged. Each block has a relative **block order**
-in [0,1], not elapsed meeting time. Evidence retrieval first selects the semantic
-candidate pool, always retains the best semantic anchor, then ranks the remaining
-candidates by `cosine + evidence_recency_weight * relative_position`. Neighbors
-are added afterwards. Final evidence is sorted chronologically, not by relevance.
-Time weighting cannot introduce blocks outside the candidate pool (except their
-explicit neighbors). It does not establish entailment or identify final decisions.
-There is no claim of exhaustive recall: top-k retrieval can miss later reversals.
+`--output` is the final summary. `<stem>.artifacts/<timestamp>/` contains:
 
-`--routing-recency-weight` independently adds a position preference to the initial
-role block ranking; default 0 because a blanket late-meeting preference can remove
-important early context. Vary this separately from evidence weighting.
+- `topics.json`, `topic_discovery.txt`: discovered topics and raw discovery output.
+- `source_blocks.json`, `routing.json`: source text/coordinates and per-topic selections.
+- `specialist_topic_*.txt`, `report_topic_*.json`: raw/structured topic analyses.
+- `topic_reports.json`: all topic reports in discovery order, ready for synthesis.
+- `summary.input.txt`, `summary.txt`, `*.partial.txt`: prompts/results and live output.
+- `config.json`, `stages.json`, `metrics.json`, `status.json`: settings and accounting.
 
-## Execution and outputs / 执行与输出
-
-`--specialist-workers 1..4` controls concurrent tasks sharing one model. Each has
-its own KV and seeded random generator. Default 1 is the lower-memory option;
-2 or 4 enables concurrency. GPU kernels can still serialize; speedup is not
-guaranteed. More workers require more live KV memory. Selectors run sequentially
-before specialist execution because they temporarily change the attention backend.
-
-`--output` contains the final summary. Sibling `<stem>.artifacts/<UTC timestamp>/`
-contains configuration, source blocks, per-role positions/scores, raw specialist
-outputs, structured claims, retrieved candidates and chronological evidence,
-grounding prompts/results, summary input, stage metrics and status. Partial decoded
-text is saved during long generations. Block IDs are zero-based and stable within
-the run. Treat artifacts as containing the full original meeting text.
-
-Each grounding result accounts for its input claim with a verdict:
-supported, revised, uncertain, or unsupported. Uncertain claims are retained with
-qualifications; clearly unsupported claims stay in the audit but are excluded from
-the final synthesis input. This is a model judgment, not an exact quote filter.
-JSON shape and claim IDs are checked to prevent silent data loss. Citations may
-use any relevant block in the category's shared grounding packet; per-claim
-retrieval hits are hints, not exclusive citation lists. Decimal string IDs are
-normalized. Invalid or missing required citations retain the original candidate
-as uncertain, with citation warnings and the reported review preserved in audit;
-an invalid review cannot revise or delete that candidate. Other invalid transport
-or context exhaustion fails explicitly with raw output saved.
-No automatic retries, fabricated fallback or silent truncation. Very large evidence
-packets may exceed context; reduce retrieval pool usage/top-k/neighbors or use a
-compatible longer-context model. Reducing retrieval changes evidence coverage.
-
-Metrics count every decoder prompt/output event, shared prefill/probes once, and
-encoder tokens separately. Grounding text is encoded again and counts as decoder
-input. Concurrent stage durations overlap; pipeline wall time is the end-to-end
-measure. Model loading is excluded. No process peak-memory measurement is claimed.
-
-## Validation
+There are N+2 generation calls for N topics: discovery, N specialists, synthesis.
+All are included in decoder token totals; embedding tokens are separate. Concurrent
+stage times overlap; use pipeline wall time, excluding model loading. Source block
+IDs in reports indicate supplied context, not verified claim-level citations.
+Only basic JSON parsing and model-context checks remain; no content verdict filter.
 
 ```bash
 python -m unittest discover -s grounded_specialist_workflow/tests
 ```
 
-Tests cover independent role routes, full-source retrieval beyond selected KV,
-recency reranking, neighbor deduplication, claim/citation integrity and failure
-audits. Real GPU generation and quality require running the command above.
+Tests cover variable topic counts, ordered KV selections/reports, cache and RNG
+isolation, block markers, accounting and failure audit. Actual GPU quality requires
+running the example command. Existing baseline/Experiment 1 entry points are separate.
