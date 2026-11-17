@@ -44,7 +44,6 @@ python -m grounded_specialist_workflow \
   --evidence-neighbors 1 \
   --evidence-recency-weight 0.1 \
   --routing-recency-weight 0 \
-  --fp32-lm-head \
   --seed 12
 ```
 
@@ -53,6 +52,9 @@ the same meeting and settings. Default time weights are both zero. Decoding defa
 are temperature 0.7, top_p 0.8, top_k 20, generated-only repetition_penalty 1.1;
 all are configurable. Thinking is disabled. No extra output length or item-count
 cap: EOS or the loaded model's context boundary ends generation.
+
+Model precision follows the existing loader: CUDA BF16 when supported, otherwise
+CUDA FP16, or CPU FP32. The output head uses the same loaded model precision.
 
 ## Position weighting / 位置加权
 

@@ -22,8 +22,6 @@ def add_workflow_arguments(parser):
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--span-tokens", type=int, default=32)
     parser.add_argument("--query-batch-tokens", type=int, default=8)
-    parser.add_argument("--fp32-lm-head", action="store_true",
-                        help="Numerical control: compute only the vocabulary output projection in FP32")
     parser.add_argument("--temperature", type=float, default=0.0, help="0 retains greedy decoding; Qwen3 non-thinking sampling control: 0.7")
     parser.add_argument("--top-p", type=float, default=1.0, help="Shared generation nucleus threshold; sampling control: 0.8")
     parser.add_argument("--top-k", type=int, default=0, help="0 disables top-k filtering; sampling control: 20")
@@ -56,7 +54,6 @@ def model_config(args):
         role_budget_ratio=args.role_budget_ratio, speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         vector_routing=args.vector_routing, embedding_model=args.embedding_model, vector_weight=args.vector_weight,
-        fp32_lm_head=getattr(args, "fp32_lm_head", False),
         temperature=getattr(args, "temperature", 0.0), top_p=getattr(args, "top_p", 1.0),
         top_k=getattr(args, "top_k", 0),
         repetition_penalty=getattr(args, "repetition_penalty", 1.0))
