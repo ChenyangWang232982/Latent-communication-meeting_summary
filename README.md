@@ -340,12 +340,13 @@ See [meeting_stream/README.md](meeting_stream/README.md) for the WebSocket servi
 
 ## Optional semantic block routing / 可选向量辅助块选择
 
-Optional FRAME-inspired mode: add `--frame-context` to `receiver_kv_workflow.run`
-with only `--variants routed_kv`. It extracts statements with source block references,
-then generates the summary using those statements and their original KV context.
-See [frame_workflow/README.md](frame_workflow/README.md) for the design, artifacts and accounting.
-可选 FRAME 适配将两次生成改为“陈述与原文坐标 → 陈述＋引用 KV → 摘要”，
-使用 `--frame-context` 启用；不启用时保留原工作流。
+Optional selected-KV window specialists: add `--chunk-specialists` with only
+`--variants routed_kv`. Existing selection and vector assistance run unchanged;
+independent agents read windows of that selected KV, then a final agent receives
+ordered local reports plus the original selected KV. See
+[chunk_specialist_workflow/README.md](chunk_specialist_workflow/README.md).
+可选 `--chunk-specialists` 将选中 KV 分窗口交给独立 specialist，原文只 prefill 一次；
+保留原有语义辅助路由，最终使用局部报告和原 selected KV 汇总。
 
 See [vector/README.md](vector/README.md) for embedding model download,
 `--vector-routing`, inference/evaluation commands and accounting details.

@@ -26,12 +26,12 @@ def arguments():
                         help="For speaker selection, retain this many whole preceding and following speaker blocks")
     parser.add_argument("--routing-audit", action="store_true", help="Write separate source-coordinate audit files; never sent to the receiver")
     parser.add_argument("--review", action="store_true", help="Also save the routed_kv draft and review change log")
-    parser.add_argument('--frame-context', action='store_true',
-                        help='FRAME-inspired statements plus referenced source KV, followed by summary generation')
-    parser.add_argument('--frame-temperature', type=float, default=0.3, help='Fact extraction sampling temperature (default: 0.3)')
-    parser.add_argument('--frame-top-p', type=float, default=0.9, help='Fact extraction top_p (default: 0.9)')
-    parser.add_argument('--frame-repetition-penalty', type=float, default=1.1,
-                        help='Fact extraction generated-token repetition penalty (default: 1.1)')
+    parser.add_argument('--chunk-specialists', action='store_true', help='Independent specialists over selected KV windows')
+    parser.add_argument('--specialist-parts', type=int, default=8, help='Target selected-KV window size: selected tokens divided by this number')
+    parser.add_argument('--specialist-overlap', type=float, default=0.25, help='Approximate overlap at complete speaker-block boundaries')
+    parser.add_argument('--specialist-temperature', type=float, default=0.3)
+    parser.add_argument('--specialist-top-p', type=float, default=0.9)
+    parser.add_argument('--specialist-repetition-penalty', type=float, default=1.1)
     parser.add_argument("--query-batch-tokens", type=int, default=8,
                         help="Attention scoring batch only, NOT source truncation/chunk summaries")
     parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
@@ -42,8 +42,8 @@ def arguments():
     parser.add_argument("--review-temperature", type=float, default=0.0, help="Review sampling temperature; 0 uses greedy decoding (default: 0)")
     parser.add_argument("--review-top-p", type=float, default=0.9, help="Review nucleus sampling threshold (default: 0.9)")
     args = parser.parse_args()
-    if args.frame_context and args.variants != ['routed_kv']:
-        parser.error('--frame-context currently supports only --variants routed_kv')
+    if args.chunk_specialists and args.variants != ['routed_kv']:
+        parser.error('--chunk-specialists currently supports only --variants routed_kv')
     if not 0 < args.role_budget_ratio <= 1:
         parser.error("--role-budget-ratio must be in (0, 1]")
     if min(args.span_tokens, args.query_batch_tokens) < 1 or args.speaker_neighbor_blocks < 0:
@@ -69,31 +69,32 @@ def main():
     reference = args.reference.read_text(encoding="utf-8-sig") if args.reference else ""
     from meeting_evaluation.metrics import rouge_l_f1
     from vector.cli import config_kwargs
-    # Save live FRAME output even if interrupted or generation exhausts its context.
-    frame_base = args.output.with_suffix('') if args.output else args.output_dir / datetime.now().strftime('%Y%m%d_%H%M%S_%f') / 'routed_kv'
-    if args.frame_context:
-        log(f"Live facts output: {frame_base.with_name(frame_base.name + '.frame_facts.partial.txt')}")
-    def live_frame(event):
-        if args.frame_context and event.get('text') is not None:
-            frame_base.parent.mkdir(parents=True, exist_ok=True)
+    # Preserve live window reports on interruption or context exhaustion.
+    chunk_base = args.output.with_suffix('') if args.output else args.output_dir / datetime.now().strftime('%Y%m%d_%H%M%S_%f') / 'routed_kv'
+    if args.chunk_specialists:
+        log(f"Live specialist output prefix: {chunk_base}")
+    def live_chunks(event):
+        if args.chunk_specialists and event.get('text') is not None:
+            chunk_base.parent.mkdir(parents=True, exist_ok=True)
             stage = event['stage']
-            frame_base.with_name(frame_base.name + f'.{stage}.partial.txt').write_text(event['text'], encoding='utf-8')
-            frame_base.with_name(frame_base.name + f'.{stage}.status.json').write_text(
+            chunk_base.with_name(chunk_base.name + f'.{stage}.partial.txt').write_text(event['text'], encoding='utf-8')
+            chunk_base.with_name(chunk_base.name + f'.{stage}.status.json').write_text(
                 json.dumps({k: event[k] for k in ('tokens', 'finished', 'stop_reason', 'repeated_tail') if k in event}, indent=2), encoding='utf-8')
     runner = ReceiverKVRunner(ReceiverKVConfig(
         model=args.model, device=args.device, role_budget_ratio=args.role_budget_ratio,
         span_tokens=args.span_tokens, query_batch_tokens=args.query_batch_tokens,
         seed=args.seed, review_seed=args.review_seed, review_temperature=args.review_temperature,
         review_top_p=args.review_top_p,
-        frame_context=args.frame_context,
-        frame_temperature=args.frame_temperature, frame_top_p=args.frame_top_p,
-        frame_repetition_penalty=args.frame_repetition_penalty,
+        chunk_specialists=args.chunk_specialists, specialist_parts=args.specialist_parts,
+        specialist_overlap=args.specialist_overlap,
+        specialist_temperature=args.specialist_temperature, specialist_top_p=args.specialist_top_p,
+        specialist_repetition_penalty=args.specialist_repetition_penalty,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks,
         **config_kwargs(args),
     ), progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants),
-                        routing_audit=args.routing_audit, review="routed_kv" in args.variants and not args.frame_context,
-                        on_generation=live_frame if args.frame_context else None)
+                        routing_audit=args.routing_audit, review="routed_kv" in args.variants and not args.chunk_specialists,
+                        on_generation=live_chunks if args.chunk_specialists else None)
     answers = result["answers"]
     review_report = ({k: v for k, v in result['review'].items() if k not in ('answer', 'changes')}
                      if result['review'] is not None else None)
@@ -107,15 +108,18 @@ def main():
         "settings": {"role_budget_ratio": args.role_budget_ratio, "span_tokens": args.span_tokens,
                      "query_batch_tokens": args.query_batch_tokens,
                      "selection_strategy": "speaker",
-                     "review": "routed_kv" in args.variants and not args.frame_context,
-                     "frame_context": args.frame_context, "save_review_details": args.review,
+                     "review": "routed_kv" in args.variants and not args.chunk_specialists,
+                     "chunk_specialists": args.chunk_specialists, "save_review_details": args.review,
+                     "specialist_parts": args.specialist_parts, "specialist_overlap": args.specialist_overlap,
+                     "specialist_temperature": args.specialist_temperature, "specialist_top_p": args.specialist_top_p,
+                     "specialist_repetition_penalty": args.specialist_repetition_penalty,
                      "review_seed": args.review_seed if "routed_kv" in args.variants else None,
                      "speaker_neighbor_blocks": args.speaker_neighbor_blocks},
         "baseline_selected_positions": result["baseline_selected_positions"],
         "variants": result["variants"],
         "review": review_report,
-        "frame": ({k: v for k, v in result['frame'].items() if k not in ('facts', 'raw_facts', 'context_blocks', 'summary_context_positions')}
-                  if result['frame'] else None),
+        "chunk_specialists": ({k: v for k, v in result['chunk_specialists'].items() if k not in ('reports', 'windows')}
+                  if result['chunk_specialists'] else None),
         "notes": ["Positions are not bytes, billed tokens or end-to-end compute savings.",
                   "routed_kv and specialist_text use the identical selected source positions; only the specialist-to-receiver communication representation differs.",
                   "ROUGE-L is lexical reference overlap, not factual accuracy; no reference means N/A.",
@@ -124,10 +128,9 @@ def main():
                   "The full immutable source cache remains resident for controls and selectors; smaller receiver KV is not a claim of lower process peak memory.",
                   "Logical payload bytes are accounting, not measured network traffic."],
     }
-    if args.frame_context:
-        report['method'] = 'FRAME-inspired statements plus referenced original KV context'
-        report['notes'][1] = 'FRAME is a two-stage hybrid workflow; it is not a representation-only communication comparison.'
-        report['notes'].append('FRAME adds source block anchors before prefill; compare using the same source framing.')
+    if args.chunk_specialists:
+        report['method'] = 'Selected-KV window specialists with source-grounded synthesis'
+        report['notes'][1] = 'Local reports are natural language; original selected source context is delivered as KV. This is a hybrid workflow.'
     for variant, answer in answers.items():
         if variant == 'routed_kv' and result['review'] and result['review']['status'] == 'completed':
             answer = result['review']['answer']
@@ -143,12 +146,11 @@ def main():
         output_dir.mkdir(parents=True)
     metrics_dir.mkdir(parents=True)
     primary_variant = "routed_kv" if "routed_kv" in answers else next(iter(answers))
-    if result['frame']:
-        frame_base = args.output.with_suffix('') if args.output else output_dir/'routed_kv'
-        facts_path = frame_base.with_name(frame_base.name + '.facts.json')
-        facts_path.write_text(json.dumps(result['frame'], ensure_ascii=False, indent=2), encoding='utf-8')
-        frame_base.with_name(frame_base.name + '.facts.raw.txt').write_text(result['frame']['raw_facts'], encoding='utf-8')
-        log(f'Statements and source-KV references: {facts_path}')
+    if result['chunk_specialists']:
+        chunk_base = args.output.with_suffix('') if args.output else output_dir/'routed_kv'
+        reports_path = chunk_base.with_name(chunk_base.name + '.specialists.json')
+        reports_path.write_text(json.dumps(result['chunk_specialists'], ensure_ascii=False, indent=2), encoding='utf-8')
+        log(f'Window reports and KV positions: {reports_path}')
     if args.routing_audit:
         from .routing_audit import render_audit
         audit_base = args.output.with_suffix("") if args.output else output_dir / "routing"
@@ -190,14 +192,13 @@ def main():
         counts = values['generation_counts']
         rows.append(f"  answer tokens={counts['answer_tokens']} | terminal tokens={counts['terminal_tokens']}")
     rows.extend(["", *report["notes"]])
-    if result['frame']:
-        rows.append('FRAME-inspired: statements as text, referenced source context as KV; no extra review pass.')
-        for stage, values in result['frame']['stages'].items():
+    if result['chunk_specialists']:
+        rows.append('Independent window specialists; source prefill once, no extra review pass.')
+        for stage, values in result['chunk_specialists']['stages'].items():
             rows.append(f"{stage}: prompt={values['prompt_tokens']} | output={values['output_tokens']} | "
                         f"source KV positions={values['source_kv_positions']} | seconds={values['seconds']:.2f}")
         accounting = result['variants']['routed_kv']['token_accounting']
-        rows.append(f"Logical decoder token events (both stages): {sum(accounting.values())}")
-        rows.append(f"Reference fallback: {result['frame']['reference_fallback']}")
+        rows.append(f"Logical decoder token events (all stages): {sum(accounting.values())}")
     if report['review'] is not None:
         review = report['review']
         rows.append(f"Review: status={review['status']}")
