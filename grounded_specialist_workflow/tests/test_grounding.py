@@ -82,7 +82,7 @@ class TopicWorkflowTest(unittest.TestCase):
             if stage.startswith('specialist_'):
                 if stage == 'specialist_topic_000':
                     time.sleep(.03)  # Finish later than another queued topic.
-                return json.dumps({'discussion': ['Initial proposal then deferral'], 'decisions': [],
+                return json.dumps({'discussion': 'Initial proposal then deferral', 'decisions': [],
                                    'actions': [], 'open_issues': ['Pending'], 'final_status': 'deferred'})
             return 'Final summary'
         runner._decode = decode

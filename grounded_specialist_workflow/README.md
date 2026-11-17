@@ -32,6 +32,13 @@ status for ONE topic. Reports are held in memory and saved, then merged in disco
 order regardless of completion order. Final synthesis receives structured text.
 This is a hybrid workflow, not KV-only communication or independently verified output.
 
+Specialist prompts request one discussion paragraph, distinct decisions, concrete
+actions (content, explicit owners and deadline), distinct open issues and a brief
+final status. Repeated turns are synthesized rather than enumerated. Missing owners
+use `[]` and missing deadlines use `null`; speaking does not imply task ownership.
+Per-item IDs and block citations are omitted; routing artifacts retain source blocks.
+These are prompt instructions, not additional format checks or item/token limits.
+
 ## 使用 / Run
 
 ```bash

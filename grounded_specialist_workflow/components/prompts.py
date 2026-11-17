@@ -39,16 +39,26 @@ def topic_query(topic):
 
 def analysis_request(topic, block_ids):
     return (
-        'Analyze this topic using the selected meeting evidence in original chronological order. '
+        'Synthesize only the specified topic from the selected meeting evidence in chronological order. '
         'Source markers [B<number>] identify speaker blocks; gaps mean some blocks are not supplied. '
+        'Write a topic-level synthesis, not a list of turns: merge repeated or paraphrased points '
+        'while retaining distinct facts and important changes. '
         'Distinguish early proposals from subsequent revisions and the latest supported status. '
         'Later speech alone does not establish agreement. Preserve unresolved contradictions. '
         'Keep explicit owners, dates, full time ranges, conditions and negations. '
         'Do not infer missing years or time zones; preserve the stated date wording. '
-        'Return JSON with discussion (array), decisions (array), actions (array), open_issues (array), '
-        'final_status (string). Actions may use objects with content, owners and deadline. '
-        'Use empty arrays where appropriate. Include all important topic information, with no fixed '
-        'item count. Return only JSON.\nTopic: ' + json.dumps(topic, ensure_ascii=False) +
+        'discussion is one synthesized paragraph. decisions contains distinct supported agreements, '
+        'not each suggestion or statement. actions contains distinct concrete follow-up tasks; '
+        'merge the same task and preserve its explicit owners and deadline. A speaker is not '
+        'automatically the task owner: use [] for unstated owners and null for an unstated deadline. '
+        'open_issues contains each distinct unresolved question once. final_status briefly states '
+        'where this topic stands without repeating the report. '
+        'Use this JSON shape: {"discussion": "...", "decisions": ["..."], '
+        '"actions": [{"content": "...", "owners": [], "deadline": null}], '
+        '"open_issues": ["..."], "final_status": "..."}. '
+        'Use empty arrays when there are no applicable items. There is no fixed item count. '
+        'Do not add per-item IDs, speaker records or block citations; source blocks are recorded '
+        'separately by the program. Return only the JSON object.\nTopic: ' + json.dumps(topic, ensure_ascii=False) +
         '\nAvailable source block IDs in meeting order: ' + json.dumps(block_ids))
 
 
