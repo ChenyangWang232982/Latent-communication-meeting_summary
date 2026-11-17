@@ -37,35 +37,42 @@ def topic_query(topic):
             'later revisions, final status and follow-up details: ' + topic['title'] + '. ' + topic['scope'])
 
 
-def analysis_request(topic, block_ids):
+def analysis_request(topics, all_topics):
     return (
-        'Synthesize only the specified topic from the selected meeting evidence in chronological order. '
-        'Source markers [B<number>] identify speaker blocks; gaps mean some blocks are not supplied. '
-        'Write a topic-level synthesis, not a list of turns: merge repeated or paraphrased points '
-        'while retaining distinct facts and important changes. '
-        'Distinguish early proposals from subsequent revisions and the latest supported status. '
-        'Later speech alone does not establish agreement. Preserve unresolved contradictions. '
-        'Keep explicit owners, dates, full time ranges, conditions and negations. '
-        'Do not infer missing years or time zones; preserve the stated date wording. '
-        'discussion is one synthesized paragraph. decisions contains distinct supported agreements, '
-        'not each suggestion or statement. actions contains distinct concrete follow-up tasks; '
-        'merge the same task and preserve its explicit owners and deadline. A speaker is not '
-        'automatically the task owner: use [] for unstated owners and null for an unstated deadline. '
-        'open_issues contains each distinct unresolved question once. final_status briefly states '
-        'where this topic stands without repeating the report. '
-        'Use this JSON shape: {"discussion": "...", "decisions": ["..."], '
-        '"actions": [{"content": "...", "owners": [], "deadline": null}], '
-        '"open_issues": ["..."], "final_status": "..."}. '
-        'Use empty arrays when there are no applicable items. There is no fixed item count. '
-        'Do not add per-item IDs, speaker records or block citations; source blocks are recorded '
-        'separately by the program. Return only the JSON object.\nTopic: ' + json.dumps(topic, ensure_ascii=False) +
-        '\nAvailable source block IDs in meeting order: ' + json.dumps(block_ids))
+        'Analyze the assigned topics together using the selected meeting evidence in original order. '
+        'Use the complete topic list to assign each fact, task or unresolved issue to its most specific '
+        'topic once. Include background from another topic only when needed to explain a dependency. '
+        'Source markers [B<number>] mark speaker blocks; gaps indicate omitted evidence. '
+        'For each topic, preserve key facts including stated dates, full time ranges, quantities, '
+        'deadlines and conditions. Do not invent missing years or time zones. '
+        'Track proposals, objections and revisions to the latest supported status; later speech alone '
+        'is not agreement. A demonstration or hypothetical example is not a decision to adopt it. '
+        'Only supported agreements belong in decisions; unresolved choices belong in open_issues. '
+        'For actions, attribute an explicit first-person commitment to its speaker. Discussion '
+        'participants are not automatically owners. Preserve requests as requests rather than commitments. '
+        'Use [] for unstated owners and null for an unstated deadline; retain relative deadlines as stated. '
+        'Merge repeated points and tasks while preserving distinct responsibilities and conditions. '
+        'Return one report per assigned topic in the supplied order, using this JSON shape: '
+        '{"reports": [{"topic_id": "supplied topic id", "topic": "supplied title", '
+        '"key_facts": ["..."], "discussion": "one synthesized paragraph", '
+        '"decisions": ["..."], "actions": [{"content": "...", "owners": [], "deadline": null}], '
+        '"open_issues": ["..."], "final_status": "latest supported status"}]}. '
+        'Use empty arrays when appropriate. There is no fixed item count. '
+        'Before finishing, check that explicit scheduling details and task owners in the evidence '
+        'survive in the reports, and that no resolved issue is also described as unresolved. '
+        'Return only JSON, without per-turn records or block citations. '
+        '\nComplete topic list: ' + json.dumps(all_topics, ensure_ascii=False) +
+        '\nAssigned topics: ' + json.dumps(topics, ensure_ascii=False))
 
 
 def synthesis_request(reports):
     return (SUMMARY_REQUEST +
         '\nThese are unverified topic reports, ordered by the discovery stage by first appearance. '
         'Combine them into one summary. You have no original transcript for independent verification. '
+        'Preserve key facts, exact dates and time ranges, task owners, deadlines and conditions. '
+        'Group entries referring to the same issue or task before writing; express their combined '
+        'information once, retaining distinct obligations. Do not union owners of different tasks. '
+        'Keep proposals conditional and do not promote examples or suggestions to decisions. '
         'Merge repeated information across topics, preserve explicit uncertainty, and place content '
         'by meaning rather than copying every field into every section. '
         'Do not infer final outcomes from report order. If reports conflict, preserve the uncertainty. '

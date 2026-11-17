@@ -15,7 +15,9 @@ def main():
     parser.add_argument('--speaker-neighbor-blocks', type=int, default=1)
     parser.add_argument('--vector-weight', type=float, default=0.3)
     parser.add_argument('--specialist-workers', type=int, default=1,
-                        help='Concurrent topic tasks sharing one model; independent KV/RNG per task')
+                        help='Concurrent topic groups sharing one model; independent KV/RNG per task')
+    parser.add_argument('--topics-per-specialist', type=int, default=0,
+                        help='Topics per group in discovery order; 0 sends all topics together (default)')
     parser.add_argument('--routing-recency-weight', type=float, default=0.0)
     parser.add_argument('--seed', type=int, default=12)
     parser.add_argument('--temperature', type=float, default=0.7)
@@ -25,7 +27,7 @@ def main():
     args = parser.parse_args()
     from receiver_kv_workflow.engine import ReceiverKVConfig
     from .components.pipeline import GroundedSpecialistRunner, SpecialistConfig
-    specialists = SpecialistConfig(args.specialist_workers, args.routing_recency_weight)
+    specialists = SpecialistConfig(args.specialist_workers, args.routing_recency_weight, args.topics_per_specialist)
     config = ReceiverKVConfig(model=args.model, device=args.device, role_budget_ratio=args.topic_budget_ratio,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks, vector_routing=True,
         embedding_model=args.embedding_model, vector_weight=args.vector_weight, seed=args.seed,

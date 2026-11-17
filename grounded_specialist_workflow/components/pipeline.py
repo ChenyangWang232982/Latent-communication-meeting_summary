@@ -1,4 +1,4 @@
-"""Full-source topics -> per-topic KV -> specialist reports -> synthesis."""
+"""Full-source topics -> unioned topic-group KV -> reports -> synthesis."""
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 import json
@@ -21,10 +21,13 @@ from .structure import parse_topics, parse_object
 class SpecialistConfig:
     specialist_workers: int = 1
     routing_recency_weight: float = 0.0
+    topics_per_specialist: int = 0
 
     def __post_init__(self):
         if self.specialist_workers < 1:
             raise ValueError('specialist_workers must be positive')
+        if self.topics_per_specialist < 0:
+            raise ValueError('topics_per_specialist must be nonnegative; 0 means all topics')
         if not math.isfinite(self.routing_recency_weight) or not 0 <= self.routing_recency_weight <= 1:
             raise ValueError('routing_recency_weight must be finite and in [0, 1]')
 
@@ -136,7 +139,7 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
         similarities = topic_vectors @ block_vectors.T
         self._sync()
         embedding_seconds = time.perf_counter() - start
-        routing, suffixes = {}, {}
+        routing = {}
         probe_tokens = 0
         budget = max(len(protected), math.ceil(len(prefix) * self.config.role_budget_ratio))
         start = time.perf_counter()
@@ -161,42 +164,50 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
             block_ids = [i for i, unit in enumerate(units) if pos_set.intersection(unit)]
             routing[name] = dict(topic=topic, seed_positions=seeds, selected_positions=positions,
                                  block_ids=block_ids, block_scores=combined)
-            suffixes[name] = source_suffix(self.tokenizer, transcript, prefix, analysis_request(topic, block_ids))
         self._sync()
         selection_seconds = time.perf_counter() - start
         self._save('routing.json', routing)
-        # Queue in topic discovery order. Each task gets chronological source KV,
-        # independent writable cache and RNG; selectors finish before any workers.
-        def analyze(index, topic):
-            name = topic['id']
-            raw = self._decode(f'specialist_{name}', suffixes[name], source=source,
-                               positions=routing[name]['selected_positions'], absolute_start=len(prefix),
+        # Union overlapping topic evidence once, keeping original absolute positions.
+        width = self.specialists.topics_per_specialist or max(1, len(topics))
+        groups = []
+        for offset in range(0, len(topics), width):
+            members = topics[offset:offset+width]
+            groups.append(dict(id=f'group_{len(groups):03d}', topics=members,
+                selected_positions=sorted({p for t in members for p in routing[t['id']]['selected_positions']}),
+                block_ids=sorted({b for t in members for b in routing[t['id']]['block_ids']})))
+        self._save('groups.json', groups)
+        def analyze(index, group):
+            name = group['id']
+            request = analysis_request(group['topics'], topics)
+            (self.artifacts / f'specialist_{name}.input.txt').write_text(request, encoding='utf-8')
+            suffix = source_suffix(self.tokenizer, transcript, prefix, request)
+            raw = self._decode(f'specialist_{name}', suffix, source=source,
+                               positions=group['selected_positions'], absolute_start=len(prefix),
                                seed_offset=index+1)
-            report = dict(parse_object(raw), topic_id=name, topic=topic['title'],
-                          source_block_ids=routing[name]['block_ids'])
+            report = parse_object(raw)
             self._save(f'report_{name}.json', report)
             return report
         reports = {}
         with ThreadPoolExecutor(max_workers=self.specialists.specialist_workers) as executor:
-            pending = {executor.submit(analyze, i, topic): topic['id'] for i, topic in enumerate(topics)}
+            pending = {executor.submit(analyze, i, group): group['id'] for i, group in enumerate(groups)}
             for future in as_completed(pending):
                 reports[pending[future]] = future.result()
-                self._log(f'Topic specialists complete: {len(reports)}/{len(topics)}')
+                self._log(f'Topic groups complete: {len(reports)}/{len(groups)}')
         del source
         # Parallel completion order must not affect the synthesis input.
-        ordered = [reports[t['id']] for t in topics]
+        ordered = [report for group in groups for report in reports[group['id']]['reports']]
         self._save('topic_reports.json', ordered)
         request = synthesis_request(ordered)
         (self.artifacts / 'summary.input.txt').write_text(request, encoding='utf-8')
-        summary = self._decode('summary', chat(self.tokenizer, request), seed_offset=len(topics)+1)
+        summary = self._decode('summary', chat(self.tokenizer, request), seed_offset=len(groups)+1)
         return dict(summary=summary, source_prefill_tokens=len(prefix), source_cache_bytes=source_bytes,
                     selection_probe_tokens=probe_tokens, prefill_seconds=prefill_seconds,
                     selection_seconds=selection_seconds, embedding_seconds=embedding_seconds,
-                    stages=self.stages, evidence_review=False, topic_count=len(topics),
+                    stages=self.stages, evidence_review=False, topic_count=len(topics), group_count=len(groups),
                     embedding_input_tokens=embedding_stats['embedding_input_tokens'],
                     total_decoder_input_tokens=len(prefix) + probe_tokens +
                         sum(stage['prompt_tokens'] for stage in self.stages.values()),
                     total_decoder_output_tokens=sum(stage['output_tokens'] for stage in self.stages.values()),
-                    note='Hybrid: full source KV for topic discovery; topic-specific KV to specialists; '
+                    note='Hybrid: full source KV for topic discovery; unioned topic-group KV to specialists; '
                          'structured text to final summary. Source block IDs are selected context, not '
                          'verified claim citations. Concurrent stage times overlap; use pipeline wall time.')

@@ -7,9 +7,9 @@
                                             ↓
                          每话题 selector：注意力 + 语义匹配
                                             ↓
-                      独立 KV（多个相关片段按原文顺序排列）
+                      同组话题 KV 取并集、去重、按原文顺序排列
                                             ↓
-                     固定并发数的 specialist 队列 → 结构化报告
+                     联合分析 specialist（默认全部话题一组）→ 结构化报告
                                             ↓
                                     最终摘要 agent
 ```
@@ -27,12 +27,15 @@ tokens relative to the baseline and must be accounted for in comparisons.
 
 No fixed topic count. The discovery model determines topic granularity and can
 still miss or split topics; there is no recursive topic creation or review stage.
-Each specialist reports discussion, decisions, actions, open issues and final
-status for ONE topic. Reports are held in memory and saved, then merged in discovery
+By default, one specialist receives ALL discovered topics and the chronological,
+deduplicated union of their selected KV positions. Each topic retains an independent
+selector. `--topics-per-specialist N` optionally batches N topics in discovery order
+(not semantic clusters); 1 reproduces individual-topic scheduling. Reports are held in memory and saved, then merged in discovery
 order regardless of completion order. Final synthesis receives structured text.
 This is a hybrid workflow, not KV-only communication or independently verified output.
 
-Specialist prompts request one discussion paragraph, distinct decisions, concrete
+Specialist prompts request key facts (including explicit dates and full time ranges),
+one discussion paragraph per topic, distinct decisions, concrete
 actions (content, explicit owners and deadline), distinct open issues and a brief
 final status. Repeated turns are synthesized rather than enumerated. Missing owners
 use `[]` and missing deadlines use `null`; speaking does not imply task ownership.
@@ -51,7 +54,8 @@ python -m grounded_specialist_workflow \
   --device cuda \
   --topic-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
-  --specialist-workers 2 \
+  --topics-per-specialist 0 \
+  --specialist-workers 1 \
   --seed 12 \
   --temperature 0.7 \
   --top-p 0.8 \
@@ -62,7 +66,10 @@ python -m grounded_specialist_workflow \
 - `--topic-budget-ratio`: initial positions per topic; neighbor expansion can exceed it.
   Reuses the baseline config's internal `role_budget_ratio` field. The old CLI
   `--role-budget-ratio` has been replaced in this entry point only.
-- `--specialist-workers`: parallel topic tasks, not the number of topics. One shared
+- `--topics-per-specialist`: 0 sends all topics together; positive values set group size.
+  The union can approach the full source length; this change does not guarantee cache savings.
+- `--specialist-workers`: parallel groups, not the number of topics. With one group,
+  only one specialist runs regardless of worker count. One shared
   model, independent writable KV and RNG per task; more workers need more memory.
 - `--routing-recency-weight`: optional initial ranking position bias, default 0.
   Later statements do not automatically override earlier decisions.
@@ -79,15 +86,19 @@ changes. Worker threads may not yield GPU speedup; measure wall time.
 
 - `topics.json`, `topic_discovery.txt`: discovered topics and raw discovery output.
 - `source_blocks.json`, `routing.json`: source text/coordinates and per-topic selections.
-- `specialist_topic_*.txt`, `report_topic_*.json`: raw/structured topic analyses.
+- `groups.json`: group membership and deduplicated source positions/block IDs.
+- `specialist_group_*.input.txt`, `specialist_group_*.txt`, `report_group_*.json`: prompts and reports.
+  Reports use a `reports` array with one entry per assigned topic; source coordinates
+  remain in routing/group artifacts rather than the final synthesis prompt.
 - `topic_reports.json`: all topic reports in discovery order, ready for synthesis.
 - `summary.input.txt`, `summary.txt`, `*.partial.txt`: prompts/results and live output.
 - `config.json`, `stages.json`, `metrics.json`, `status.json`: settings and accounting.
 
-There are N+2 generation calls for N topics: discovery, N specialists, synthesis.
+There are G+2 generation calls for G groups: discovery, G specialists, synthesis.
+The default uses three calls when topics are present. All N selectors still run.
 All are included in decoder token totals; embedding tokens are separate. Concurrent
 stage times overlap; use pipeline wall time, excluding model loading. Source block
-IDs in reports indicate supplied context, not verified claim-level citations.
+IDs in routing/group artifacts indicate supplied context, not verified claim-level citations.
 Only basic JSON parsing and model-context checks remain; no content verdict filter.
 
 ```bash
