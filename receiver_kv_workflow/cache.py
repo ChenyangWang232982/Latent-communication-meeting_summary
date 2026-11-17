@@ -65,7 +65,7 @@ def refill_selected_cache(model, prefix_ids, selected_positions):
 @torch.inference_mode()
 def generate_from_prefill(model, tokenizer, output, *, next_position, context_limit,
                           temperature=0.0, top_p=1.0, top_k=0, repetition_penalty=1.0, on_progress=None, on_snapshot=None,
-                          on_token=None):
+                          on_token=None, generator=None):
     """Decode after a caller has already prefetched a complete receiver prompt."""
     if not math.isfinite(repetition_penalty) or repetition_penalty < 1:
         raise ValueError("repetition_penalty must be finite and >= 1")
@@ -118,7 +118,7 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
         else:
             for warper in warpers:
                 scores = warper(None, scores)
-            token = torch.multinomial(torch.softmax(scores, dim=-1), 1)
+            token = torch.multinomial(torch.softmax(scores, dim=-1), 1, generator=generator)
         value = token.item()
         if on_token is not None:
             on_token(logits, value, len(generated))
@@ -146,7 +146,8 @@ def generate_from_prefill(model, tokenizer, output, *, next_position, context_li
 
 @torch.inference_mode()
 def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
-             temperature=0.0, top_p=1.0, top_k=0, repetition_penalty=1.0, on_progress=None, on_snapshot=None, on_token=None):
+             temperature=0.0, top_p=1.0, top_k=0, repetition_penalty=1.0, on_progress=None, on_snapshot=None, on_token=None,
+             generator=None):
     """Caller supplies a disposable cache. Never mutates the source cache."""
     if absolute_start + suffix.shape[1] >= context_limit:
         raise ValueError("The prompt leaves no room for generated tokens in the model context; no input was truncated.")
@@ -157,6 +158,6 @@ def generate(model, tokenizer, cache, suffix, *, absolute_start, context_limit,
         model, tokenizer, output,
         next_position=absolute_start + suffix.shape[1], context_limit=context_limit,
         temperature=temperature, top_p=top_p, top_k=top_k, repetition_penalty=repetition_penalty, on_progress=on_progress, on_snapshot=on_snapshot,
-        on_token=on_token,
+        on_token=on_token, generator=generator,
     )
     return answer, generated, cap_hit, counts
