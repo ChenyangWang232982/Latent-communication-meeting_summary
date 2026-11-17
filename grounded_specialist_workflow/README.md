@@ -73,7 +73,13 @@ python -m grounded_specialist_workflow \
   model, independent writable KV and RNG per task; more workers need more memory.
 - `--routing-recency-weight`: optional initial ranking position bias, default 0.
   Later statements do not automatically override earlier decisions.
-- Generation uses default model precision and no thinking. No fixed output-item
+- `--specialist-thinking`: enables Qwen thinking only for specialist analysis.
+  Discovery and final synthesis remain non-thinking. Default is off. To compare,
+  keep all other arguments identical and use separate output paths.
+  `specialist_group_*.thinking.txt` saves reasoning; `.raw.txt` preserves raw output.
+  Only the answer after `</think>` is parsed and sent to synthesis. Stage metrics
+  separate thinking, delimiter, answer and terminal tokens; output totals include all.
+- Generation uses default model precision. No fixed output-item
   or token cap; EOS/model context ends generation. Oversize context raises an error.
 
 Selectors execute before parallel generation because attention scoring temporarily

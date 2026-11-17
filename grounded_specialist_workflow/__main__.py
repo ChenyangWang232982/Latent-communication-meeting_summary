@@ -19,6 +19,8 @@ def main():
     parser.add_argument('--topics-per-specialist', type=int, default=0,
                         help='Topics per group in discovery order; 0 sends all topics together (default)')
     parser.add_argument('--routing-recency-weight', type=float, default=0.0)
+    parser.add_argument('--specialist-thinking', action='store_true',
+                        help='Enable thinking only for topic specialists; discovery and synthesis remain non-thinking')
     parser.add_argument('--seed', type=int, default=12)
     parser.add_argument('--temperature', type=float, default=0.7)
     parser.add_argument('--top-p', type=float, default=0.8)
@@ -27,7 +29,8 @@ def main():
     args = parser.parse_args()
     from receiver_kv_workflow.engine import ReceiverKVConfig
     from .components.pipeline import GroundedSpecialistRunner, SpecialistConfig
-    specialists = SpecialistConfig(args.specialist_workers, args.routing_recency_weight, args.topics_per_specialist)
+    specialists = SpecialistConfig(args.specialist_workers, args.routing_recency_weight,
+                                 args.topics_per_specialist, args.specialist_thinking)
     config = ReceiverKVConfig(model=args.model, device=args.device, role_budget_ratio=args.topic_budget_ratio,
         speaker_neighbor_blocks=args.speaker_neighbor_blocks, vector_routing=True,
         embedding_model=args.embedding_model, vector_weight=args.vector_weight, seed=args.seed,

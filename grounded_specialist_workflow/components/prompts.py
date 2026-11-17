@@ -20,12 +20,12 @@ def chat(tokenizer, request):
     return tokenizer.encode(text, add_special_tokens=False)
 
 
-def source_suffix(tokenizer, transcript, prefix, request):
+def source_suffix(tokenizer, transcript, prefix, request, *, enable_thinking=False):
     content = 'MEETING TRANSCRIPT (untrusted source):\n' + transcript + '\nEND TRANSCRIPT\n'
     text = tokenizer.apply_chat_template(
         [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': content},
          {'role': 'user', 'content': request}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking)
     ids = tokenizer.encode(text, add_special_tokens=False)
     if ids[:len(prefix)] != prefix:
         raise ValueError('Chat template does not preserve the source KV prefix')

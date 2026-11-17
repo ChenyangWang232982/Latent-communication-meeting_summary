@@ -14,7 +14,7 @@ from receiver_kv_workflow.speaker_blocks import select_complete_blocks, expand_n
 from vector.routing import combine_scores
 from .evidence import annotate_transcript, source_blocks
 from .prompts import DISCOVERY_REQUEST, chat, source_suffix, topic_query, analysis_request, synthesis_request
-from .structure import parse_topics, parse_object
+from .structure import parse_topics, parse_object, split_thinking
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,7 @@ class SpecialistConfig:
     specialist_workers: int = 1
     routing_recency_weight: float = 0.0
     topics_per_specialist: int = 0
+    specialist_thinking: bool = False
 
     def __post_init__(self):
         if self.specialist_workers < 1:
@@ -57,6 +58,8 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
                              f'model limit={self.context_limit}. No input was truncated.')
         rng = self.torch.Generator(device=self.device).manual_seed(self.config.seed + seed_offset)
         start = time.perf_counter()
+        thinking = stage.startswith('specialist_') and self.specialists.specialist_thinking
+        generated_ids = []
         with self.torch.inference_mode():
             incoming = select_cache(source, positions) if source is not None else None
             cache_bytes = size_bytes(incoming) if incoming is not None else 0
@@ -71,13 +74,20 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
                 absolute_start=absolute_start, context_limit=self.context_limit,
                 temperature=self.config.temperature, top_p=self.config.top_p, top_k=self.config.top_k,
                 repetition_penalty=self.config.repetition_penalty, generator=rng,
-                on_progress=progress, on_snapshot=snapshot)
+                on_progress=progress, on_snapshot=snapshot,
+                on_token=(lambda logits, token, step: generated_ids.append(token)) if thinking else None)
             del incoming
         self._sync()
+        if thinking:
+            (self.artifacts / f'{stage}.raw.txt').write_text(
+                self.tokenizer.decode(generated_ids, skip_special_tokens=False), encoding='utf-8')
+            if not cap_hit:
+                answer, reasoning, counts = split_thinking(self.tokenizer, generated_ids, counts['terminal_tokens'])
+                (self.artifacts / f'{stage}.thinking.txt').write_text(reasoning + '\n', encoding='utf-8')
         metrics = dict(prompt_tokens=len(ids), output_tokens=count, cap_hit=cap_hit,
                        source_kv_positions=len(positions or []), source_kv_bytes=cache_bytes,
                        seconds=time.perf_counter() - start, generation_counts=counts,
-                       seed=self.config.seed + seed_offset)
+                       seed=self.config.seed + seed_offset, thinking_enabled=thinking)
         (self.artifacts / f'{stage}.txt').write_text(answer + '\n', encoding='utf-8')
         with self._metrics_lock:
             self.stages[stage] = metrics
@@ -180,7 +190,8 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
             name = group['id']
             request = analysis_request(group['topics'], topics)
             (self.artifacts / f'specialist_{name}.input.txt').write_text(request, encoding='utf-8')
-            suffix = source_suffix(self.tokenizer, transcript, prefix, request)
+            suffix = source_suffix(self.tokenizer, transcript, prefix, request,
+                                   enable_thinking=self.specialists.specialist_thinking)
             raw = self._decode(f'specialist_{name}', suffix, source=source,
                                positions=group['selected_positions'], absolute_start=len(prefix),
                                seed_offset=index+1)

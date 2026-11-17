@@ -10,6 +10,35 @@ from grounded_specialist_workflow.components.structure import parse_topics
 
 
 class TopicWorkflowTest(unittest.TestCase):
+    def test_thinking_decode_keeps_json_and_counts_all_generated_tokens(self):
+        import torch
+        from receiver_kv_workflow.engine import ReceiverKVConfig
+        from grounded_specialist_workflow.components.pipeline import GroundedSpecialistRunner, SpecialistConfig
+        runner = GroundedSpecialistRunner.__new__(GroundedSpecialistRunner)
+        runner.config = ReceiverKVConfig(device='cpu')
+        runner.specialists = SpecialistConfig(specialist_thinking=True)
+        runner.torch, runner.device, runner.context_limit = torch, torch.device('cpu'), 100
+        runner.progress = lambda _: None
+        runner._log_lock, runner._metrics_lock = threading.Lock(), threading.Lock()
+        runner.stages, runner.model = {}, object()
+        pieces = {1: 'reason', 2: '\n', 3: '</think>', 4: '{"reports": []}', 5: '<eos>'}
+        runner.tokenizer = SimpleNamespace(encode=lambda text, **kw: [3],
+            decode=lambda ids, **kw: ''.join(pieces[i] for i in ids if not kw.get('skip_special_tokens') or i not in (3, 5)))
+        def generate(*args, **kwargs):
+            for index, token in enumerate([1, 2, 3, 4, 5]):
+                kwargs['on_token'](None, token, index)
+            return 'unparsed reasoning and JSON', 5, False, {'answer_tokens': 4, 'terminal_tokens': 1}
+        with tempfile.TemporaryDirectory() as temp, patch('receiver_kv_workflow.cache.generate', side_effect=generate):
+            runner.artifacts = Path(temp)
+            answer = runner._decode('specialist_group_000', [1])
+            self.assertEqual(json.loads(answer), {'reports': []})
+            metrics = runner.stages['specialist_group_000']
+            self.assertEqual(metrics['output_tokens'], 5)
+            self.assertEqual(metrics['generation_counts'], dict(thinking_tokens=2, delimiter_tokens=1,
+                answer_tokens=1, terminal_tokens=1, thinking_complete=True))
+            self.assertEqual((Path(temp)/'specialist_group_000.thinking.txt').read_text(), 'reason\n')
+            self.assertIn('</think>', (Path(temp)/'specialist_group_000.raw.txt').read_text())
+
     def test_decode_generator_is_independent_of_global_rng(self):
         import torch
         from receiver_kv_workflow.cache import generate_from_prefill
