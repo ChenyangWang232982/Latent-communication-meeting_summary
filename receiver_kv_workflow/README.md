@@ -55,5 +55,6 @@ role queries: decisions, actions, open issues, context and coordination.
 ## Tests
 
 ```bash
-python -m unittest receiver_kv_workflow.test_workflow receiver_kv_workflow.test_speaker_blocks -v
+python -m unittest discover -s chunk_specialist_workflow/tests
+python -m unittest experiment_1.tests.test_refill_cache
 ```

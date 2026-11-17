@@ -440,7 +440,7 @@ class ReceiverKVRunner:
                     on_variant("specialist_text", "end")
             review_result = None
             if review and not self.config.chunk_specialists:
-                from .review_checks import change_log, missing_sections, split_review_response
+                from .review_output import change_log, split_review_response
                 draft = answers['routed_kv']
                 if not draft.strip():
                     review_result = {'status': 'skipped', 'reason': 'The draft summary is empty.'}
@@ -477,7 +477,6 @@ class ReceiverKVRunner:
                                 'temperature': self.config.review_temperature,
                                 'top_p': self.config.review_top_p,
                                 'source_kv_positions': len(selected), 'review_reasons_present': bool(reasons),
-                                'possibly_missing_sections': missing_sections(draft, organized),
                                 'draft_output_cap_hit': measurements['routed_kv']['output_cap_hit'],
                             }
                             self.progress(f"{record_id}: organization completed; same text as draft={organized == draft}")

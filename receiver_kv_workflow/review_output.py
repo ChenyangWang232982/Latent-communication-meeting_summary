@@ -1,22 +1,6 @@
-"""Basic structural checks and a transparent edit log for review outputs."""
+"""Review output separation and transparent textual change logs."""
 import difflib
 import re
-
-SECTIONS = ('key context', 'decisions', 'action items', 'open issues')
-
-
-def section_names(text):
-    found = set()
-    for line in text.splitlines():
-        clean = re.sub(r'^[\s#*]+|[\s*:#]+$', '', line).strip().casefold()
-        if clean in SECTIONS:
-            found.add(clean)
-    return found
-
-
-def missing_sections(draft, candidate):
-    return sorted(section_names(draft) - section_names(candidate))
-
 
 def split_review_response(response):
     """Separate optional explanations without rejecting free-form model output."""

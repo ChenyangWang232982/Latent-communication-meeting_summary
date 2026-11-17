@@ -37,14 +37,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    all_variants = {"routed_kv", "specialist_text"}
-    if args.communication_metrics_only:
-        if set(args.variants) != all_variants:
-            raise ValueError(
-                "--communication-metrics-only requires routed_kv and specialist_text."
-            )
-    elif set(args.variants) != all_variants:
-        raise ValueError("A quality evaluation requires all receiver-KV variants.")
     paths = RunPaths(args.input, args.output_dir)
     # Every prepared benchmark uses the same normalized JSONL schema. The
     # benchmark name identifies the reported domain, not a different loader.

@@ -58,9 +58,7 @@ temp/
 
 # External code, downloaded models, and experiment artifacts
 external/
-meeting_latent_workflow/model/
 output/
-statebridge_qasper/output/
 
 # Root-level runtime inputs and reports for the meeting workflow.
 /input/*

@@ -3,7 +3,6 @@
 import argparse
 from datetime import datetime
 import json
-import math
 from pathlib import Path
 from .engine import ReceiverKVConfig, ReceiverKVRunner
 
@@ -47,16 +46,8 @@ def arguments():
         parser.error('--chunk-specialists currently supports only --variants routed_kv')
     if args.summary_thinking and not args.chunk_specialists:
         parser.error('--summary-thinking requires --chunk-specialists')
-    if not 0 < args.role_budget_ratio <= 1:
-        parser.error("--role-budget-ratio must be in (0, 1]")
-    if min(args.span_tokens, args.query_batch_tokens) < 1 or args.speaker_neighbor_blocks < 0:
-        parser.error("Token budgets must be positive")
     if args.review and 'routed_kv' not in args.variants:
         parser.error('--review requires --variants to include routed_kv')
-    if not math.isfinite(args.review_temperature) or args.review_temperature < 0:
-        parser.error('--review-temperature must be finite and non-negative')
-    if not math.isfinite(args.review_top_p) or not 0 < args.review_top_p <= 1:
-        parser.error('--review-top-p must be in (0, 1]')
     return args
 
 
@@ -67,8 +58,6 @@ def log(message):
 def main():
     args = arguments()
     transcript = args.transcript.read_text(encoding="utf-8-sig").strip()
-    if not transcript:
-        raise ValueError("Transcript is empty")
     reference = args.reference.read_text(encoding="utf-8-sig") if args.reference else ""
     from meeting_evaluation.metrics import rouge_l_f1
     from vector.cli import config_kwargs
@@ -220,7 +209,6 @@ def main():
                         f"review temperature={review['temperature']} | review top_p={review['top_p']}")
             rows.append(f"Review comparison: same text as draft={review['same_text_as_draft']}")
             rows.append(f"Organization separate reasons present: {review['review_reasons_present']}")
-            rows.append(f"Organization potentially missing sections: {review['possibly_missing_sections']}")
         else:
             rows.append(f"Review skipped: {review['reason']}")
     if result["vector_routing"] is not None:

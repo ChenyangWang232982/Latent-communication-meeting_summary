@@ -80,7 +80,7 @@ def score_receiver_kv_results(
     results: list[dict[str, Any]], source_by_id: dict[str, str], *, include_quality: bool = True,
 ) -> dict[str, Any]:
     """Score the receiver-KV controls without pretending KV bytes are tokens."""
-    variants = ("routed_kv", "specialist_text")
+    variants = tuple(dict.fromkeys(name for result in results for name in result['answers']))
     quality = {name: {"rouge_l_f1": [], "supported_claim_rate": []} for name in variants}
     source_prefill, selection, source_cache = [], [], []
     efficiency = {

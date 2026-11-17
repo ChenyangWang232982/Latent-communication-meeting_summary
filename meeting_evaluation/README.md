@@ -11,6 +11,10 @@ MeetingBank JSONL -> full-source KV prefill -> receiver-conditioned routing
 
 Prepare benchmark JSONL files with `data_preprocess/README.md` first.
 
+`--variants routed_kv` or `--variants specialist_text` also works for a single-method
+quality or communication report. Reports include only the methods actually run;
+both methods remain the default for comparison.
+
 Run the evaluation:
 
 ```bash

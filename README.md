@@ -97,7 +97,7 @@ python -m receiver_kv_workflow.run \
 
 此时自然语言版本写入 `output/meeting1.specialist_text.txt`。也可以添加 `--routing-audit` 输出被选中的原文范围等审计文件。审计文件可能包含会议原文，请按原文的敏感程度保存。
 
-默认运行 routed KV 摘要与审校，`--output output/meeting1.txt` 保存审校后的结果。添加 `--review` 会额外保存 `meeting1.draft.txt` 和 `meeting1.reviewed.changes.txt`，分别记录初稿和差异及模型给出的理由。审校复用摘要阶段选中的原文 KV，不另做证据检索；所选证据可能遗漏内容，模型核查不能保证事实正确。审校输出为空或达到上下文上限时会跳过审校，输出文件保存初稿并在日志和指标中说明；章节缺失仅在指标中提示。
+默认运行 routed KV 摘要与审校，`--output output/meeting1.txt` 保存审校后的结果。添加 `--review` 会额外保存 `meeting1.draft.txt` 和 `meeting1.reviewed.changes.txt`，分别记录初稿和差异及模型给出的理由。审校复用摘要阶段选中的原文 KV，不另做证据检索；所选证据可能遗漏内容，模型核查不能保证事实正确。审校输出为空或达到上下文上限时会跳过审校，输出文件保存初稿并在日志和指标中说明。
 
 审校阶段要求模型说明每处修改的理由；开启 `--review` 时，变更记录同时包含程序生成的文本差异和模型理由。模型理由未经独立验证，可能不准确；请以实际差异为准。
 
@@ -266,7 +266,7 @@ To generate the natural-language control as well, replace `--variants routed_kv`
 
 The text control is then written to `output/meeting1.specialist_text.txt`. Add `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
 
-By default, routed KV generation includes review and `--output` contains the reviewed summary. Add `--review` to also save `.draft.txt` and `.reviewed.changes.txt` with the original draft, textual differences and model-provided reasons. Review reuses the selected source KV without separate retrieval; the evidence can be incomplete and model review does not guarantee factual accuracy. If review is empty or truncated, it is skipped and `--output` contains the draft, with the status recorded in logs and metrics; missing sections are reported in metrics.
+By default, routed KV generation includes review and `--output` contains the reviewed summary. Add `--review` to also save `.draft.txt` and `.reviewed.changes.txt` with the original draft, textual differences and model-provided reasons. Review reuses the selected source KV without separate retrieval; the evidence can be incomplete and model review does not guarantee factual accuracy. If review is empty or truncated, it is skipped and `--output` contains the draft, with the status recorded in logs and metrics.
 
 The model is asked to explain each change, but reasons can be missing or inaccurate; use the textual diff for review.
 
