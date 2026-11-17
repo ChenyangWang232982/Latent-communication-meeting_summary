@@ -87,6 +87,8 @@ def analysis_request(topics, all_topics):
 def synthesis_request(reports):
     return (SUMMARY_REQUEST +
         '\nThese are unverified topic reports, ordered by the discovery stage by first appearance. '
+        'Some entries may contain raw_report instead of parsed fields because JSON formatting failed. '
+        'Read their full text as source reports with the same caution as parsed reports. '
         'Combine them into one summary. You have no original transcript for independent verification. '
         'Preserve key facts, exact dates and time ranges, task owners, deadlines and conditions. '
         'Group entries referring to the same issue or task before writing; express their combined '

@@ -35,3 +35,12 @@ def parse_topics(text):
     topics = parse_object(text)['topics']
     return [dict(id=f'topic_{i:03d}', title=t['title'], scope=t.get('scope', t['title']))
             for i, t in enumerate(topics)]
+
+
+def specialist_report(text, topics):
+    """Synthesis can read text: preserve malformed specialist output without guessing repairs."""
+    try:
+        return parse_object(text)
+    except ValueError as exc:
+        return dict(reports=[dict(assigned_topics=topics, raw_report=text)],
+                    format_error=f'{type(exc).__name__}: {exc}')

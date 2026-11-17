@@ -14,7 +14,7 @@ from receiver_kv_workflow.speaker_blocks import select_complete_blocks, expand_n
 from vector.routing import combine_scores
 from .evidence import annotate_transcript, source_blocks
 from .prompts import discovery_request, matching_request, chat, source_suffix, topic_query, analysis_request, synthesis_request
-from .structure import parse_object, split_thinking
+from .structure import parse_object, split_thinking, specialist_report
 from .discovery import discovery_windows, merge_topics
 
 
@@ -216,7 +216,9 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
             raw = self._decode(f'specialist_{name}', suffix, source=source,
                                positions=group['selected_positions'], absolute_start=len(prefix),
                                seed_offset=index+1)
-            report = parse_object(raw)
+            report = specialist_report(raw, members)
+            if 'format_error' in report:
+                self._log(f'{name}: JSON formatting failed; forwarding complete raw report to synthesis')
             self._save(f'report_{name}.json', report)
             return report
         reports = {}
@@ -238,6 +240,7 @@ class GroundedSpecialistRunner(ReceiverKVRunner):
                     stages=self.stages, evidence_review=False, topic_count=len(topics), group_count=len(groups),
                     discovery_window_count=len(windows),
                     topic_matching_calls=sum(name.startswith('topic_matching_') for name in self.stages),
+                    raw_report_fallback_groups=[name for name, report in reports.items() if 'format_error' in report],
                     embedding_input_tokens=embedding_stats['embedding_input_tokens'],
                     total_decoder_input_tokens=len(prefix) + probe_tokens +
                         sum(stage['prompt_tokens'] for stage in self.stages.values()),

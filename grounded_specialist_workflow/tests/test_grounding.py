@@ -211,6 +211,20 @@ class TopicWorkflowTest(unittest.TestCase):
                                      2*(window_count+matching_count+count+1))
                     self.assertEqual(len(encoding_calls), 1)
                     self.assertEqual(result['embedding_input_tokens'], 4+topic_count)
+            broken = '{"reports": [{"discussion": "broken-syntax" "actions": []}]}'
+            def malformed_specialist(stage, ids, **kwargs):
+                answer = decode(stage, ids, **kwargs)
+                return broken if stage == 'specialist_group_000' else answer
+            runner._decode = malformed_specialist
+            folder = Path(temp)/'malformed_specialist'
+            result = runner.run('meeting', 'transcript', artifact_dir=folder)
+            self.assertEqual(result['summary'], 'Final summary')
+            self.assertEqual(result['raw_report_fallback_groups'], ['group_000'])
+            saved = json.loads((folder/'report_group_000.json').read_text())
+            self.assertEqual(saved['reports'][0]['raw_report'], broken)
+            self.assertIn('JSONDecodeError', saved['format_error'])
+            self.assertIn('broken-syntax', (folder/'summary.input.txt').read_text())
+            self.assertEqual(json.loads((folder/'status.json').read_text())['status'], 'completed')
             runner._decode = lambda *a, **k: 'invalid JSON'
             with self.assertRaises(ValueError):
                 runner.run('meeting', 'transcript', artifact_dir=Path(temp)/'failure')

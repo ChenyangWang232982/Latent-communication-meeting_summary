@@ -130,6 +130,11 @@ All are included in decoder token totals; embedding tokens are separate. Concurr
 stage times overlap; use pipeline wall time, excluding model loading. Source block
 IDs in routing/group artifacts indicate supplied context, not verified claim-level citations.
 Only basic JSON parsing and model-context checks remain; no content verdict filter.
+If specialist JSON is malformed, the entire answer is forwarded to synthesis in a
+`raw_report` field with its assigned topics. The program does not invent syntax
+repairs or drop the answer. The saved group report records `format_error`, and
+metrics list `raw_report_fallback_groups`. Discovery and matching still require
+parseable JSON because their topic IDs and coordinates drive routing.
 
 ```bash
 python -m unittest discover -s grounded_specialist_workflow/tests
