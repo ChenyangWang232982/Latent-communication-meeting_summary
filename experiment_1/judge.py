@@ -18,12 +18,14 @@ def main():
     parser.add_argument("--model", default=env_value("JUDGE_MODEL"), help="Independent evaluation model ID")
     parser.add_argument("--seed", type=int, default=12, help="Case ordering and random audit selection only")
     parser.add_argument("--audit-pairs", type=int, default=5)
+    parser.add_argument("--num-samples", type=int, default=0, help="First N completed pairs in input order; 0 means all")
     args = parser.parse_args()
-    if not args.model or not args.base_url or args.audit_pairs < 0:
-        parser.error("Fill JUDGE_BASE_URL and JUDGE_MODEL in the project root .env, or supply --base-url/--model; audit-pairs must be non-negative")
+    if not args.model or not args.base_url or args.audit_pairs < 0 or args.num_samples < 0:
+        parser.error("Fill JUDGE_BASE_URL and JUDGE_MODEL in the project root .env, or supply --base-url/--model; audit-pairs/num-samples must be non-negative")
     client = JudgeClient(args.base_url, args.model, os.getenv("JUDGE_API_KEY", ""))
     settings = {"model": args.model, "base_url": args.base_url, "temperature": 0.0,
-                "seed": args.seed, "audit_pairs": args.audit_pairs, "timeout": 300}
+                "seed": args.seed, "audit_pairs": args.audit_pairs, "timeout": 300,
+                "num_samples": args.num_samples}
     destination = args.output_dir or args.run_dir / "judge" / datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     output = run_judge(args.run_dir, destination, settings, client)
     print(output)

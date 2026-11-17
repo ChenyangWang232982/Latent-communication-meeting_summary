@@ -42,6 +42,23 @@ class JudgeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Cannot resume"):
                 run_judge(run, out, {"seed": 7, "audit_pairs": 5}, client)
 
+    def test_one_sample_makes_only_two_requests(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); (root / "samples").mkdir()
+            (root / "manifest.json").write_text(json.dumps({"sample_ids": ["first", "second"]}))
+            for index, name in enumerate(("first", "second")):
+                (root / "samples" / f"{index:05d}.json").write_text(json.dumps({
+                    "id": name, "status": "completed", "source": "Approved", "result": {
+                        "answers": {"routed_kv": "Approved", "specialist_text": "Approved"}}}))
+            calls = []
+            def client(messages):
+                calls.append(messages)
+                return {"text": json.dumps(judgment()), "finish_reason": "stop", "seconds": 1, "usage": None}
+            out = run_judge(root, root / "judge", {"seed": 12, "audit_pairs": 0, "num_samples": 1}, client)
+            self.assertEqual(len(calls), 2)
+            mapping = json.loads((out / "judge_manifest.json").read_text())["mapping"]
+            self.assertEqual({item["id"] for item in mapping.values()}, {"first"})
+
     def test_bad_references_and_partial_output_never_get_scores(self):
         value = judgment(); value["dimensions"]["actions"]["evidence"][0]["source_lines"] = [99]
         with self.assertRaisesRegex(ValueError, "source line"):

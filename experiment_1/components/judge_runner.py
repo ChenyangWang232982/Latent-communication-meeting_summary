@@ -37,6 +37,8 @@ def run_judge(run_dir, destination, settings, client):
         raise ValueError("Need nonempty unique completed sample pairs")
     if destination == run_dir or run_dir.is_relative_to(destination):
         raise ValueError("Use a separate judge output directory")
+    if settings.get("num_samples", 0):
+        samples = samples[:settings["num_samples"]]
     rng = random.Random(settings["seed"])
     rng.shuffle(samples)
     jobs = []
