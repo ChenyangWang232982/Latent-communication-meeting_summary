@@ -47,7 +47,7 @@ class MeetingService:
     async def execute(self, data: RunAgentInput, transcript: str, queue: asyncio.Queue) -> None:
         loop = asyncio.get_running_loop()
         started = time.perf_counter()
-        state = {"stage": "queued", "message": "Waiting for the meeting model", "reviewStatus": "pending", "metrics": {}}
+        state = {"stage": "queued", "message": "Waiting for the meeting model", "reviewStatus": "skipped", "metrics": {}}
 
         def publish(patch: dict) -> None:
             nonlocal state
@@ -71,16 +71,13 @@ class MeetingService:
                     if self.runner is None:
                         publish({"stage": "queued", "message": "Loading the meeting model"})
                         self.runner = self.runner_factory(self.config)
-                    return self.runner.run(data.run_id, transcript, variants=("routed_kv",), review=True,
+                    return self.runner.run(data.run_id, transcript, variants=("chunk_kv",),
                                            on_state=publish)
                 result = await asyncio.to_thread(inference)
-            review = result.get("review") or {"status": "skipped"}
-            draft = result["answers"]["routed_kv"]
-            summary = review.get("answer", "") if review.get("status") == "completed" else draft
+            summary = result['answers']['chunk_kv']
             if not summary.strip():
                 raise ValueError("The meeting workflow returned an empty summary.")
-            publish({"stage": "completed", "message": "Review complete" if review.get("status") == "completed" else "Review skipped; showing the draft",
-                     "reviewStatus": "completed" if review.get("status") == "completed" else "skipped"})
+            publish({'stage': 'completed', 'message': 'Summary complete', 'reviewStatus': 'skipped'})
             message_id = str(uuid.uuid4())
             await queue.put(encode(TextMessageStartEvent(message_id=message_id, role="assistant")))
             await queue.put(encode(TextMessageContentEvent(message_id=message_id, delta=summary)))

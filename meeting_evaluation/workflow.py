@@ -8,7 +8,7 @@ from receiver_kv_workflow.engine import ReceiverKVConfig, ReceiverKVRunner
 
 def run_receiver_kv(
     records: list[MeetingRecord], config: ReceiverKVConfig, *, num_samples: int,
-    variants: tuple[str, ...] = ("routed_kv", "specialist_text"),
+    variants: tuple[str, ...] = ("chunk_kv", "chunk_text"),
 ) -> list[dict]:
     """Batch MeetingBank records while holding one Qwen3 model in GPU memory."""
     selected = records[:num_samples] if num_samples else records

@@ -5,13 +5,13 @@ meeting benchmarks. Reports contain metrics only; they do not copy source
 transcripts or generated summaries.
 
 ```text
-MeetingBank JSONL -> full-source KV prefill -> receiver-conditioned routing
-                 -> routed-KV / matched-text communication -> metric report
+MeetingBank JSONL -> full-source KV prefill -> shared global evidence selection
+                 -> global context + chronological original-part specialists -> synthesis -> metrics
 ```
 
 Prepare benchmark JSONL files with `data_preprocess/README.md` first.
 
-`--variants routed_kv` or `--variants specialist_text` also works for a single-method
+`--variants chunk_kv` or `--variants chunk_text` also works for a single-method
 quality or communication report. Reports include only the methods actually run;
 both methods remain the default for comparison.
 
@@ -30,13 +30,13 @@ python -m meeting_evaluation.test \
   --device cuda
 ```
 
-The report compares two communication representations under the same source
-selection, prompt, model, and output budget:
+The report compares two workflows under the same source selection, original parts,
+stage instructions and decoding defaults. The independent local reports may differ:
 
 | Variant | Receiver input |
 |---|---|
-| `routed_kv` | Receiver-conditioned selected source KV positions |
-| `specialist_text` | The same selected source positions rewritten once as a natural-language handoff |
+| `chunk_kv` | Global selected source KV + current-part original text; final KV + ordered reports |
+| `chunk_text` | Same global evidence as verbatim text + same original part; final text + ordered reports |
 
 Reports are written to `test_result/YYYYMMDD_HHMM/meetingbank_receiver_kv.txt`
 and `.json`. They include ROUGE-L, a lexical source-support proxy, cache and

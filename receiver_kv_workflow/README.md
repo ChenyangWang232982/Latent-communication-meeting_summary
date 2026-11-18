@@ -1,60 +1,41 @@
-# Receiver-Conditioned KV Meeting Workflow
+# Global selected context + transcript-part specialists
 
-This is a training-free meeting-summarization workflow. It compares two matched
-communication representations under the same model, transcript, role queries,
-speaker-block routing, output budget, and final summary prompt.
-
-```text
-speaker-labelled transcript
-  -> one full-source KV prefill
-  -> role-conditioned attention scoring
-  -> complete seed speaker blocks + adjacent speaker context
-  -> routed_kv: selected source KV -> receiver
-     specialist_text: same source evidence -> text sender -> receiver
-  -> meeting summary
-```
-
-`routed_kv` is the main method: selected source K/V tensors are supplied to the
-receiver without decoding them to text. `specialist_text` is the natural-language
-control: it receives the same routed evidence, but a sender writes one handoff
-before the receiver summarizes it.
-
-The workflow requires line-start speaker labels such as `Alice: ...`,
-`[10:30] Alice: ...`, or `Alice (Team)  1:10:30`. Consecutive turns from the
-same speaker become one block. The router selects complete seed blocks and then
-keeps `--speaker-neighbor-blocks` blocks on both sides.
-
-## Run
+The only active inference workflow uses attention and optional semantic routing
+to choose global source context, then specialists analyze chronological original
+transcript parts with that global context. Final synthesis combines ordered local
+reports with global evidence. The old direct-summary and single generated-handoff
+branches and separate review agent have been removed.
 
 ```bash
 python -m receiver_kv_workflow.run \
   --transcript input/meeting1.txt \
-  --model Qwen/Qwen3-4B \
-  --role-budget-ratio 0.25 \
-  --speaker-neighbor-blocks 1 \
-  --variants routed_kv specialist_text
+  --output output/meeting1.txt \
+  --model Qwen/Qwen3-8B \
+  --device cuda \
+  --vector-routing \
+  --variants chunk_kv
 ```
 
-Use `--output output/meeting1.txt` to place `routed_kv` at that exact path;
-the text baseline then uses a sibling `meeting1.specialist_text.txt` file.
-Use `--routing-audit` for an offline source-coordinate audit. Neither audit
-text nor dropped source text is passed to the receiver. The summary uses five
-role queries: decisions, actions, open issues, context and coordination.
+Use `--variants chunk_kv chunk_text` to generate both controls, or only `chunk_text`.
+Both use the same global selected evidence, current-part original text, location,
+instructions and stage decoding settings. The text path renders global evidence
+as verbatim text rather than transferring KV. Reports remain natural language.
 
-## Important limits
+Defaults: source budget per role 0.25, speaker neighbors +/-1, part size targeting
+1/8 of original transcript with 0.25 overlap, local sampling 0.3/0.9 and penalty1.1,
+final sampling 0.3/0.9 with thinking on. `--summary-*` controls final synthesis;
+`--no-summary-thinking` disables its reasoning. Use `--help` for all settings.
 
-- The full transcript is prefetched once and is never silently truncated.
-  Generation stops at EOS or when the remaining model context is exhausted;
-  the run fails if the prompt leaves no output room.
-- It supports dense full-attention Qwen3 models with standard RoPE only.
-- Smaller receiver KV does not imply lower peak GPU memory: the full source KV
-  remains resident while routing and generation occur.
-- KV positions, KV bytes, logical token events, and runtime are reported as
-  separate quantities; they are not interchangeable measures of cost.
+`--output` writes the primary final answer; the second variant uses a sibling
+file. Per-variant `.specialists.json`, separate thinking text, live partial/status
+files and `test_result/receiver_kv/<timestamp>/metrics.*` retain provenance/costs.
+`--routing-audit` writes source-coordinate audits, not extra model instructions.
 
-## Tests
+Dense full-attention standard-RoPE Qwen3 is supported. Source prefill happens once
+and full KV remains resident. Selected rows preserve original absolute positions;
+each stage uses an independent writable cache copy. No silent source truncation
+or arbitrary output cap; context exhaustion is an error. This is hybrid source-KV
+and report-text communication, not a reproduction claim for CacheBack.
 
-```bash
-python -m unittest discover -s chunk_specialist_workflow/tests
-python -m unittest experiment_1.tests.test_refill_cache
-```
+See [specialist architecture](../chunk_specialist_workflow/README.md) and
+[paired experiment](../experiment_1/README.md).

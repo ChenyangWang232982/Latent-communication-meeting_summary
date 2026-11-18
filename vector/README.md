@@ -61,14 +61,14 @@ on first use. Local model directories are ignored by Git.
 python -m receiver_kv_workflow.run \
   --transcript input/meeting1.txt \
   --output output/meeting1_vector.txt \
-  --model Qwen/Qwen3-4B \
+  --model Qwen/Qwen3-8B \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
   --embedding-model models/Qwen3-Embedding-0.6B \
   --device cuda \
   --vector-weight 0.3 \
-  --variants routed_kv \
+  --variants chunk_kv \
   --routing-audit
 ```
 
@@ -89,7 +89,7 @@ python -m meeting_evaluation.test \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
   --embedding-model models/Qwen3-Embedding-0.6B \
-  --variants routed_kv specialist_text \
+  --variants chunk_kv chunk_text \
   --device cuda
 ```
 

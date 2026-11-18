@@ -11,14 +11,14 @@ class GenerationTraceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             messages = []
             trace = GenerationTrace(Path(directory), 2, "meeting/unsafe-id", messages.append)
-            event = {"stage": "routed_kv_receiver", "tokens": 256, "text": "repeated output",
+            event = {"stage": "chunk_kv_receiver", "tokens": 256, "text": "repeated output",
                      "raw_tail": "raw", "tail_token_ids": [1], "repeated_tail": True,
                      "eos_token_ids": [2], "finished": False, "stop_reason": None}
             trace(event)
             trace({**event, "tokens": 257, "text": "final text", "finished": True, "stop_reason": "eos"})
             folder = Path(directory) / "live/00002"
-            self.assertEqual((folder / "routed_kv_receiver.partial.txt").read_text(encoding="utf-8"), "final text")
-            status = json.loads((folder / "routed_kv_receiver.status.json").read_text(encoding="utf-8"))
+            self.assertEqual((folder / "chunk_kv_receiver.partial.txt").read_text(encoding="utf-8"), "final text")
+            status = json.loads((folder / "chunk_kv_receiver.status.json").read_text(encoding="utf-8"))
             self.assertEqual(status["tokens"], 257)
             self.assertEqual(status["stop_reason"], "eos")
             self.assertNotIn("text", status)

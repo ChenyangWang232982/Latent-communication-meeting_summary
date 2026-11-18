@@ -48,7 +48,8 @@ class RunStore:
             folder = self.directory / "summaries" / f"{index:05d}"
             folder.mkdir(parents=True, exist_ok=True)
             documents = {**sample["result"]["answers"], "reference": sample["reference"]}
-            documents["specialist_text_handoff"] = sample["result"].get("handoffs", {}).get("specialist_text", "")
+            for name, handoff in sample['result'].get('handoffs', {}).items():
+                documents[f'{name}_notes'] = handoff
             for name, detail in sample['result'].get('chunk_specialists_by_variant', {}).items():
                 atomic_json(folder / f'{name}.specialists.json', detail)
                 for stage, thought in detail.get('thinking_outputs', {}).items():

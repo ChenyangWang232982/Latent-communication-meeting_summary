@@ -8,7 +8,7 @@ from meeting_evaluation.report import write_receiver_kv_reports, write_receiver_
 
 class SingleVariantEvaluationTest(unittest.TestCase):
     def test_single_variant_scores_and_reports_without_fabricating_missing_variant(self):
-        for variant in ('routed_kv', 'specialist_text'):
+        for variant in ('chunk_kv', 'chunk_text'):
             with self.subTest(variant=variant):
                 measurement = dict(incoming_positions=10, incoming_cache_bytes=100,
                     logical_payload_bytes=100, receiver_seconds=1,

@@ -14,12 +14,12 @@ python -m meeting_stream \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
   --seed 12 \
-  --review-seed 42 \
-  --review-temperature 0.3 \
-  --review-top-p 0.9
+  --summary-seed 42 \
+  --summary-temperature 0.3 \
+  --summary-top-p 0.9
 ```
 
-The service listens on `ws://127.0.0.1:8765/ws` by default and serves `GET /health`. The embedding model is loaded from `models/Qwen3-Embedding-0.6B` unless `--embedding-model` overrides it. First inference loads the models; subsequent runs reuse them in the same process. Use `python -m meeting_stream --help` for options. The service uses the existing routed KV workflow with review enabled and sends the draft with `reviewStatus=skipped` if review is skipped.
+The service listens on `ws://127.0.0.1:8765/ws` by default and serves `GET /health`. The embedding model is loaded from `models/Qwen3-Embedding-0.6B` unless `--embedding-model` overrides it. First inference loads the models; subsequent runs reuse them in the same process. Use `python -m meeting_stream --help` for options. It runs `chunk_kv` with global selected KV plus each original transcript part and final synthesis; there is no separate review. `reviewStatus=skipped` remains for frontend contract compatibility, and the emitted text is the final synthesized answer.
 
 ## Connect AG-UI
 

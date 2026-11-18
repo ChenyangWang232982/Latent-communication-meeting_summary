@@ -7,8 +7,8 @@ from experiment_1.components.semantic_quality import add_bertscore
 
 class SemanticQualityTest(unittest.TestCase):
     def sample(self):
-        return {"id": "meeting", "reference": "a b", "result": {"answers": {"routed_kv": "a", "specialist_text": "b"}},
-                "quality": {"routed_kv": {}, "specialist_text": {}}}
+        return {"id": "meeting", "reference": "a b", "result": {"answers": {"chunk_kv": "a", "chunk_text": "b"}},
+                "quality": {"chunk_kv": {}, "chunk_text": {}}}
 
     def test_pair_mapping_and_explicit_overlength_rejection(self):
         seen = []
@@ -33,12 +33,12 @@ class SemanticQualityTest(unittest.TestCase):
              patch("experiment_1.components.semantic_quality.importlib.metadata.version", return_value="test"):
             sample = self.sample()
             info = add_bertscore([sample], "encoder", 2, "cpu")
-            self.assertEqual(sample["quality"]["routed_kv"]["bertscore_f1"], .5)
-            self.assertEqual(sample["quality"]["specialist_text"]["bertscore_f1"], .6)
+            self.assertEqual(sample["quality"]["chunk_kv"]["bertscore_f1"], .5)
+            self.assertEqual(sample["quality"]["chunk_text"]["bertscore_f1"], .6)
             self.assertEqual(info["hash"], "test-hash")
             self.assertEqual(seen[1], (["a", "b"], ["a b", "a b"]))
             count = len(seen)
-            sample["result"]["answers"]["routed_kv"] = "word " * 10
+            sample["result"]["answers"]["chunk_kv"] = "word " * 10
             with self.assertRaisesRegex(ValueError, "No text was truncated"):
                 add_bertscore([sample], "encoder", 2, "cpu")
             self.assertEqual(len(seen), count)

@@ -20,16 +20,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--benchmark", choices=["ami", "icsi", "qmsum_committee", "meetingbank"], default="meetingbank")
     parser.add_argument("--input", type=Path, required=True, help="Normalized MeetingBank JSONL input.")
     parser.add_argument("--output-dir", type=Path, default=Path("test_result"))
-    parser.add_argument("--model", default="Qwen/Qwen3-4B")
+    parser.add_argument("--model", default="Qwen/Qwen3-8B")
     parser.add_argument("--num-samples", type=int, default=0, help="0 evaluates every available record.")
-    parser.add_argument("--receiver-kv-role-budget-ratio", type=float, default=0.15)
+    parser.add_argument("--receiver-kv-role-budget-ratio", type=float, default=0.25)
     parser.add_argument("--receiver-kv-span-tokens", type=int, default=32)
     parser.add_argument("--speaker-neighbor-blocks", type=int, default=1)
     parser.add_argument("--receiver-kv-query-batch-tokens", type=int, default=8)
     parser.add_argument("--device")
     parser.add_argument("--seed", type=int, default=7, help="Random seed for model inference (default: 7)")
-    parser.add_argument("--variants", nargs="+", choices=["routed_kv", "specialist_text"],
-                        default=["routed_kv", "specialist_text"])
+    parser.add_argument("--variants", nargs="+", choices=["chunk_kv", "chunk_text"],
+                        default=["chunk_kv", "chunk_text"])
     parser.add_argument("--communication-metrics-only", action="store_true",
                         help="Discard summaries and write only token, cache and execution measurements.")
     return parser.parse_args()

@@ -19,7 +19,7 @@ class ChunkSpecialistTest(unittest.TestCase):
         from receiver_kv_workflow.engine import ReceiverKVConfig
         from chunk_specialist_workflow.components.generation import run_specialists
         runner = SimpleNamespace(model=object(), tokenizer=object(), torch=torch,
-            config=ReceiverKVConfig(device='cpu', specialist_parts=2, specialist_overlap=0),
+            config=ReceiverKVConfig(device='cpu', summary_thinking=False, specialist_parts=2, specialist_overlap=0),
             context_limit=100, progress=lambda _: None, _sync=lambda: None,
             _tensor=lambda ids: torch.tensor([ids]))
         target = 'chunk_specialist_workflow.components.generation.'
@@ -79,7 +79,7 @@ class ChunkSpecialistTest(unittest.TestCase):
         tensor = torch.arange(7, dtype=torch.float32).reshape(1, 1, 7, 1)
         source.update(tensor.clone(), tensor.clone(), 0)
         runner = SimpleNamespace(model=object(), tokenizer=object(), torch=torch,
-            config=ReceiverKVConfig(device='cpu', specialist_parts=2, specialist_overlap=0),
+            config=ReceiverKVConfig(device='cpu', summary_thinking=False, specialist_parts=2, specialist_overlap=0),
             context_limit=100, progress=lambda _: None, _sync=lambda: None,
             _tensor=lambda ids: torch.tensor([ids]))
         requests, caches = [], []

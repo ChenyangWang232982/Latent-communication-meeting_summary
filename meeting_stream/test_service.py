@@ -13,13 +13,11 @@ class FakeRunner:
     loads = 0
     def __init__(self, config):
         type(self).loads += 1
-    def run(self, record_id, transcript, *, variants, review, on_state):
-        assert variants == ("routed_kv",) and review
+    def run(self, record_id, transcript, *, variants, on_state):
+        assert variants == ("chunk_kv",)
         on_state({"stage":"prefill","message":"Reading", "metrics":{"sourcePositions":100}})
         on_state({"stage":"summary","message":"Writing", "metrics":{"selectedPositions":60}})
-        on_state({"stage":"review","message":"Reviewing", "reviewStatus":"running"})
-        result = {"status":"skipped"} if "skip" in transcript else {"status":"completed","answer":"Reviewed"}
-        return {"answers":{"routed_kv":"Draft"}, "review":result}
+        return {'answers': {'chunk_kv': 'Final summary'}}
 
 def request(run_id, content):
     return {"threadId":"thread", "runId":run_id,
@@ -36,13 +34,13 @@ def receive_run(ws):
             return events
 
 class MeetingStreamTest(unittest.TestCase):
-    def test_review_fallback_status_and_reuse(self):
+    def test_final_summary_status_and_reuse(self):
         FakeRunner.loads = 0
         app = create_app(runner_factory=FakeRunner)
         with TestClient(app) as client:
             self.assertFalse(client.get("/health").json()["model_loaded"])
-            for run_id, transcript, expected, status in (("one","Alice: hello","Reviewed","completed"),
-                                                          ("two","Alice: skip","Draft","skipped")):
+            for run_id, transcript, expected, status in (("one","Alice: hello","Final summary","skipped"),
+                                                          ("two","Alice: again","Final summary","skipped")):
                 with client.websocket_connect("/ws") as ws:
                     ws.send_json(request(run_id, transcript))
                     events = receive_run(ws)

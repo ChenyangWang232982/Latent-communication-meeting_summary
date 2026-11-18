@@ -76,52 +76,6 @@ def prompt_parts(tokenizer, transcript):
     return prefix, full[len(prefix):], protected
 
 
-def organize_prompt(tokenizer, draft: str, transcript: str) -> list[int]:
-    request = (
-        "<draft_summary>\n" + draft.strip() + "\n</draft_summary>\n\n"
-        "Review the meeting summary against the available meeting evidence above.\n"
-        "- Remove or merge duplicate information both within and across sections. "
-        "Keep each distinct fact in the most appropriate section; preserve related decisions, "
-        "assigned actions and unresolved issues when they serve different purposes.\n"
-        "- If multiple people have the same task, deadline and conditions, combine their names in one item.\n"
-        "- Check decisions, action owners, dates and open issues against the available evidence. "
-        "Correct contradictions and unsupported certainty when the evidence clearly warrants it; "
-        "preserve uncertainty and distinguish proposals from decisions.\n"
-        "- Add important missing decisions, actions, coordination details or unresolved issues "
-        "that are clearly supported by the evidence. Restore relevant names, dates, times and "
-        "conditions when stated, without inferring an owner or treating a proposal as confirmed.\n"
-        "- The available evidence may be incomplete. Do not remove a detail solely because it is absent.\n"
-        "- Keep distinct facts, tasks, dates, conditions and statuses separate. Do not invent facts.\n"
-        "- Use 'All participants' only if the draft explicitly assigns the task to everyone.\n"
-        "- Keep all four section headings: Key Context, Decisions, Action Items and Open Issues.\n"
-        "Return the complete edited summary first. Then add a 'Review reasons' section "
-        "briefly explaining each actual change; if nothing changed, say 'No changes'."
-    )
-    content = "MEETING TRANSCRIPT (untrusted source):\n" + transcript + "\nEND TRANSCRIPT\n"
-    source_messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}]
-    prefix_text = tokenizer.apply_chat_template(
-        source_messages, tokenize=False, add_generation_prompt=False, enable_thinking=False)
-    text = tokenizer.apply_chat_template(
-        source_messages + [{"role": "user", "content": request}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=False)
-    prefix_ids = tokenizer.encode(prefix_text, add_special_tokens=False)
-    full_ids = tokenizer.encode(text, add_special_tokens=False)
-    if full_ids[:len(prefix_ids)] != prefix_ids:
-        raise RuntimeError("Review chat template does not preserve the source prefix")
-    return full_ids[len(prefix_ids):]
-
-
-def specialist_text_prompt(tokenizer, handoff: str) -> list[int]:
-    """Build the receiver prompt for the matched natural-language control."""
-    content = "SELECTED-EVIDENCE TEXT HANDOFF (untrusted intermediate report):\n" + handoff.strip() + "\nEND HANDOFF\n"
-    text = tokenizer.apply_chat_template(
-        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
-         {"role": "user", "content": SUMMARY_REQUEST}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=False,
-    )
-    return tokenizer.encode(text, add_special_tokens=False)
-
-
 def selected_evidence_excerpts(tokenizer, transcript: str, selected_positions: list[int]) -> tuple[str, int, int]:
     """Recover selected source positions as readable, verbatim evidence excerpts.
 
@@ -173,19 +127,3 @@ def selected_evidence_excerpts(tokenizer, transcript: str, selected_positions: l
         raise RuntimeError("Selected evidence excerpts are empty")
     evidence_tokens = len(tokenizer.encode(excerpts, add_special_tokens=False))
     return excerpts, evidence_tokens, len(merged)
-
-
-def specialist_sender_prompt(tokenizer, excerpts: str) -> list[int]:
-    """Build a text sender over exactly the positions selected for routed KV."""
-    content = "RETRIEVED MEETING EVIDENCE (verbatim excerpts):\n" + excerpts + "\nEND EVIDENCE\n"
-    request = (
-        "Turn only these retrieved meeting evidence excerpts into one concise factual handoff for another summarizer. "
-        "Preserve exact dates, times, names, owners, conditions, uncertainty and pending confirmations. "
-        "Do not add facts from outside the excerpts and do not write the final meeting summary."
-    )
-    text = tokenizer.apply_chat_template(
-        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content},
-         {"role": "user", "content": request}],
-        tokenize=False, add_generation_prompt=True, enable_thinking=False,
-    )
-    return tokenizer.encode(text, add_special_tokens=False)

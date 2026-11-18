@@ -1,353 +1,166 @@
-# 基于 KV 通信的会议摘要 / Meeting Summarization with KV Communication
-
-[中文](#中文) | [English](#english)
+# 语义辅助 KV 通信会议摘要 / Semantic-Assisted KV Meeting Summarization
 
 ## 中文
 
-本项目使用无需额外训练的 receiver-conditioned KV routing 生成会议摘要，并与自然语言通信方式进行对照。输入是带说话人标签的会议转录文本；输出包括摘要和运行指标。
+本项目采用无需额外训练的混合通信工作流：全文 prefill 一次，通过注意力与可选
+向量辅助路由选择全局证据；每个 specialist 接收相同的全局上下文、当前块原文和
+会议位置说明，生成局部报告；最终 agent 结合全局证据与有序报告生成摘要。
 
-```text
-会议转录 → 全文 KV prefill → 角色查询与 speaker block 选择
-                                  ├─ routed_kv：选中的 KV → 摘要模型 → 初稿 + 同一 KV → review → 最终摘要
-                                  └─ specialist_text：相同证据 → 文本 handoff → 摘要模型
-```
+| 方法 | 每个 specialist 的全局上下文 | 当前块与最终汇总 |
+|---|---|---|
+| `chunk_kv` | 全文路由选中的 KV cache | 当前块原文；最终 selected KV＋有序局部报告 |
+| `chunk_text` | 同一组选中坐标对应的原文文本 | 相同当前块原文；最终选中文本＋有序局部报告 |
 
-`routed_kv` 是主方法，直接把选中的原文 KV 缓存交给摘要接收方；`specialist_text` 是自然语言对照，使用相同的路由证据，先由模型生成文本 handoff，再交给摘要接收方。文本对照因此包含额外的生成步骤。两种方式使用相同模型、源数据和最终摘要要求，但不能认为两条路径的计算完全相同。
+局部报告采用自然语言。两条路径使用相同路由、分块、指令和生成设置，但 KV 包含
+原始全文的历史影响，选中文本则重新编码，因此属于工作流对照，不声称完全隔离
+通信表示的因果效应。旧版直接 `routed_kv`、单次 `specialist_text` handoff 和额外
+review 已删除；历史结果说明见 [experiment_1/HISTORY.md](experiment_1/HISTORY.md)。
 
-## 目录
+### 环境准备
 
-```text
-input/                  输入转录和已准备的评测数据
-output/                 会议摘要和可选 audit
-test_result/            评测报告和运行指标
-receiver_kv_workflow/   摘要工作流
-meeting_stream/         向 AG-UI 桥接服务提供 WebSocket 状态与结果
-vector/                 可选 embedding 辅助选择
-data_preprocess/        评测数据预处理
-meeting_evaluation/     评测入口、指标与报告
-experiment_1/           KV 与自然语言交接的逐样本对照实验
-requirements.txt        pip 依赖
-requirements.yml        Conda 环境配置
-```
-
-## 环境准备
-
-在项目根目录执行。下面的多行示例使用 Linux / Bash；PowerShell 请使用反引号续行，或将命令写成一行。
+从项目根目录运行，命令使用 Linux/Bash 续行格式。PowerShell 请改用反引号续行或一行执行。
 
 ```bash
-conda create -n latent-agents python=3.11 -y
 conda activate latent-agents
 pip install -r requirements.txt
 ```
 
-也可以使用 `conda env create -f requirements.yml` 创建环境。两份配置使用的 PyTorch / CUDA wheel 版本不同：`requirements.txt` 为 CUDA 12.8，`requirements.yml` 为 CUDA 12.6；按机器环境选择其中一种。默认模型是 `Qwen/Qwen3-4B`，首次运行需能访问模型文件。
+需要新环境时可使用 `conda env create -f requirements.yml`。默认模型为 Qwen3-8B；
+首次使用未缓存模型需要下载。向量辅助使用 Qwen3-Embedding-0.6B：
 
-## 输入格式
+```bash
+python -m vector.download
+```
 
-### 单场会议：UTF-8 TXT
+下载参数和本地目录设置见 [vector/README.md](vector/README.md)。
 
-将会议转录保存到例如 `input/meeting1.txt`。每次换人发言时在行首标出说话人，冒号后留空格：
+### 输入形式
+
+单会议为 UTF-8 TXT，行首含说话人标签。相邻同一说话人的发言合并：
 
 ```text
-Alice: 我们先确认项目进度。
-Alice: 目前设计方案已经完成。
+Alice: 我们讨论一下测试计划。
+Alice: 当前方案已经准备好。
 Bob: 我会在周五之前发送测试报告。
-Alice: 下周二再讨论测试结果。
 ```
 
-也可以使用 `Speaker_0: ...` 等匿名标签。连续的相同说话人会被合并成一个 speaker block，再根据相关性选择。当前程序不会从音频自动识别说话人；纯音频或无说话人标签的文本需要先在外部转录并分离说话人。
-
-### 批量评测：UTF-8 JSONL
-
-一行一个 JSON 对象，`transcript` 内用 `\n` 分隔发言轮次。例如：
+也支持 `Speaker_0` 等匿名标签以及原文时间戳。程序不执行音频转录或说话人分离。
+评测数据为 UTF-8 JSONL，一行一个样本：
 
 ```jsonl
-{"id":"meeting_001","transcript":"Alice: 项目进度如何？\nBob: 我会在周五发送报告。","summary":"Bob 将于周五发送报告。"}
+{"id":"meeting_001","transcript":"Alice: What is next?\nBob: I will send the report on Friday.","summary":"Bob will send the report on Friday."}
 ```
 
-- `id`：样本 ID，建议唯一。
-- `transcript`：带说话人标签的会议文本；也可使用 `context` 字段。
-- `summary`：人工参考摘要；也可使用 `answer`。缺少参考摘要时无法计算有效的参考摘要 ROUGE-L。
-- `question`：可选字段。当前工作流使用固定的会议摘要请求，该字段不会改变路由或摘要任务。
+`context` 可替代 `transcript`，`answer` 可替代 `summary`。正式实验需要唯一 ID 和非空
+人工参考摘要。`question` 不改变固定的全会议摘要任务。数据准备和4k–8k token筛选
+见 [data_preprocess/README.md](data_preprocess/README.md)。ROUGE 使用英文向分词。
 
-目前内置 ROUGE-L 面向英文分词，不适合直接评价中文摘要。
-
-## 生成会议摘要
-
-只生成 KV 通信摘要：
+### 单会议运行
 
 ```bash
 python -m receiver_kv_workflow.run \
   --transcript input/meeting1.txt \
   --output output/meeting1.txt \
-  --model Qwen/Qwen3-4B \
+  --model Qwen/Qwen3-8B \
+  --device cuda \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
-  --variants routed_kv \
-  --device cuda
+  --vector-routing \
+  --variants chunk_kv \
+  --seed 12 \
+  --summary-seed 42
 ```
 
-输出摘要为 `output/meeting1.txt`，运行指标位于 `test_result/receiver_kv/<时间戳>/metrics.txt` 和 `metrics.json`。不写 `--output` 时，摘要默认写入 `output/receiver_kv/<时间戳>/`。
+两种通信一起运行时，使用 `--variants chunk_kv chunk_text`。
+默认已经启用分块 specialists，不再需要 `--chunk-specialists`。
+最终汇总默认开启 thinking；用 `--no-summary-thinking` 同时关闭两种方法的最终思考。
+局部 specialist 默认不思考。最终参数是 `--summary-*`，不再使用 `--review-*`。
 
-要同时输出自然语言对照，将最后的 `--variants routed_kv` 改成：
+输出包括最终摘要、`.specialists.json`（全局KV坐标、分块原文、位置、局部报告和逐阶段
+计量）、独立 thinking 文本以及实时 partial/status 文件。指标在
+`test_result/receiver_kv/<timestamp>/metrics.txt` 和 `.json`；`--routing-audit`
+可额外导出选中证据坐标。没有人工输出条数或生成 token 上限；上下文不足则报错。
 
-```text
---variants routed_kv specialist_text
-```
-
-此时自然语言版本写入 `output/meeting1.specialist_text.txt`。也可以添加 `--routing-audit` 输出被选中的原文范围等审计文件。审计文件可能包含会议原文，请按原文的敏感程度保存。
-
-默认运行 routed KV 摘要与审校，`--output output/meeting1.txt` 保存审校后的结果。添加 `--review` 会额外保存 `meeting1.draft.txt` 和 `meeting1.reviewed.changes.txt`，分别记录初稿和差异及模型给出的理由。审校复用摘要阶段选中的原文 KV，不另做证据检索；所选证据可能遗漏内容，模型核查不能保证事实正确。审校输出为空或达到上下文上限时会跳过审校，输出文件保存初稿并在日志和指标中说明。
-
-审校阶段要求模型说明每处修改的理由；开启 `--review` 时，变更记录同时包含程序生成的文本差异和模型理由。模型理由未经独立验证，可能不准确；请以实际差异为准。
-
-使用 `--vector-routing` 才会启用 embedding 辅助选择，默认 embedding 模型路径为 `models/Qwen3-Embedding-0.6B`；可通过 `--embedding-model` 指定本地目录或 Hugging Face 模型 ID。未加该参数时只使用注意力选择。speaker block 的相邻扩张由 `--speaker-neighbor-blocks` 控制，与是否启用向量无关。
-
-`--routing-audit` 会在输出旁生成 `.audit.txt` 和 `.audit.json`，记录选中范围、各发言块保留情况以及原文片段。每次运行自动生成的 `metrics.txt` / `metrics.json` 包含 KV、耗时、token 和 review 状态；启用向量时 JSON 还会记录每块的相关分数。`same text as draft` 是精确字符串比较，格式变化也会显示为不同。终端进度、`cap-hit` 与 review 跳过原因可用于判断运行状态。
-
-指标中的摘要 `total seconds` 和 `output tokens` 不包含 review；review 耗时和输出 token 另列在 `Review extra` 中。显式复用同一个 `--output` 路径会覆盖对应结果，建议为不同实验使用不同路径。
-
-摘要和审校均使用非思考模式。
-
-使用 `--seed 7` 指定摘要种子，`--review-seed 42` 单独指定整理种子，二者默认均为 7。整理默认使用贪心解码；添加 `--review-temperature 0.3 --review-top-p 0.9` 可仅对整理启用随机采样。摘要生成仍使用贪心解码。不同 GPU、依赖版本等可能影响复现；评测命令的 `--seed` 默认也为 7。
-
-
-
-## 评测
-
-正式实验 1 的独立入口见 [experiment_1/README.md](experiment_1/README.md)，包含逐样本摘要、断点恢复、截断记录和 CUDA 峰值统计。该实验比较两种通信流程的初稿，均不运行 review。
-
-单个数据集评测会比较 `routed_kv` 和 `specialist_text`，报告摘要质量和通信效率：
+### 实验1：先测3个样本
 
 ```bash
-python -m meeting_evaluation.test \
+python -m experiment_1 \
+  --input input/meetingbank_speaker_4k_8k_test.jsonl \
   --benchmark meetingbank \
-  --input input/meetingbank_speaker_test.jsonl \
-  --output-dir test_result \
-  --num-samples 25 \
-  --model Qwen/Qwen3-4B \
-  --receiver-kv-role-budget-ratio 0.25 \
+  --output-dir test_result/experiment_1_chunk_3_seed12 \
+  --num-samples 3 \
+  --model Qwen/Qwen3-8B \
+  --device cuda \
+  --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
-  --device cuda
+  --vector-routing \
+  --seed 12 \
+  --summary-seed 42
 ```
 
-自有 JSONL 也可以作为 `--input`；`--benchmark` 用于标记报告名称，可选 `ami`、`icsi`、`qmsum_committee`、`meetingbank`。`--num-samples 0` 表示使用全部记录。只需要 token、缓存和耗时指标时，加 `--communication-metrics-only`；程序仍会生成摘要来统计输出 token，但不保存摘要或计算质量分数。
+取当前文件前3个样本，每条分别运行 `chunk_kv` 与 `chunk_text`，不是每个数据集各3条。
+输出包含 ROUGE、逻辑 token、耗时、显存、重复诊断、逐样本摘要和中间报告。
+BERTScore 使用保存后的结果离线补评，不重新生成摘要；不使用 AI judge。
+详细指令、指标定义和断点续跑见 [experiment_1/README.md](experiment_1/README.md)。
 
-此评测入口比较的是两个模式的摘要初稿，**不执行 review**。单数据集入口支持加入 `--vector-routing`；不加时默认关闭。当前 `meeting_evaluation.run_all` 不提供向量参数，使用注意力路由；若要评测向量辅助路由，请对各数据集分别运行 `meeting_evaluation.test`。
+### 目录与结果口径
 
-报告保存在 `test_result/YYYYMMDD_HHMM/`，同一 benchmark 生成 `.txt` 和 `.json`。单次评测若在同一分钟重复运行同一 benchmark，可能覆盖同名报告。
+| 目录 | 用途 |
+|---|---|
+| `receiver_kv_workflow/` | 模型、路由、cache、共享参数与单会议入口 |
+| `chunk_specialist_workflow/` | 全文分块、局部分析和最终汇总 |
+| `vector/` | embedding 下载与语义辅助路由 |
+| `data_preprocess/` | 数据预处理和长度筛选 |
+| `experiment_1/` | 配对质量与成本实验、离线 BERTScore |
+| `meeting_evaluation/` | 通用批量指标工具 |
+| `meeting_stream/` | 向 AG-UI 提供 WebSocket 状态和最终摘要 |
+| `input/`, `output/`, `test_result/` | 输入、摘要、实验记录 |
 
-四个预处理后的数据集可以一次运行：
-
-```bash
-python -m meeting_evaluation.run_all \
-  --num-samples 25 \
-  --speaker-neighbor-blocks 1 \
-  --receiver-kv-role-budget-ratio 0.25 \
-  --model Qwen/Qwen3-4B \
-  --device cuda
-```
-
-默认寻找 `input/ami_test.jsonl`、`input/icsi_test.jsonl`、`input/qmsum_committee_test.jsonl` 和 `input/meetingbank_speaker_test.jsonl`。加 `--skip-missing` 可跳过缺失的数据集。准备方法见 [data_preprocess/README.md](data_preprocess/README.md)：AMI、ICSI、Committee 来自 QMSum 的不同领域，MeetingBank 使用官方带说话人转录的议程条目。QMSum 的 `all` 目录抽样不应称为官方 held-out test 结果。
-
-## 参数与结果口径
-
-| 参数 | 作用 |
-| --- | --- |
-| `--role-budget-ratio` / `--receiver-kv-role-budget-ratio` | 每个角色查询用于初步选择 KV 位置的比例。角色结果会取并集，之后还会扩张邻居块，因此最终保留比例可能大于该值。 |
-| `--speaker-neighbor-blocks` | 选中的 speaker block 前后各保留多少个相邻 block，默认 1；0 表示不扩张。 |
-| `--span-tokens` / `--receiver-kv-span-tokens` | 角色查询初步选择连续 token 位置时的 span 大小，默认 32；最终选择仍以完整 speaker block 为单位。 |
-| `--query-batch-tokens` / `--receiver-kv-query-batch-tokens` | 注意力查询计算的批次大小，默认 8。 |
-
-ROUGE-L 是与参考摘要的词序重叠指标，不等于事实准确率；source-support 是词汇重叠代理指标，不是人工事实核查。KV positions、KV 字节、logical model-token events、实际耗时是不同口径，不能直接互换。
-
-## 当前边界
-
-全文会先做一次 prefill；每次生成一直运行到模型输出结束标记或用尽模型上下文的剩余容量。如果输入已没有生成空间，程序会报错，不会自动分块总结或静默截断。`cap hits` 表示生成达到上下文边界；没有人为输出上限时，耗时和显存占用可能增加。当前 cache 适配器针对标准 RoPE、全注意力的 Qwen3 模型；全文 KV 在路由期间仍会占用显存，接收端 KV 变小不等于整个进程的峰值显存同比下降。
-
-更多实现说明见 [receiver_kv_workflow/README.md](receiver_kv_workflow/README.md) 和 [meeting_evaluation/README.md](meeting_evaluation/README.md)。
-
-可视化接口的安装、启动和 SSH 端口映射见 [meeting_stream/README.md](meeting_stream/README.md)。
-
----
+逻辑模型 token、KV positions、KV tensor bytes 与 UTF-8 bytes 是不同指标。
+token 节省不等于 FLOPs、API计费或网络流量节省；embedding token 单独报告。
+全文 KV 仍驻留，接收缓存变小不代表进程峰值显存同比下降。ROUGE/BERTScore 不等于
+事实准确率，词面 source-support proxy 也不是事实核查。转录缺失视觉信息或内容有歧义
+时，摘要可能出错。当前适配标准RoPE、全注意力 Qwen3。
 
 ## English
 
-This project uses training-free receiver-conditioned KV routing to generate meeting summaries and compare KV communication with a natural-language handoff. It takes a speaker-labelled transcript as input and produces summaries and evaluation metrics.
+This training-free workflow prefills the full transcript once and selects global
+evidence using role-conditioned attention and optional embedding assistance.
+Independent specialists receive the same global selected context plus a current
+original transcript part and its chronological location. Final synthesis receives
+global context and ordered natural-language local reports.
 
-```text
-transcript → full-source KV prefill → role queries and speaker-block selection
-                                      ├─ routed_kv: selected KV → summary receiver → draft + same KV → review → final summary
-                                      └─ specialist_text: selected evidence → text handoff → summary receiver
-```
+`chunk_kv` transfers global source context as selected KV; `chunk_text` supplies
+verbatim text from the same selected coordinates. Parts, instructions, stage seeds
+and decoding settings match. Source KV retains contextual and positional history
+that re-encoded selected text does not, so this compares workflows rather than a
+pure representation-only intervention. The old direct-summary, single-handoff and
+review paths are retired.
 
-`routed_kv` sends the selected source KV cache directly to the receiver. `specialist_text` uses the same routed evidence but first generates a natural-language handoff for the receiver. The variants use the same model, source, and final summary requirements; the text variant includes an additional generation step, so their computation is not identical.
+Use UTF-8 speaker-labelled TXT for one meeting, or JSONL with `id`,
+`transcript`/`context` and human `summary`/`answer` for evaluation. Adjacent turns
+from the same speaker stay together. No ASR or diarization is provided. Inputs are
+not silently truncated. Approximate 1/8 original-transcript parts with 1/4 overlap
+preserve speaker boundaries; actual part counts can exceed eight.
 
-### Project layout
+The Bash commands above are the current entry points. Defaults: Qwen3-8B, source
+budget per role0.25, speaker neighbors +/-1, local sampling0.3/0.9 with repetition
+penalty1.1, final sampling0.3/0.9 with thinking enabled. `--summary-*` controls final
+synthesis and `--no-summary-thinking` disables its reasoning. `--output` selects
+the primary answer path; other variants use sibling files. Thinking is separately
+saved and excluded from answer quality scoring, but included in generated-token
+costs. No separate review or arbitrary output-token cap is applied.
 
-```text
-input/                  Transcripts and prepared evaluation data
-output/                 Summaries and optional audit
-test_result/            Evaluation reports and runtime metrics
-receiver_kv_workflow/   Summarization workflow
-meeting_stream/         WebSocket status and results for the AG-UI bridge
-vector/                 Optional embedding-assisted selection
-data_preprocess/        Benchmark preparation
-meeting_evaluation/     Evaluation entry points, metrics, and reports
-experiment_1/           Paired KV vs natural-language handoff experiment
-requirements.txt        pip dependencies
-requirements.yml        Conda environment configuration
-```
+Experiment1 runs both variants for each selected record, saving summaries, stage
+reports, timings, CUDA allocator peaks, logical decoder token events and reference
+overlap. Three records means three paired comparisons from one input file.
+BERTScore can be added offline using the same saved answers. There is no LLM judge.
+See [experiment documentation](experiment_1/README.md),
+[workflow architecture](chunk_specialist_workflow/README.md),
+[data preparation](data_preprocess/README.md) and
+[WebSocket service](meeting_stream/README.md).
 
-### Environment setup
-
-Run the commands from the project root. Multiline examples use Linux / Bash; in PowerShell, use backticks for line continuation or enter the command on one line.
-
-```bash
-conda create -n latent-agents python=3.11 -y
-conda activate latent-agents
-pip install -r requirements.txt
-```
-
-Alternatively, create the environment with `conda env create -f requirements.yml`. The files specify different PyTorch CUDA wheels: CUDA 12.8 in `requirements.txt` and CUDA 12.6 in `requirements.yml`. Choose the one appropriate for your machine. The default model is `Qwen/Qwen3-4B`; its files must be accessible on the first run.
-
-### Input formats
-
-#### One meeting: UTF-8 TXT
-
-Save the transcript as, for example, `input/meeting1.txt`. Start each new speaker turn with a label followed by a colon and a space:
-
-```text
-Alice: Let's check the project status.
-Alice: The design proposal is complete.
-Bob: I will send the test report by Friday.
-Alice: We will discuss the results next Tuesday.
-```
-
-Anonymous labels such as `Speaker_0: ...` are also accepted. Consecutive turns from the same speaker are grouped into one speaker block, and blocks are selected by relevance. The program does not perform speech recognition or speaker diarization: audio and unlabelled transcripts must be transcribed and labelled externally first.
-
-#### Batch evaluation: UTF-8 JSONL
-
-Use one JSON object per line and separate speaker turns within `transcript` with `\n`:
-
-```jsonl
-{"id":"meeting_001","transcript":"Alice: How is the project?\nBob: I will send the report on Friday.","summary":"Bob will send the report on Friday."}
-```
-
-- `id`: sample identifier; unique IDs are recommended.
-- `transcript`: speaker-labelled transcript; `context` is also accepted.
-- `summary`: human reference summary; `answer` is also accepted. A meaningful reference-based ROUGE-L score requires a reference summary.
-- `question`: optional field. The current workflow uses a fixed meeting-summary request; this field does not change routing or the summary task.
-
-The built-in ROUGE-L implementation uses English-oriented tokenization and is not suitable for directly evaluating Chinese summaries.
-
-### Generate a meeting summary
-
-Generate only the KV-communication summary:
-
-```bash
-python -m receiver_kv_workflow.run \
-  --transcript input/meeting1.txt \
-  --output output/meeting1.txt \
-  --model Qwen/Qwen3-4B \
-  --role-budget-ratio 0.25 \
-  --speaker-neighbor-blocks 1 \
-  --variants routed_kv \
-  --device cuda
-```
-
-The summary is written to `output/meeting1.txt`. Runtime metrics are written to `test_result/receiver_kv/<timestamp>/metrics.txt` and `metrics.json`. Without `--output`, summaries go to `output/receiver_kv/<timestamp>/`.
-
-To generate the natural-language control as well, replace `--variants routed_kv` with:
-
-```text
---variants routed_kv specialist_text
-```
-
-The text control is then written to `output/meeting1.specialist_text.txt`. Add `--routing-audit` to save selected source ranges and other audit information. Audit files may contain transcript text, so protect them as you would the original transcript.
-
-By default, routed KV generation includes review and `--output` contains the reviewed summary. Add `--review` to also save `.draft.txt` and `.reviewed.changes.txt` with the original draft, textual differences and model-provided reasons. Review reuses the selected source KV without separate retrieval; the evidence can be incomplete and model review does not guarantee factual accuracy. If review is empty or truncated, it is skipped and `--output` contains the draft, with the status recorded in logs and metrics.
-
-The model is asked to explain each change, but reasons can be missing or inaccurate; use the textual diff for review.
-
-Add `--vector-routing` to enable embedding-assisted selection. The default embedding model is `models/Qwen3-Embedding-0.6B`; `--embedding-model` accepts a local directory or Hugging Face model ID. Without this flag, selection uses attention only. Neighbour expansion is controlled independently by `--speaker-neighbor-blocks`.
-
-`--routing-audit` writes `.audit.txt` and `.audit.json` beside the output, including selected ranges, speaker-block coverage and transcript excerpts. Each run also writes `metrics.txt` and `metrics.json` with KV, timing, token and review status; vector runs include per-block scores in JSON. `same text as draft` compares strings exactly, so formatting-only changes count as different. Progress logs, `cap-hit` and review skip reasons help diagnose a run.
-
-Summary `total seconds` and `output tokens` exclude review; review time and output tokens appear separately under `Review extra`. Reusing an explicit `--output` path overwrites the corresponding results; use a different path for each experiment.
-
-Summary generation and review use non-thinking mode.
-
-Use `--seed 7` for summary generation and `--review-seed 42` for organization; both default to 7. Organization is greedy by default; set `--review-temperature 0.3 --review-top-p 0.9` to enable sampling only for that stage. Summary generation remains greedy. Results can still vary across GPU hardware or dependency versions. The evaluation command also defaults to seed 7.
-
-
-
-### Evaluation
-
-See [experiment_1/README.md](experiment_1/README.md) for the standalone paired experiment with sample-level summaries, resume, truncation flags and CUDA peak measurements. It compares draft summaries with review disabled for both workflows.
-
-Evaluate both `routed_kv` and `specialist_text` on one dataset:
-
-```bash
-python -m meeting_evaluation.test \
-  --benchmark meetingbank \
-  --input input/meetingbank_speaker_test.jsonl \
-  --output-dir test_result \
-  --num-samples 25 \
-  --model Qwen/Qwen3-4B \
-  --receiver-kv-role-budget-ratio 0.25 \
-  --speaker-neighbor-blocks 1 \
-  --device cuda
-```
-
-Your own JSONL can also be supplied via `--input`. `--benchmark` labels the report and accepts `ami`, `icsi`, `qmsum_committee`, or `meetingbank`. Set `--num-samples 0` to process every record. Add `--communication-metrics-only` for token, cache, and timing metrics only; summaries are still generated to count output tokens, but their text is discarded and quality is not scored.
-
-This evaluation compares the two draft summaries and **does not run review**. The single-dataset entry point accepts `--vector-routing`, which is off by default. `meeting_evaluation.run_all` currently has no vector-routing option and uses attention routing; run `meeting_evaluation.test` separately for each dataset to evaluate vector-assisted routing.
-
-Reports are written as `.txt` and `.json` under `test_result/YYYYMMDD_HHMM/`. Repeating the same benchmark within the same minute can overwrite a report with the same name.
-
-Run all four prepared datasets with:
-
-```bash
-python -m meeting_evaluation.run_all \
-  --num-samples 25 \
-  --speaker-neighbor-blocks 1 \
-  --receiver-kv-role-budget-ratio 0.25 \
-  --model Qwen/Qwen3-4B \
-  --device cuda
-```
-
-The default inputs are `input/ami_test.jsonl`, `input/icsi_test.jsonl`, `input/qmsum_committee_test.jsonl`, and `input/meetingbank_speaker_test.jsonl`. Add `--skip-missing` to skip unavailable datasets. See [data_preprocess/README.md](data_preprocess/README.md) for preparation: AMI, ICSI, and Committee are separate QMSum domains, while MeetingBank uses official agenda-item segments with speaker-labelled transcripts. Samples drawn from QMSum's `all` directories should not be reported as official held-out test results.
-
-### Parameters and metrics
-
-| Parameter | Meaning |
-| --- | --- |
-| `--role-budget-ratio` / `--receiver-kv-role-budget-ratio` | Initial KV-position budget per role query. Role selections are unioned and neighbouring blocks are then added, so the final retained fraction can exceed this value. |
-| `--speaker-neighbor-blocks` | Number of adjacent speaker blocks retained on each side of a selected block; default 1, or 0 to disable expansion. |
-| `--span-tokens` / `--receiver-kv-span-tokens` | Span size used in initial role-query position selection; default 32. Final selection uses complete speaker blocks. |
-| `--query-batch-tokens` / `--receiver-kv-query-batch-tokens` | Batch size for attention-query computation; default 8. |
-
-ROUGE-L measures word-order overlap with a reference, not factual accuracy. Source-support is a lexical-overlap proxy, not a human factuality check. KV positions, KV bytes, logical model-token events, and elapsed time are different measures and cannot be directly converted into one another.
-
-### Current limits
-
-The complete transcript is prefetched once. Each generation continues until an EOS token or the remaining model context is exhausted. The program raises an error if the prompt leaves no output room; it does not automatically summarize document chunks or silently truncate the input. `cap hits` counts outputs that reach the context boundary. Without a user-set output limit, inference may take longer and use more memory. The cache adapter targets dense full-attention Qwen3 models with standard RoPE. The full source KV remains resident during routing, so a smaller receiver KV does not imply a proportional reduction in peak process memory.
-
-For implementation details, see [receiver_kv_workflow/README.md](receiver_kv_workflow/README.md) and [meeting_evaluation/README.md](meeting_evaluation/README.md).
-
-See [meeting_stream/README.md](meeting_stream/README.md) for the WebSocket service and SSH port forwarding.
-
-## Optional semantic block routing / 可选向量辅助块选择
-
-Optional selected-KV window specialists: add `--chunk-specialists` with only
-`--variants routed_kv`. Existing selection and vector assistance run unchanged;
-independent agents each read the full selected KV plus one original-transcript part with its location, then a final agent receives
-ordered local reports plus the original selected KV. See
-[chunk_specialist_workflow/README.md](chunk_specialist_workflow/README.md).
-可选 `--chunk-specialists` 将选中 KV 分窗口交给独立 specialist，原文只 prefill 一次；
-保留原有语义辅助路由，最终使用局部报告和原 selected KV 汇总。
-
-See [vector/README.md](vector/README.md) for embedding model download,
-`--vector-routing`, inference/evaluation commands and accounting details.
-向量模块辅助选择发言块，最终仍传原始 KV；默认不启用，便于保留原方法对照。
+KV tensor bytes, positions, text UTF-8 bytes and model-token events have separate
+definitions; they are not measured network traffic or billed-token/FLOP savings.
+The full source cache stays resident. Embedding tokens are accounted separately.
+Automatic reference overlap and lexical support do not establish factual accuracy.

@@ -40,8 +40,7 @@ python -m receiver_kv_workflow.run \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
-  --variants routed_kv \
-  --chunk-specialists \
+  --variants chunk_kv \
   --specialist-parts 8 \
   --specialist-overlap 0.25 \
   --specialist-temperature 0.3 \
@@ -49,17 +48,17 @@ python -m receiver_kv_workflow.run \
   --specialist-repetition-penalty 1.1 \
   --summary-thinking \
   --seed 12 \
-  --review-seed 42 \
-  --review-temperature 0.3 \
-  --review-top-p 0.9
+  --summary-seed 42 \
+  --summary-temperature 0.3 \
+  --summary-top-p 0.9
 ```
 
-`--review-*` controls final synthesis here. Local seeds are `seed + part_index`.
+`--summary-*` controls final synthesis. Local seeds are `seed + part_index`.
 `--summary-thinking` enables thinking only at final synthesis; local specialists
 remain non-thinking. The final answer excludes reasoning, which is saved separately.
 Context exhaustion raises an error instead of silently truncating input.
 
-`experiment_1 --chunk-specialists` also supplies a text control: the global selected
+`experiment_1` also supplies a text control: the global selected
 context is rendered as verbatim text, while current-part original text, location,
 instructions and decoding settings match the KV path. Final synthesis receives
 global selected text plus its local reports. This compares workflows; contextualized

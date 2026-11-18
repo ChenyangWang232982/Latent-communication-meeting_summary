@@ -12,7 +12,6 @@ def fingerprint(value):
 
 
 class GenerationTrace:
-    STAGES = {"routed_kv_receiver", "specialist_text_sender", "specialist_text_receiver"}
 
     def __init__(self, directory, index, sample_id, log):
         self.directory = directory / "live" / f"{index:05d}"
@@ -62,7 +61,7 @@ class GenerationTrace:
 
     def __call__(self, event):
         stage = event["stage"]
-        if stage not in self.STAGES and not stage.startswith(('chunk_', 'text_chunk_')):
+        if not stage.startswith(('chunk_', 'text_chunk_')):
             raise ValueError(f"Unknown generation stage: {stage}")
         if event.get("event") == "input":
             self.input(event)
