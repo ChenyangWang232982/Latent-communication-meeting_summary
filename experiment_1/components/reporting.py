@@ -36,12 +36,22 @@ def _format(value, digits=4):
 
 
 def write_reports(store, completed, failures, planned):
+    chunk_mode = any(s['result'].get('chunk_specialists_by_variant') for s in completed)
     result = {"planned_samples": planned, "completed_samples": len(completed), "failed_samples": len(failures),
               "failure_ids": [s["id"] for s in failures], "review": False,
               "comparison_note": "Same selected source positions; text adds a generated handoff. This is a workflow comparison, not a representation-only intervention.",
               "memory_note": "CUDA peaks are PyTorch allocated bytes during each variant, including model, embedding model and full resident source KV. They exclude shared prefill/selection peaks, reserved allocator memory and non-PyTorch allocations.",
               "payload_note": "KV tensor bytes and UTF-8 text handoff bytes are separately defined logical payloads, not measured network traffic.",
               "quality_note": "ROUGE-L and lexical source overlap do not measure factual accuracy; use the human review sheet with source evidence."}
+    result['workflow'] = 'chunk_specialists' if chunk_mode else 'direct_summary'
+    if chunk_mode:
+        result['comparison_note'] = ('Same globally selected source positions, full-transcript chronological windows, stage instructions and decoding settings. '
+            'Every specialist receives global selected context as KV or verbatim selected text, plus the same current-part original text and location. '
+            'Final synthesis receives global selected context and ordered local reports. '
+            'Both paths generate local natural-language reports. Full-source contextualized KV and re-prefilled text differ '
+            'in positional history and available prior context; this is a workflow comparison, not a pure representation intervention.')
+        result['payload_note'] = ('Logical payload sums all stage KV tensor bytes or selected evidence UTF-8 bytes, current-part UTF-8 bytes and report UTF-8 bytes. '
+            'These quantities are separately defined; they are not measured network traffic.')
     if completed:
         for sample in completed:
             for name in VARIANTS:
@@ -88,7 +98,7 @@ def write_reports(store, completed, failures, planned):
             "receiver_samples_with_duplicate_bullets": sum(row["receiver"]["duplicate_bullet_excess"] > 0 for row in repetition if row["variant"] == name),
             "sender_samples_with_duplicate_bullets": sum(row["sender"]["duplicate_bullet_excess"] > 0 for row in repetition if row["variant"] == name)} for name in VARIANTS}
     atomic_json(store.directory / "summary.json", result)
-    lines = ["Experiment 1: paired draft-summary comparison (review disabled)",
+    lines = ["Experiment 1: paired chunk-specialist comparison (review disabled)" if chunk_mode else "Experiment 1: paired draft-summary comparison (review disabled)",
              f"Planned: {planned}; completed: {len(completed)}; failed: {len(failures)}",
              "variant | ROUGE-L | source-support proxy | mean pipeline sec | mean CUDA peak MiB | handoff/receiver cap hits"]
     for name in VARIANTS:

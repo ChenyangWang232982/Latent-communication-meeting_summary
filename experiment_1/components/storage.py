@@ -49,6 +49,10 @@ class RunStore:
             folder.mkdir(parents=True, exist_ok=True)
             documents = {**sample["result"]["answers"], "reference": sample["reference"]}
             documents["specialist_text_handoff"] = sample["result"].get("handoffs", {}).get("specialist_text", "")
+            for name, detail in sample['result'].get('chunk_specialists_by_variant', {}).items():
+                atomic_json(folder / f'{name}.specialists.json', detail)
+                for stage, thought in detail.get('thinking_outputs', {}).items():
+                    documents[f'{name}.{stage}.thinking'] = thought
             for name, content in documents.items():
                 path = folder / f"{name}.md"
                 temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")

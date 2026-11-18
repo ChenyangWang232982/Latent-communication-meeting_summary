@@ -29,6 +29,16 @@ def add_workflow_arguments(parser):
     parser.add_argument("--top-k", type=int, default=0, help="0 disables top-k filtering; sampling control: 20")
     parser.add_argument("--repetition-penalty", type=float, default=1.0,
                         help="Generated-only token penalty shared across sender/receivers; 1 disables, try 1.1")
+    parser.add_argument('--chunk-specialists', action='store_true', help='Paired chronological specialists for both KV and text')
+    parser.add_argument('--specialist-parts', type=int, default=8)
+    parser.add_argument('--specialist-overlap', type=float, default=0.25)
+    parser.add_argument('--specialist-temperature', type=float, default=0.3)
+    parser.add_argument('--specialist-top-p', type=float, default=0.9)
+    parser.add_argument('--specialist-repetition-penalty', type=float, default=1.1)
+    parser.add_argument('--summary-thinking', action='store_true', help='Thinking at final synthesis in both chunk variants')
+    parser.add_argument('--summary-seed', type=int, default=42)
+    parser.add_argument('--summary-temperature', type=float, default=0.3)
+    parser.add_argument('--summary-top-p', type=float, default=0.9)
     from vector.cli import add_arguments
     add_arguments(parser)
 
@@ -48,6 +58,8 @@ def arguments():
         parser.error("Invalid role budget or vector weight")
     if args.speaker_neighbor_blocks < 0 or min(args.span_tokens, args.query_batch_tokens) < 1:
         parser.error("Neighbor count must be non-negative and token budgets positive")
+    if args.summary_thinking and not args.chunk_specialists:
+        parser.error('--summary-thinking requires --chunk-specialists')
     return args
 
 
@@ -59,7 +71,17 @@ def model_config(args):
         fp32_lm_head=getattr(args, "fp32_lm_head", False),
         temperature=getattr(args, "temperature", 0.0), top_p=getattr(args, "top_p", 1.0),
         top_k=getattr(args, "top_k", 0),
-        repetition_penalty=getattr(args, "repetition_penalty", 1.0))
+        repetition_penalty=getattr(args, "repetition_penalty", 1.0),
+        chunk_specialists=getattr(args, 'chunk_specialists', False),
+        specialist_parts=getattr(args, 'specialist_parts', 8),
+        specialist_overlap=getattr(args, 'specialist_overlap', 0.25),
+        specialist_temperature=getattr(args, 'specialist_temperature', 0.3),
+        specialist_top_p=getattr(args, 'specialist_top_p', 0.9),
+        specialist_repetition_penalty=getattr(args, 'specialist_repetition_penalty', 1.1),
+        summary_thinking=getattr(args, 'summary_thinking', False),
+        review_seed=getattr(args, 'summary_seed', 42),
+        review_temperature=getattr(args, 'summary_temperature', 0.3),
+        review_top_p=getattr(args, 'summary_top_p', 0.9))
 
 
 def sha256(data: bytes):
@@ -67,7 +89,7 @@ def sha256(data: bytes):
 
 
 def reproducibility(args, records, config):
-    paths = sorted(path for folder in ("experiment_1", "receiver_kv_workflow", "vector", "meeting_evaluation")
+    paths = sorted(path for folder in ("experiment_1", "receiver_kv_workflow", "vector", "meeting_evaluation", "chunk_specialist_workflow")
                    for path in (ROOT / folder).rglob("*.py"))
     code = {str(path.relative_to(ROOT)).replace("\\", "/"): sha256(path.read_bytes()) for path in paths}
     packages = {}

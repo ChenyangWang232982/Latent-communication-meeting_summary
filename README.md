@@ -342,7 +342,7 @@ See [meeting_stream/README.md](meeting_stream/README.md) for the WebSocket servi
 
 Optional selected-KV window specialists: add `--chunk-specialists` with only
 `--variants routed_kv`. Existing selection and vector assistance run unchanged;
-independent agents read windows of that selected KV, then a final agent receives
+independent agents each read the full selected KV plus one original-transcript part with its location, then a final agent receives
 ordered local reports plus the original selected KV. See
 [chunk_specialist_workflow/README.md](chunk_specialist_workflow/README.md).
 可选 `--chunk-specialists` 将选中 KV 分窗口交给独立 specialist，原文只 prefill 一次；

@@ -1,5 +1,75 @@
 # Experiment 1: KV routing vs natural-language handoff
 
+## Current workflow: paired chunk specialists / 当前工作流：分块对照
+
+Use `--chunk-specialists` to evaluate the current application workflow. Both variants reuse
+one source prefill, one routing result and identical chronological speaker windows:
+
+- `routed_kv`: every local specialist receives the **full global selected KV plus current-part original text**.
+  Parts cover the original full transcript, not just retained KV rows. Their part number, source
+  speaker-block range and transcript-text percentage are explicitly supplied. Final synthesis
+  receives the global selected KV and ordered local reports.
+- `specialist_text`: global context is verbatim text recovered from the **same selected source positions**,
+  encoded as a fresh chat prompt. No additional generated sender handoff is inserted.
+  Current-part original text and location are identical to the KV path.
+- Both produce local natural-language notes, then synthesize them in meeting order using
+  the same instructions, stage seeds and decoding settings. `--summary-thinking` enables
+  thinking only at the final synthesizer, for **both** variants. There is no separate review.
+
+```bash
+conda activate latent-agents
+python -m experiment_1 \
+  --input input/meetingbank_speaker_4k_8k_test.jsonl \
+  --benchmark meetingbank \
+  --output-dir test_result/experiment_1_chunk_3_seed12 \
+  --num-samples 3 \
+  --model Qwen/Qwen3-8B \
+  --device cuda \
+  --role-budget-ratio 0.25 \
+  --speaker-neighbor-blocks 1 \
+  --vector-routing \
+  --chunk-specialists \
+  --specialist-parts 8 \
+  --specialist-overlap 0.25 \
+  --specialist-temperature 0.3 \
+  --specialist-top-p 0.9 \
+  --specialist-repetition-penalty 1.1 \
+  --summary-thinking \
+  --summary-seed 42 \
+  --summary-temperature 0.3 \
+  --summary-top-p 0.9 \
+  --seed 12
+```
+
+这是输入文件前 3 条记录的配对实验，每条分别运行 KV 和自然语言路径。
+`--specialist-parts 8` 是窗口目标大小，不保证恰好生成 8 个窗口；重叠和完整发言块
+会影响实际数量。specialists 顺序执行，共享模型权重，不会同时加载多份模型。
+默认不启用 FP32 输出头；两条路径均使用相同模型默认精度。
+
+`summaries/00000/routed_kv.md` and `specialist_text.md` contain final answers only.
+Their sibling `*.specialists.json` files contain exact window positions, local reports,
+stage token counts, seeds and times. Thinking text is saved separately as `*.thinking.md`
+and excluded from summary quality scoring; its generated tokens remain in cost totals.
+`live/00000/` contains separate partial/status files for all stages, including
+`chunk_specialist_000`, `chunk_summary`, `text_chunk_specialist_000`, `text_chunk_summary`.
+Unlike the older direct-summary diagnostics, chunk mode does not record per-token logits.
+
+Token totals charge source prefill/probes once per standalone path, all local prompts (including current-part text) and
+outputs, and the final prompt/output. Text source tokens are re-encoded for each window and
+final prompt; KV source rows are reused. Embedding tokens remain separate. Payload totals
+sum all stage KV tensors or selected-evidence UTF-8 bytes, current-part UTF-8 bytes and local-report UTF-8 bytes;
+these quantities are distinct logical representations, not measured network traffic.
+
+相同坐标不等于相同隐藏状态：原始 KV 已包含全文历史，而选中文本重新编码后不包含
+被丢弃的前文，绝对位置和聊天封装也有差异。因此这是受控的工作流对照，不能宣称
+完全隔离了通信表示这一项因果变量。局部报告可能随上游生成结果改变，属于两条路径
+的实际效果。旧版结果应与本模式分开报告。
+
+ROUGE/token/time reports are written automatically. Optional offline BERTScore uses the
+existing `experiment_1.rescore` command; no summaries need to be regenerated.
+
+## Legacy direct-summary comparison
+
 This standalone experiment reuses `ReceiverKVRunner`, the normalized record loader and the existing ROUGE-L/source-overlap metrics. Experiment-specific code lives in `components/`. Both paths use the same source cache and selected source positions from one runner call. **Review is disabled for both paths.** `specialist_text` adds a generated natural-language handoff, so this measures two communication workflows rather than an isolated representation change. There is no full-source baseline in this experiment.
 
 ## Run / 运行

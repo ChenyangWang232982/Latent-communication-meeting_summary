@@ -127,9 +127,10 @@ class ReceiverKVRunner:
             raise ValueError(f"Transcript is empty: {record_id}")
         requested = tuple(dict.fromkeys(variants))
         chunk_result = None
+        chunk_results = {}
         if self.config.chunk_specialists:
-            if requested != ('routed_kv',) or diagnostic_full_source or diagnostic_refill_selected:
-                raise ValueError('Chunk specialists currently require only routed_kv without cache diagnostics')
+            if diagnostic_full_source or diagnostic_refill_selected:
+                raise ValueError('Chunk specialists do not support cache diagnostics')
         valid_variants = {"routed_kv", "specialist_text"}
         if not requested or any(name not in valid_variants for name in requested):
             raise ValueError("variants must be routed_kv and/or specialist_text")
@@ -286,31 +287,40 @@ class ReceiverKVRunner:
             answers, measurements, handoffs = {}, {}, {}
             if self.config.chunk_specialists:
                 from chunk_specialist_workflow.components.generation import run_specialists
-                emit('chunk_specialists', 'Independent specialists reading selected KV windows')
-                if on_variant is not None:
-                    on_variant('routed_kv', 'start')
-                answer, chunk_result = run_specialists(self, transcript, prefix, protected, selected, source, speaker_blocks,
-                                                on_generation=on_generation)
-                final_stage = chunk_result['stages']['chunk_summary']
-                local_stages = [v for k, v in chunk_result['stages'].items() if k != 'chunk_summary']
-                answers['routed_kv'] = answer
-                measurements['routed_kv'] = dict(
-                    incoming_positions=final_stage['source_kv_positions'],
-                    selected_source_positions=len(selected), incoming_cache_bytes=final_stage['source_kv_bytes'],
-                    logical_payload_bytes=sum(v['source_kv_bytes'] for v in chunk_result['stages'].values())+
-                        chunk_result['text_payload_bytes'],
-                    positions_vs_full_percent=100*(final_stage['source_kv_positions']-len(prefix))/len(prefix),
-                    cache_bytes_vs_full_percent=100*(final_stage['source_kv_bytes']-source_bytes)/source_bytes,
-                    receiver_seconds=final_stage['seconds'], specialist_seconds=sum(v['seconds'] for v in local_stages),
-                    pipeline_seconds_excluding_model_load=prefill_seconds+selection_seconds+chunk_result['pipeline_seconds'],
-                    generated_tokens=final_stage['output_tokens'], output_cap_hit=final_stage['output_cap_hit'],
-                    generation_counts=final_stage['generation_counts'],
-                    token_accounting=dict(source_prefill_tokens=len(prefix), selection_probe_tokens=selection_probe_tokens,
-                        specialist_prompt_tokens=sum(v['prompt_tokens'] for v in local_stages),
+                emit('chunk_specialists', 'Specialists reading shared global selected context plus current transcript parts')
+                for name in requested:
+                    if on_variant is not None:
+                        on_variant(name, 'start')
+                    answer, detail = run_specialists(self, transcript, prefix, protected, selected, source, speaker_blocks,
+                        on_generation=on_generation, on_progress=on_state,
+                        communication='kv' if name == 'routed_kv' else 'text')
+                    chunk_results[name] = detail
+                    if name == 'routed_kv':
+                        chunk_result = detail
+                    final_stage = list(detail['stages'].values())[-1]
+                    local_stages = list(detail['stages'].values())[:-1]
+                    answers[name] = answer
+                    handoffs[name] = '\n\n'.join(row['report'] for row in detail['reports'])
+                    measurements[name] = dict(
+                        incoming_positions=final_stage['source_kv_positions'] if name == 'routed_kv' else final_stage['prompt_tokens'],
+                        selected_source_positions=len(selected), incoming_cache_bytes=final_stage['source_kv_bytes'],
+                        logical_payload_bytes=sum(v['source_kv_bytes']+v['source_text_bytes']+v['current_part_text_bytes'] for v in detail['stages'].values())+
+                            detail['text_payload_bytes'],
+                        positions_vs_full_percent=100*(len(selected)-len(prefix))/len(prefix) if name == 'routed_kv' else None,
+                        cache_bytes_vs_full_percent=100*(final_stage['source_kv_bytes']-source_bytes)/source_bytes if name == 'routed_kv' else None,
+                        receiver_seconds=final_stage['seconds'], specialist_seconds=sum(v['seconds'] for v in local_stages),
+                        specialist_count=len(local_stages),
                         specialist_handoff_tokens=sum(v['output_tokens'] for v in local_stages),
-                        receiver_prompt_tokens=final_stage['prompt_tokens'], receiver_output_tokens=final_stage['output_tokens']))
-                if on_variant is not None:
-                    on_variant('routed_kv', 'end')
+                        specialist_handoff_cap_hit=any(v['output_cap_hit'] for v in local_stages),
+                        pipeline_seconds_excluding_model_load=prefill_seconds+selection_seconds+detail['pipeline_seconds'],
+                        generated_tokens=final_stage['output_tokens'], output_cap_hit=final_stage['output_cap_hit'],
+                        generation_counts=final_stage['generation_counts'],
+                        token_accounting=dict(source_prefill_tokens=len(prefix), selection_probe_tokens=selection_probe_tokens,
+                            specialist_prompt_tokens=sum(v['prompt_tokens'] for v in local_stages),
+                            specialist_handoff_tokens=sum(v['output_tokens'] for v in local_stages),
+                            receiver_prompt_tokens=final_stage['prompt_tokens'], receiver_output_tokens=final_stage['output_tokens']))
+                    if on_variant is not None:
+                        on_variant(name, 'end')
             if "routed_kv" in requested and not self.config.chunk_specialists:
                 emit("summary", "Generating the summary", metrics={"selectedPositions": len(selected)})
                 if on_variant is not None:
@@ -363,7 +373,7 @@ class ReceiverKVRunner:
                 }
                 if on_variant is not None:
                     on_variant("routed_kv", "end")
-            if "specialist_text" in requested:
+            if "specialist_text" in requested and not self.config.chunk_specialists:
                 if on_variant is not None:
                     on_variant("specialist_text", "start")
                 self.progress(f"{record_id}: specialist_text sender started")
@@ -509,4 +519,5 @@ class ReceiverKVRunner:
             "baseline_selected_positions": baseline_positions,
             "review": review_result,
             "chunk_specialists": chunk_result,
+            "chunk_specialists_by_variant": chunk_results,
         }

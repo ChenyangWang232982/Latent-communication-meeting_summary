@@ -133,6 +133,30 @@ class ExperimentTest(unittest.TestCase):
         sample = {"quality": {"routed_kv": {"rouge_l_f1": .4}, "specialist_text": {"rouge_l_f1": .3}}}
         self.assertIsNone(paired_interval([sample])["bootstrap_95_percent_interval"])
 
+    def test_chunk_pair_preserves_stage_payload_and_saves_reports(self):
+        class ChunkRunner(FakeRunner):
+            def run(self, *args, **kwargs):
+                result = super().run(*args, **kwargs)
+                result['chunk_specialists_by_variant'] = {
+                    name: {'reports': [{'window': 0, 'report': 'Local notes'}],
+                           'windows': [{'positions': [0, 2]}],
+                           'thinking_outputs': {'chunk_summary': 'reasoning'}, 'stages': {}}
+                    for name in ('routed_kv', 'specialist_text')}
+                for measurement in result['variants'].values():
+                    measurement['logical_payload_bytes'] = 321
+                return result
+        self.args.chunk_specialists = True
+        self.args.summary_thinking = True
+        path, failures = run(self.args, ChunkRunner)
+        self.assertEqual(failures, 0)
+        sample = json.loads((path / 'samples/00000.json').read_text(encoding='utf-8'))
+        self.assertEqual(sample['result']['variants']['specialist_text']['logical_payload_bytes'], 321)
+        detail = json.loads((path / 'summaries/00000/routed_kv.specialists.json').read_text(encoding='utf-8'))
+        self.assertEqual(detail['windows'][0]['positions'], [0, 2])
+        report = json.loads((path / 'summary.json').read_text(encoding='utf-8'))
+        self.assertEqual(report['workflow'], 'chunk_specialists')
+        self.assertIn('chronological windows', report['comparison_note'])
+
 
 if __name__ == "__main__":
     unittest.main()

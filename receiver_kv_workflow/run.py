@@ -27,7 +27,7 @@ def arguments():
     parser.add_argument("--review", action="store_true", help="Also save the routed_kv draft and review change log")
     parser.add_argument('--chunk-specialists', action='store_true', help='Independent specialists over selected KV windows')
     parser.add_argument('--summary-thinking', action='store_true', help='Enable thinking only for final chunk_summary')
-    parser.add_argument('--specialist-parts', type=int, default=8, help='Target selected-KV window size: selected tokens divided by this number')
+    parser.add_argument('--specialist-parts', type=int, default=8, help='Target original transcript part size: full transcript tokens divided by this number')
     parser.add_argument('--specialist-overlap', type=float, default=0.25, help='Approximate overlap at complete speaker-block boundaries')
     parser.add_argument('--specialist-temperature', type=float, default=0.3)
     parser.add_argument('--specialist-top-p', type=float, default=0.9)
