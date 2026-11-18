@@ -2,15 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from chunk_specialist_workflow.components.windows import selected_windows, transcript_windows
-
-
-def fake_transcript_windows(tokenizer, transcript, prefix, protected, parts, overlap):
-    count = 2 if len(prefix) == 7 else 1
-    for index in range(count):
-        yield dict(block_ids=[index], positions=[index+1], text=f'Original part {index+1}',
-                   char_start=index*10, char_end=(index+1)*10, total_source_blocks=count,
-                   transcript_fraction_start=index/count, transcript_fraction_end=(index+1)/count)
+from chunk_specialist_workflow.components.windows import selected_windows
 
 
 class ChunkSpecialistTest(unittest.TestCase):
@@ -35,7 +27,6 @@ class ChunkSpecialistTest(unittest.TestCase):
             evidence.append(positions)
             return 'Alice: original selected evidence', 4, 1
         with patch(target+'suffix', side_effect=prompt), patch(target+'generate', side_effect=generate), \
-             patch(target+'transcript_windows', side_effect=fake_transcript_windows), \
              patch(target+'select_cache', return_value='copied KV') as select, \
              patch(target+'size_bytes', return_value=100), \
              patch(target+'selected_evidence_excerpts', side_effect=excerpts):
@@ -44,11 +35,11 @@ class ChunkSpecialistTest(unittest.TestCase):
             _, text = run_specialists(*args, communication='text', on_progress=events.append)
         self.assertEqual(kv['windows'], text['windows'])
         self.assertEqual(requests[:3], requests[3:])
-        self.assertEqual(evidence, [[0,1,2,5,6]])
-        self.assertEqual(kv['shared_selected_positions'], [0,1,2,5,6])
-        self.assertIn('Original part 1', requests[0])
-        self.assertIn('source speaker blocks 1-1 of 2', requests[0])
-        self.assertIn('50.0%-100.0%', requests[1])
+        self.assertEqual(evidence, [[0,1,2], [0,5,6], [0,1,2,5,6]])
+        self.assertEqual(kv['synthesis_selected_positions'], [0,1,2,5,6])
+        self.assertNotIn('CURRENT MEETING PART', requests[0])
+        self.assertIn('window 1 of 2', requests[0])
+        self.assertIn('window 2 of 2', requests[1])
         self.assertEqual(select.call_count, 3)
         self.assertEqual(events[-1]['stage'], 'text_chunk_summary')
         self.assertTrue(all(cache is None and start == 0 for cache, start, _, _ in calls[3:]))
@@ -91,11 +82,10 @@ class ChunkSpecialistTest(unittest.TestCase):
             pairs(cache)[0][0].fill_(-1)
             return f'local report {len(caches)}', 2, False, dict(answer_tokens=1, terminal_tokens=1)
         target = 'chunk_specialist_workflow.components.generation.'
-        with patch(target+'suffix', side_effect=prompt), patch(target+'generate', side_effect=generate), \
-             patch(target+'transcript_windows', side_effect=fake_transcript_windows):
+        with patch(target+'suffix', side_effect=prompt), patch(target+'generate', side_effect=generate):
             answer, result = run_specialists(runner, 'source', [0]*7, [0], [0,1,2,5,6], source,
                                             [[1,2], [3,4], [5,6]])
-        self.assertEqual(caches, [[0,1,2,5,6]]*3)
+        self.assertEqual(caches, [[0,1,2], [0,5,6], [0,1,2,5,6]])
         self.assertTrue(torch.equal(pairs(source)[0][0], tensor))
         self.assertEqual(answer, 'local report 3')
         self.assertEqual(len(result['reports']), 2)
@@ -124,7 +114,6 @@ class ChunkSpecialistTest(unittest.TestCase):
             return 'Local notes', 2, False, dict(answer_tokens=1, terminal_tokens=1)
         target = 'chunk_specialist_workflow.components.generation.'
         with patch(target+'suffix', side_effect=prompt), patch(target+'generate', side_effect=generate), \
-             patch(target+'transcript_windows', side_effect=fake_transcript_windows), \
              patch(target+'select_cache', return_value=object()), patch(target+'size_bytes', return_value=100):
             answer, result = run_specialists(runner, 'source', [0]*2, [0], [0,1], object(), [[1]])
         self.assertEqual(flags, [False, True])
@@ -135,19 +124,6 @@ class ChunkSpecialistTest(unittest.TestCase):
                                      terminal_tokens=1, thinking_complete=True))
         self.assertEqual(sum(counts[k] for k in ('thinking_tokens','delimiter_tokens','answer_tokens','terminal_tokens')),
                          result['stages']['chunk_summary']['output_tokens'])
-
-    def test_original_text_windows_cover_unselected_turns_and_keep_speaker_boundaries(self):
-        text = 'Alice: first turn\nBob: omitted by routing\nAlice: final turn\n'
-        # One token per source character is sufficient to exercise exact source coordinates.
-        offsets = [(i, i+1) for i in range(len(text))]
-        target = 'chunk_specialist_workflow.components.windows.source_offsets'
-        with patch(target, return_value=(offsets, 0)):
-            windows = list(transcript_windows(object(), text, [0]*len(text), [], parts=3, overlap=0))
-        self.assertEqual(''.join(w['text'] for w in windows), text)
-        self.assertTrue(any('Bob: omitted by routing' in w['text'] for w in windows))
-        self.assertEqual(windows[0]['char_start'], 0)
-        self.assertEqual(windows[-1]['char_end'], len(text))
-        self.assertTrue(all(w['text'].startswith(('Alice:', 'Bob:')) for w in windows))
 
 
 if __name__ == '__main__':

@@ -37,7 +37,7 @@ def build_audit(tokenizer, transcript, prefix, protected, selected, baseline, ro
                           "status": "full" if len(kept) == len(unit) else "partial" if kept else "dropped",
                           "source": excerpts(unit), "retained_ranges": contiguous_ranges(kept)})
     return {"strategy": "speaker", "coordinate_convention": "zero-based half-open; token indices include source chat framing; characters index transcript",
-            "note": "Offline audit only. This audit describes global selected KV only; current-part original text is additionally supplied to specialists. A retained passage does not guarantee summary correctness.",
+            "note": "Offline audit only. This audit describes selected evidence partitioned across local KV windows; no unselected original text is added. A retained passage does not guarantee summary correctness.",
             "selected_positions": len(selected), "baseline_positions": len(baseline),
             "seed_selected_positions": len(seed_selection),
             "context_added_positions": len(selected - seed_selection),

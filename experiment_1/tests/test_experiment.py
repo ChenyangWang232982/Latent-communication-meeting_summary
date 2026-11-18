@@ -164,8 +164,8 @@ class ExperimentTest(unittest.TestCase):
         detail = json.loads((path / 'summaries/00000/chunk_kv.specialists.json').read_text(encoding='utf-8'))
         self.assertEqual(detail['windows'][0]['positions'], [0, 2])
         report = json.loads((path / 'summary.json').read_text(encoding='utf-8'))
-        self.assertEqual(report['workflow'], 'chunk_specialists')
-        self.assertIn('chronological windows', report['comparison_note'])
+        self.assertEqual(report['workflow'], 'selected_context_window_specialists')
+        self.assertIn('chronological selected-context windows', report['comparison_note'])
 
 
 if __name__ == "__main__":

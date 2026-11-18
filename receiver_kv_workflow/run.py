@@ -1,4 +1,4 @@
-"""Summarize a transcript with global selected context and chronological specialists."""
+"""Summarize a transcript using independent selected-context window specialists."""
 import argparse
 from datetime import datetime
 import json
@@ -69,7 +69,7 @@ def main():
     report = {k: v for k, v in result.items() if k not in ('answers', 'handoffs', 'chunk_specialists', 'chunk_specialists_by_variant', 'routing_audit')}
     report.update(model=args.model, source_file=str(args.transcript), settings=asdict(config))
     (metrics_dir / 'metrics.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-    rows = ['Global selected context + original-part specialists',
+    rows = ['Selected-context window specialists',
             'variant | ROUGE-L | pipeline sec | all-stage input/output token events | final output tokens']
     for variant, measurement in result['variants'].items():
         rows.append(f"{variant} | {measurement['rouge_l_f1']} | {measurement['pipeline_seconds_excluding_model_load']:.2f} | "

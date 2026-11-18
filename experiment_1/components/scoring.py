@@ -19,6 +19,6 @@ def score_sample(result, record, resources):
                              measurement.get("cuda_peak_allocated_bytes")) if v is not None]
         measurement["pipeline_peak_allocated_bytes"] = max(peaks) if peaks else None
         measurement['payload_definition'] = ('Sum of stage KV tensor bytes, selected evidence UTF-8 bytes, '
-            'current-part UTF-8 bytes and local report UTF-8 bytes; separate logical representations, not network traffic')
+            'and local report UTF-8 bytes; separate logical representations, not network traffic')
     return {"id": record.id, "status": "completed", "source": record.context, "reference": record.answer,
             "quality": quality, "result": result}

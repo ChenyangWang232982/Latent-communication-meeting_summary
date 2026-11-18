@@ -226,7 +226,7 @@ class ReceiverKVRunner:
                 emit("selected", f"Selected {len(selected)} KV positions; {len(prefix)} source positions")
             answers, measurements, handoffs = {}, {}, {}
             from chunk_specialist_workflow.components.generation import run_specialists
-            emit('chunk_specialists', 'Specialists reading shared global selected context plus current transcript parts')
+            emit('chunk_specialists', 'Specialists reading independent windows of selected source context')
             for name in requested:
                 if on_variant is not None:
                     on_variant(name, 'start')
@@ -243,7 +243,7 @@ class ReceiverKVRunner:
                 measurements[name] = dict(
                     incoming_positions=final_stage['source_kv_positions'] if name == 'chunk_kv' else final_stage['prompt_tokens'],
                     selected_source_positions=len(selected), incoming_cache_bytes=final_stage['source_kv_bytes'],
-                    logical_payload_bytes=sum(v['source_kv_bytes']+v['source_text_bytes']+v['current_part_text_bytes'] for v in detail['stages'].values())+
+                    logical_payload_bytes=sum(v['source_kv_bytes']+v['source_text_bytes'] for v in detail['stages'].values())+
                         detail['text_payload_bytes'],
                     positions_vs_full_percent=100*(len(selected)-len(prefix))/len(prefix) if name == 'chunk_kv' else None,
                     cache_bytes_vs_full_percent=100*(final_stage['source_kv_bytes']-source_bytes)/source_bytes if name == 'chunk_kv' else None,

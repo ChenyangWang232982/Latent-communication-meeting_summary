@@ -1,40 +1,36 @@
-# Global selected KV + transcript-part specialists
+# Selected-context window specialists / 窗口 KV specialists
 
-每个 specialist 的输入：**全文的 selected KV＋当前块原文＋分析要求及会议位置**。
-这里是经路由选中的全局 KV，不是 full KV，也不是只发送当前块的 KV。
+已恢复窗口方案：**每个 specialist 只接收当前窗口的 selected KV＋分析要求**。
+不额外附加当前块原文，也不向每个 specialist 发送全局 selected KV。
+只有最终汇总读取全部 selected KV＋按顺序排列的局部报告。
 
 ```text
-Full transcript → one source KV prefill → attention + optional vector routing
-                                              ↓
-                                      global selected KV
-                                              ↓ copied independently for each stage
-Original transcript → chronological parts → specialist (global selected KV + current part + location)
-                                              ↓ ordered local text reports
-                    final synthesis (global selected KV + reports; optional thinking)
+Transcript → one source KV prefill → attention + optional semantic routing
+                                          ↓ selected source positions
+                            chronological overlapping speaker-block windows
+                                          ↓
+                 each specialist: its own selected window KV + instructions
+                                          ↓ ordered natural-language reports
+                 final synthesis: all selected KV + reports (optional thinking)
 ```
 
-Parts cover the original full transcript, including turns omitted from selected KV.
-Adjacent turns by the same speaker remain together. `--specialist-parts 8` targets
-1/8 of original transcript tokens per part; `--specialist-overlap 0.25` targets
-1/4 overlap at speaker boundaries. Long turns stay intact, so actual part counts
-may exceed eight. There is no fixed output-item or generation-token limit.
+Window size targets selected source tokens / `--specialist-parts` (default8),
+excluding protected source framing. `--specialist-overlap 0.25` targets quarter
+overlap at complete speaker-block boundaries. Long turns stay intact and the
+number of windows can exceed eight. Discarded source rows are not restored.
+Absolute source positions and chronological order are preserved. Specialists
+are told their window number and total, and must not assume a local proposal
+is the final meeting-wide outcome. Final synthesis resolves supported revisions.
 
-Specialists are told their part number and total, original speaker-block range,
-and approximate percentage through the transcript by text length. This percentage
-is not an elapsed meeting time. They analyze the current part and use global
-context for relevant references, conditions and later revisions. They must not
-repeat unrelated global topics in every report.
-
-Each stage receives a disposable copy of the same selected source KV. Source KV
-is immutable; model weights are shared and agents execute sequentially. Reports
-are natural language, not concatenated generated KV. Final synthesis receives
-the same global selected KV plus local reports in original order. No separate
-review pass is added in this mode. The full source KV remains resident.
+Each stage gets a disposable writable cache copied from the immutable source KV.
+Models share weights and execute sequentially. Generated specialist KV is never
+concatenated. Local reports are natural language, so this is hybrid communication.
+The full original source KV remains resident; no peak-memory saving is guaranteed.
 
 ```bash
 python -m receiver_kv_workflow.run \
   --transcript input/meeting1.txt \
-  --output output/chunk_specialists/meeting1.txt \
+  --output output/window_kv/meeting1.txt \
   --model Qwen/Qwen3-8B \
   --device cuda \
   --role-budget-ratio 0.25 \
@@ -43,39 +39,35 @@ python -m receiver_kv_workflow.run \
   --variants chunk_kv \
   --specialist-parts 8 \
   --specialist-overlap 0.25 \
-  --specialist-temperature 0.3 \
-  --specialist-top-p 0.9 \
-  --specialist-repetition-penalty 1.1 \
   --summary-thinking \
   --seed 12 \
-  --summary-seed 42 \
-  --summary-temperature 0.3 \
-  --summary-top-p 0.9
+  --summary-seed 42
 ```
 
-`--summary-*` controls final synthesis. Local seeds are `seed + part_index`.
-`--summary-thinking` enables thinking only at final synthesis; local specialists
-remain non-thinking. The final answer excludes reasoning, which is saved separately.
-Context exhaustion raises an error instead of silently truncating input.
+Local defaults: temperature0.3, top_p0.9, repetition penalty1.1; local seed is
+`seed + window_index`. Final defaults: temperature0.3, top_p0.9, penalty1.0 and
+thinking enabled, controlled by `--summary-*`. Local specialists remain non-thinking.
+Final reasoning is saved separately and excluded from summary quality scoring,
+but its token cost is counted. No separate review or arbitrary output cap is added;
+context exhaustion raises an error.
 
-`experiment_1` also supplies a text control: the global selected
-context is rendered as verbatim text, while current-part original text, location,
-instructions and decoding settings match the KV path. Final synthesis receives
-global selected text plus its local reports. This compares workflows; contextualized
-source KV and freshly encoded selected text have different positional histories.
+`chunk_text` supplies the exact same local window positions as verbatim selected
+text, and final synthesis receives all selected evidence as text plus its ordered
+local reports. Both paths share window definitions, instructions and decoding
+settings. Full-source KV retains contextual/positional history different from
+re-encoded selected text; this is a workflow comparison, not pure representation
+isolation. `experiment_1` runs paired comparisons of these two methods.
 
-`.specialists.json` saves `shared_selected_positions`, original part text and its
-coordinates, ordered reports, stage tokens and timings. Window `positions` describe
-the current original part; they are not the subset of KV sent to that specialist.
-Every stage's `source_kv_positions` counts the full shared selected KV.
-Live partial/status files are saved per stage.
+`.specialists.json` includes `input_layout=selected_context_windows`,
+`synthesis_selected_positions`, local window `positions`/`block_ids`, reports,
+stage token counts and timings. Local KV sizes may differ; only the final stage
+receives all selected rows. Per-stage partial/status files support inspection.
 
-Logical model-token totals include source prefill/probes once per standalone
-workflow, every local prompt (including current-part text) and output, and final
-synthesis prompt/output including thinking. KV rows are reused rather than counted
-as new input tokens. Embedding encoder tokens are separate. Logical payload sums
-stage KV tensors or global evidence UTF-8 bytes, current-part UTF-8 bytes and report
-UTF-8 bytes. These are not measured network traffic or provider billing.
+Logical decoder totals include prefill/probes once per standalone workflow, all
+specialist prompts and outputs, and final prompt/output including thinking. KV
+rows are reused, not counted as newly encoded prompt tokens. Embedding tokens
+are separate. Logical payload sums stage KV tensors or evidence UTF-8 bytes plus
+serialized local-report UTF-8 bytes, not measured network traffic or billing.
 
 ```bash
 python -m unittest discover -s chunk_specialist_workflow/tests

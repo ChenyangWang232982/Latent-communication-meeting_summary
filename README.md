@@ -3,13 +3,13 @@
 ## 中文
 
 本项目采用无需额外训练的混合通信工作流：全文 prefill 一次，通过注意力与可选
-向量辅助路由选择全局证据；每个 specialist 接收相同的全局上下文、当前块原文和
-会议位置说明，生成局部报告；最终 agent 结合全局证据与有序报告生成摘要。
+向量辅助路由选择证据，再将选中的证据按发言块顺序组成重叠窗口；每个 specialist
+只接收自己的窗口并生成局部报告；最终 agent 结合全部选中证据与有序报告生成摘要。
 
-| 方法 | 每个 specialist 的全局上下文 | 当前块与最终汇总 |
+| 方法 | 每个 specialist 的输入 | 最终汇总 |
 |---|---|---|
-| `chunk_kv` | 全文路由选中的 KV cache | 当前块原文；最终 selected KV＋有序局部报告 |
-| `chunk_text` | 同一组选中坐标对应的原文文本 | 相同当前块原文；最终选中文本＋有序局部报告 |
+| `chunk_kv` | 当前选中窗口的 KV cache | 全部 selected KV＋有序局部报告 |
+| `chunk_text` | 相同窗口坐标对应的原文文本 | 全部选中文本＋有序局部报告 |
 
 局部报告采用自然语言。两条路径使用相同路由、分块、指令和生成设置，但 KV 包含
 原始全文的历史影响，选中文本则重新编码，因此属于工作流对照，不声称完全隔离
@@ -76,7 +76,7 @@ python -m receiver_kv_workflow.run \
 最终汇总默认开启 thinking；用 `--no-summary-thinking` 同时关闭两种方法的最终思考。
 局部 specialist 默认不思考。最终参数是 `--summary-*`，不再使用 `--review-*`。
 
-输出包括最终摘要、`.specialists.json`（全局KV坐标、分块原文、位置、局部报告和逐阶段
+输出包括最终摘要、`.specialists.json`（汇总KV坐标、窗口坐标、局部报告和逐阶段
 计量）、独立 thinking 文本以及实时 partial/status 文件。指标在
 `test_result/receiver_kv/<timestamp>/metrics.txt` 和 `.json`；`--routing-audit`
 可额外导出选中证据坐标。没有人工输出条数或生成 token 上限；上下文不足则报错。
@@ -126,12 +126,12 @@ token 节省不等于 FLOPs、API计费或网络流量节省；embedding token �
 
 This training-free workflow prefills the full transcript once and selects global
 evidence using role-conditioned attention and optional embedding assistance.
-Independent specialists receive the same global selected context plus a current
-original transcript part and its chronological location. Final synthesis receives
-global context and ordered natural-language local reports.
+Independent specialists receive only their chronological window of selected source
+context. No extra original-part text or full global context is supplied locally.
+Final synthesis receives all selected context and ordered natural-language local reports.
 
-`chunk_kv` transfers global source context as selected KV; `chunk_text` supplies
-verbatim text from the same selected coordinates. Parts, instructions, stage seeds
+`chunk_kv` transfers each local window as selected KV; `chunk_text` supplies
+verbatim text from the same window coordinates. Windows, instructions, stage seeds
 and decoding settings match. Source KV retains contextual and positional history
 that re-encoded selected text does not, so this compares workflows rather than a
 pure representation-only intervention. The old direct-summary, single-handoff and
@@ -140,7 +140,7 @@ review paths are retired.
 Use UTF-8 speaker-labelled TXT for one meeting, or JSONL with `id`,
 `transcript`/`context` and human `summary`/`answer` for evaluation. Adjacent turns
 from the same speaker stay together. No ASR or diarization is provided. Inputs are
-not silently truncated. Approximate 1/8 original-transcript parts with 1/4 overlap
+not silently truncated. Approximate 1/8 selected-context windows with 1/4 overlap
 preserve speaker boundaries; actual part counts can exceed eight.
 
 The Bash commands above are the current entry points. Defaults: Qwen3-8B, source

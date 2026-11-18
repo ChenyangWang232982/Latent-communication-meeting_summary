@@ -9,8 +9,10 @@ These inference branches, review prompts and dedicated diagnostic entry points
 have been removed. Source prefill, attention/vector routing, cache copying,
 decoding and metric components are reused by the current chunk specialists.
 
-Current variants are `chunk_kv` and `chunk_text`: both analyze original transcript
-parts with global selected context and synthesize ordered local reports. The
+Current variants are `chunk_kv` and `chunk_text`: both analyze chronological
+windows of selected evidence and synthesize ordered local reports with all selected
+context. The temporary global-selected-KV plus original-part-text design has been
+reverted. The
 old variant names and `--chunk-specialists`/`--review-*` options are no longer
 active CLI options; use `--summary-*` for final synthesis.
 

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def arguments():
-    parser = argparse.ArgumentParser(description="Experiment 1: paired global-context chunk specialists: KV vs text, quality and resource use.")
+    parser = argparse.ArgumentParser(description="Experiment 1: paired selected-window specialists: KV vs text, quality and resource use.")
     parser.add_argument("--input", type=Path, required=True, help="Normalized speaker-labelled JSONL with reference summaries")
     parser.add_argument("--benchmark", choices=("meetingbank", "ami", "icsi", "qmsum_committee"), default="meetingbank")
     parser.add_argument("--output-dir", type=Path, default=Path("test_result/experiment_1"))

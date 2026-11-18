@@ -1,9 +1,9 @@
 # Global selected context + transcript-part specialists
 
-The only active inference workflow uses attention and optional semantic routing
-to choose global source context, then specialists analyze chronological original
-transcript parts with that global context. Final synthesis combines ordered local
-reports with global evidence. The old direct-summary and single generated-handoff
+The active workflow uses attention and optional semantic routing to select source
+context, then specialists analyze independent chronological windows of only that
+selected context. Final synthesis combines ordered local reports with all selected
+evidence. The old direct-summary and single generated-handoff
 branches and separate review agent have been removed.
 
 ```bash
@@ -17,12 +17,12 @@ python -m receiver_kv_workflow.run \
 ```
 
 Use `--variants chunk_kv chunk_text` to generate both controls, or only `chunk_text`.
-Both use the same global selected evidence, current-part original text, location,
-instructions and stage decoding settings. The text path renders global evidence
+Both use the same selected window coordinates, instructions and stage decoding
+settings. The text path renders each local window and final selected evidence
 as verbatim text rather than transferring KV. Reports remain natural language.
 
 Defaults: source budget per role 0.25, speaker neighbors +/-1, part size targeting
-1/8 of original transcript with 0.25 overlap, local sampling 0.3/0.9 and penalty1.1,
+1/8 of selected context with 0.25 overlap, local sampling 0.3/0.9 and penalty1.1,
 final sampling 0.3/0.9 with thinking on. `--summary-*` controls final synthesis;
 `--no-summary-thinking` disables its reasoning. Use `--help` for all settings.
 

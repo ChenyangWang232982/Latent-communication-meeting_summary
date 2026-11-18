@@ -6,7 +6,7 @@ transcripts or generated summaries.
 
 ```text
 MeetingBank JSONL -> full-source KV prefill -> shared global evidence selection
-                 -> global context + chronological original-part specialists -> synthesis -> metrics
+                 -> independent selected-context window specialists -> synthesis -> metrics
 ```
 
 Prepare benchmark JSONL files with `data_preprocess/README.md` first.
@@ -30,13 +30,13 @@ python -m meeting_evaluation.test \
   --device cuda
 ```
 
-The report compares two workflows under the same source selection, original parts,
+The report compares two workflows under the same source selection, local windows,
 stage instructions and decoding defaults. The independent local reports may differ:
 
 | Variant | Receiver input |
 |---|---|
-| `chunk_kv` | Global selected source KV + current-part original text; final KV + ordered reports |
-| `chunk_text` | Same global evidence as verbatim text + same original part; final text + ordered reports |
+| `chunk_kv` | Current selected window KV; final all selected KV + ordered reports |
+| `chunk_text` | Same selected window as verbatim text; final all selected text + ordered reports |
 
 Reports are written to `test_result/YYYYMMDD_HHMM/meetingbank_receiver_kv.txt`
 and `.json`. They include ROUGE-L, a lexical source-support proxy, cache and

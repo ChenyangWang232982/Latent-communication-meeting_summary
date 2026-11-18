@@ -19,7 +19,7 @@ python -m meeting_stream \
   --summary-top-p 0.9
 ```
 
-The service listens on `ws://127.0.0.1:8765/ws` by default and serves `GET /health`. The embedding model is loaded from `models/Qwen3-Embedding-0.6B` unless `--embedding-model` overrides it. First inference loads the models; subsequent runs reuse them in the same process. Use `python -m meeting_stream --help` for options. It runs `chunk_kv` with global selected KV plus each original transcript part and final synthesis; there is no separate review. `reviewStatus=skipped` remains for frontend contract compatibility, and the emitted text is the final synthesized answer.
+The service listens on `ws://127.0.0.1:8765/ws` by default and serves `GET /health`. The embedding model is loaded from `models/Qwen3-Embedding-0.6B` unless `--embedding-model` overrides it. First inference loads the models; subsequent runs reuse them in the same process. Use `python -m meeting_stream --help` for options. It runs `chunk_kv` with independent selected-KV windows and final synthesis over all selected KV plus ordered reports; there is no separate review. `reviewStatus=skipped` remains for frontend contract compatibility, and the emitted text is the final synthesized answer.
 
 ## Connect AG-UI
 

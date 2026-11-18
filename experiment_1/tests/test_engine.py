@@ -24,7 +24,7 @@ class EngineTest(unittest.TestCase):
             calls.append((kwargs['communication'], list(selected), incoming))
             stage = dict(source_kv_positions=len(selected) if kwargs['communication'] == 'kv' else 0,
                 source_kv_bytes=128 if kwargs['communication'] == 'kv' else 0, source_text_bytes=9,
-                current_part_text_bytes=5, prompt_tokens=3, output_tokens=2, output_cap_hit=False,
+                prompt_tokens=3, output_tokens=2, output_cap_hit=False,
                 generation_counts={'answer_tokens': 1, 'terminal_tokens': 1}, seconds=.01)
             return 'Final summary', dict(reports=[{'report': 'Local notes'}], windows=[{'positions': [1,2]}],
                 stages={'local': stage, 'final': stage}, pipeline_seconds=.02, text_payload_bytes=11)

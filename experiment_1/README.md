@@ -1,14 +1,14 @@
-# Experiment 1: global context + current-part specialists
+# Experiment 1: selected-context window specialists
 
 实验1只比较当前工作流的 `chunk_kv` 和 `chunk_text`，不运行旧版直接摘要或额外 review。
 每个样本全文 prefill 和注意力／向量路由只做一次，两条路径共用同一组选中坐标。
 
 | Variant | Local specialist input | Final synthesis input |
 |---|---|---|
-| `chunk_kv` | Global selected KV + current original part + location/instructions | Global selected KV + ordered reports |
-| `chunk_text` | Same global selected evidence as verbatim text + same original part/location/instructions | Global selected text + ordered reports |
+| `chunk_kv` | Current selected window's KV + instructions | All selected KV + ordered reports |
+| `chunk_text` | Same selected window as verbatim text + same instructions | All selected text + ordered reports |
 
-Both paths use identical original-transcript partitions, stage seeds and decoding
+Both paths use identical selected-context windows, stage seeds and decoding
 settings. Each independently generates local reports. Only final synthesis enables
 thinking by default; use `--no-summary-thinking` to disable it for both. This is a
 workflow comparison: contextualized full-source KV and re-encoded selected text
@@ -48,10 +48,11 @@ is `seed + part_index`; final seed is `summary_seed`. Model precision is the nor
 loaded precision unless the explicit optional `--fp32-lm-head` control is supplied.
 No output-token or item cap is imposed; context exhaustion is an error.
 
-Parts cover the full original transcript, including turns outside global selected
-KV. Approximate 1/8 windows and 1/4 overlap preserve whole speaker blocks, so the
-number of parts can exceed eight. Each receives a part number, original block range
-and text-position percentage. All specialists share weights and run sequentially.
+Windows cover only selected source evidence; discarded turns are not restored.
+Approximate 1/8 selected-context windows and 1/4 overlap preserve whole speaker
+blocks, so window counts can exceed eight. Each specialist is told its window
+number and total in meeting order. No additional current-part original text or
+global context is sent to local specialists. Weights are shared; execution is sequential.
 
 ## Outputs / 输出
 
@@ -64,7 +65,7 @@ progress.json                         completed/failed counts
 samples/00000.json                    source, reference, both results and measurements
 summaries/00000/chunk_kv.md            final KV summary (no thinking text)
 summaries/00000/chunk_text.md          final text-control summary
-summaries/00000/*.specialists.json     shared KV positions, part coordinates/text, reports, stage costs
+summaries/00000/*.specialists.json     synthesis KV positions, local window coordinates, reports, stage costs
 summaries/00000/*_notes.md             concatenated local reports for inspection
 summaries/00000/*.thinking.md          final reasoning, separate from scored answers
 live/00000/*.partial.txt               live generation text
@@ -96,7 +97,7 @@ count in a new run. Historical old-workflow results cannot be resumed here.
 - Optional BERTScore P/R/F1 compares the final summaries with human references;
   no LLM judge is used. The lexical source-support proxy is not factual accuracy.
 - Logical decoder tokens include source prefill/probes once per standalone path,
-  all specialist prompts including original part text, all local outputs, final
+  all specialist prompts, all local outputs, final
   prompt and output including thinking/delimiters/EOS. Reused KV rows do not count
   as newly encoded prompt tokens. Separate embedding encoder tokens are reported.
 - Time includes shared prefill/selection plus measured variant wall time, excluding
@@ -105,8 +106,8 @@ count in a new run. Historical old-workflow results cannot be resumed here.
 - CUDA peaks are PyTorch allocated bytes within each variant, including resident
   model, embedding model and full source KV; they exclude allocator reserve and
   non-PyTorch memory. Shared prefill/selection peak is also recorded separately.
-- Logical payload sums stage KV tensor bytes or global evidence UTF-8 bytes, part
-  UTF-8 bytes and local-report UTF-8 bytes. These are different representations,
+- Logical payload sums stage KV tensor bytes or window/final evidence UTF-8 bytes
+  and local-report UTF-8 bytes. These are different representations,
   not measured network traffic or billing. Token savings are not FLOP savings.
 - Paired KV-minus-text score intervals use 2,000 fixed-seed bootstrap resamples;
   no interval for one sample. Multiple records from one meeting are dependent.
