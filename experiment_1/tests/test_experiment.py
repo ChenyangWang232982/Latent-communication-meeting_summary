@@ -91,6 +91,16 @@ class ExperimentTest(unittest.TestCase):
         self.assertEqual(len(list((path / 'summaries').glob('*/chunk_text.md'))), 3)
         self.assertEqual(json.loads((path / 'summary.json').read_text(encoding='utf-8'))['completed_samples'], 3)
 
+    def test_requested_limit_above_available_reports_actual_size(self):
+        self.args.num_samples = 100
+        path, failures = run(self.args, FakeRunner)
+        self.assertEqual(failures, 0)
+        manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual(manifest['sampling'], dict(available_records=2, requested_limit=100, selected_records=2))
+        report = json.loads((path / 'summary.json').read_text(encoding='utf-8'))
+        self.assertEqual(report['planned_samples'], 2)
+        self.assertEqual(report['completed_samples'], 2)
+
     def test_failed_pair_retried_and_annotations_preserved(self):
         FakeRunner.fail = {"two"}
         path, failures = run(self.args, FakeRunner)

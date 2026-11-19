@@ -1,116 +1,105 @@
-# Speaker-Labelled Benchmark Preparation
+# Speaker-labelled benchmark preparation / 数据预处理
 
-The speaker-block workflow requires a transcript in which every turn begins
-with a speaker label. The controlled evaluation suite uses four non-overlapping
-domains, with 25 meetings per domain by default:
+当前规则：先规范化、验证和筛选长度，再对每个数据集最多保留100条。
+不足100条就全部导出，不复制、不补样本，也不因为不足上限而报错。
+超过100条时使用固定 seed7 无放回抽样。`--max-records 0` 可导出全部合格记录。
+没有任何合格记录仍会报错，不会自动放宽长度要求。
 
-| Evaluation name | Source | Required export |
+| Evaluation name | Source | Sampling unit |
 |---|---|---|
-| `ami` | QMSum Product / AMI | `input/ami_test.jsonl` |
-| `icsi` | QMSum Academic / ICSI | `input/icsi_test.jsonl` |
-| `qmsum_committee` | QMSum Committee only | `input/qmsum_committee_test.jsonl` |
-| `meetingbank` | Official diarized MeetingBank package | `input/meetingbank_speaker_test.jsonl` |
+| `ami` | QMSum Product / AMI | One distinct meeting, first general-summary reference |
+| `icsi` | QMSum Academic / ICSI | One distinct meeting, first general-summary reference |
+| `qmsum_committee` | QMSum Committee | One distinct meeting, first general-summary reference |
+| `meetingbank` | Official diarized MeetingBank | One agenda record; multiple records may share a meeting |
 
-QMSum already includes AMI, ICSI, and committee meetings. Do not additionally
-evaluate a combined QMSum set: that would duplicate AMI and ICSI.
+These QMSum domains are non-overlapping. Do not add the combined QMSum collection
+as another independent dataset. Domain `all/` includes multiple official splits;
+results are a length-controlled training-free comparison, not official test-only
+scores. Using query-specific examples or duplicated records to inflate counts
+would change the evaluation task and independence assumptions.
 
-## QMSum domains
+## Prepare all four datasets / 准备四个数据集
 
-Clone the official repository, then export exactly 25 general-summary meetings
-from each domain. The adapter preserves the official `speaker` field as lines
-such as `Alice: utterance`.
-
-```bash
-git clone https://github.com/Yale-LILY/QMSum.git external/QMSum
-
-python -m data_preprocess.prepare_qmsum \
-  --input external/QMSum/data/Product/all \
-  --output input/ami_test.jsonl \
-  --max-records 25
-
-python -m data_preprocess.prepare_qmsum \
-  --input external/QMSum/data/Academic/all \
-  --output input/icsi_test.jsonl \
-  --max-records 25
-
-python -m data_preprocess.prepare_qmsum \
-  --input external/QMSum/data/Committee/all \
-  --output input/qmsum_committee_test.jsonl \
-  --max-records 25
-```
-
-The domain test splits may contain fewer than 25 distinct meetings (notably
-ICSI), so this controlled training-free comparison samples 25 distinct meetings
-from each domain's official `all` file with seed 7. It is a balanced comparative
-sample, not a claim of an official held-out test score. Use `--overwrite` only
-when deliberately rebuilding an existing export.
-
-## MeetingBank
-
-The ordinary Hugging Face MeetingBank split consolidates turns into one text
-paragraph, so it cannot validly support speaker-block selection. Download and
-extract the official MeetingBank package first. The adapter directly joins its
-official split records with the matching diarized `itemInfo.transcripts`; no
-hand-built `meetingbank_diarized.jsonl` is needed.
+Run from the project root using Bash. Existing outputs are protected; choose a new
+directory or use `--overwrite` only when intentionally rebuilding an export.
+The input package paths must already exist. QMSum can be obtained with
+`git clone https://github.com/Yale-LILY/QMSum.git external/QMSum`.
+MeetingBank requires its official extracted package including `Metadata` and
+speaker-labelled `itemInfo.transcripts`; the usual flattened HF text is insufficient.
 
 ```bash
+conda activate latent-agents
+set -e
+
+for pair in ami:Product icsi:Academic qmsum_committee:Committee; do
+  benchmark=${pair%%:*}
+  domain=${pair#*:}
+  python -m data_preprocess.prepare_qmsum \
+    --input "external/QMSum/data/$domain/all" \
+    --output "input/experiment_1_cap100/$benchmark.jsonl" \
+    --max-records 100 \
+    --seed 7 \
+    --tokenizer-model Qwen/Qwen3-8B \
+    --min-transcript-tokens 4000 \
+    --max-transcript-tokens 8000
+done
+
 python -m data_preprocess.prepare_meetingbank \
   --input external/MeetingBank \
-  --output input/meetingbank_speaker_test.jsonl \
-  --max-records 25 \
-  --require-speakers
-```
-
-`--require-speakers` intentionally rejects rows lacking turn-level labels rather
-than silently converting them into an invalid speaker benchmark.
-
-## Run all four domains
-
-```bash
-python -m meeting_evaluation.run_all \
-  --num-samples 25 \
-  --speaker-neighbor-blocks 1 \
-  --receiver-kv-role-budget-ratio 0.25 \
-  --model Qwen/Qwen3-4B \
-  --device cuda
-```
-
-Use `--skip-missing` while only some prepared datasets are available.
-
-## Transcript length baseline / ??????
-
-Both preprocessing commands now default to **4,000?8,000 tokens inclusive**,
-counted with `Qwen/Qwen3-8B`'s tokenizer on the complete normalized transcript.
-Speaker labels and timestamps are included; reference summaries, chat templates,
-and model outputs are excluded. Only tokenizer files are loaded, not model weights.
-No transcript is truncated. Invalid records are removed, length filtering runs
-on all valid candidates, and deterministic sampling happens **after** filtering.
-This is a length-controlled subset, not the complete benchmark or a guaranteed
-30-minute meeting subset. MeetingBank records may represent agenda items.
-
-???????????????????????????????????
- tokenizer ???????????????????????????
-??? tokenizer??????????????????????????
-??? `--max-records`???????????????????????
-
-```bash
-python -m data_preprocess.prepare_meetingbank \
-  --input external/MeetingBank \
-  --output input/meetingbank_speaker_4k_8k_test.jsonl \
-  --max-records 25 \
+  --split test \
+  --output input/experiment_1_cap100/meetingbank.jsonl \
+  --max-records 100 \
+  --seed 7 \
   --require-speakers \
   --tokenizer-model Qwen/Qwen3-8B \
   --min-transcript-tokens 4000 \
   --max-transcript-tokens 8000
 ```
 
-QMSum/AMI/ICSI/Committee use the same token arguments and defaults.
-Use local model directories with `--tokenizer-model /path/to/Qwen3-8B` when offline.
-Each exported row includes `transcript_tokens`. The adjacent `.jsonl.report.json`
-records bounds, tokenizer, exclusion counts, eligible pool size, seed, and selected
-length statistics. Existing exports are not automatically rebuilt. Use a new output
-filename to preserve earlier experiments; use the filtered filename as experiment input.
+Defaults are now max100, tokenizerQwen3-8B and inclusive 4000–8000 transcript
+tokens. Only the tokenizer is loaded, not generation weights. Speaker labels and
+timestamps count; reference summaries and chat templates do not. No transcript is
+truncated. Empty annotation turns can be skipped, but unlabelled nonempty QMSum
+turns invalidate that meeting instead of inventing speakers.
 
-QMSum ?????????????? `transcript_tokens` ??????????
-?????????????????????????????????????
-????????????? 25 ????? QMSum ???????????????
+Outputs use JSONL with `id`, `transcript`, `summary` and `transcript_tokens` (plus
+optional `question`). The sibling `.jsonl.report.json` records requested cap,
+actual exported size, eligible pool, exclusions, tokenizer, bounds and sample seed.
+QMSum is deduplicated by meeting ID before sampling. Existing exports are not
+automatically enlarged or rebuilt when defaults change.
+
+## Experiment 1 / 四个数据集分别运行
+
+Each call evaluates both `chunk_kv` and `chunk_text`. The cap is per dataset, so
+total evaluated records are the sum of actual available counts, at most400.
+Generation seed12 is separate from preprocessing sample seed7. A `manifest.json`
+records available input records, requested limit and actual selected count.
+
+```bash
+set -e
+for benchmark in ami icsi qmsum_committee meetingbank; do
+  python -m experiment_1 \
+    --input "input/experiment_1_cap100/$benchmark.jsonl" \
+    --benchmark "$benchmark" \
+    --output-dir "test_result/experiment_1_window_cap100_seed12/$benchmark" \
+    --num-samples 100 \
+    --model Qwen/Qwen3-8B \
+    --device cuda \
+    --role-budget-ratio 0.25 \
+    --speaker-neighbor-blocks 1 \
+    --vector-routing \
+    --specialist-parts 8 \
+    --specialist-overlap 0.25 \
+    --summary-thinking \
+    --seed 12 \
+    --summary-seed 42
+done
+```
+
+Report datasets separately with actual sample counts; do not claim100 for a domain
+with fewer eligible records. See [experiment_1](../experiment_1/README.md) for
+decoding defaults, checkpoint/resume, token definitions and offline BERTScore.
+
+```bash
+python -m unittest discover -s data_preprocess/tests
+```

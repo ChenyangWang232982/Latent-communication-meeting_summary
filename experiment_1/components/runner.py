@@ -23,6 +23,7 @@ def run(args, runner_factory=ReceiverKVRunner):
 
 def _run(args, runner_factory, display):
     records = load_records("jsonl", args.input)
+    available_records = len(records)
     records = records[:args.num_samples] if args.num_samples else records
     if not records:
         raise ValueError("No samples selected")
@@ -31,7 +32,10 @@ def _run(args, runner_factory, display):
     if any(not r.answer.strip() for r in records):
         raise ValueError("Every quality-evaluation sample must have a nonempty reference summary")
     config = model_config(args)
-    store = RunStore(args.output_dir, args.resume, reproducibility(args, records, config))
+    manifest = reproducibility(args, records, config)
+    manifest['sampling'] = dict(available_records=available_records,
+                                requested_limit=args.num_samples or None, selected_records=len(records))
+    store = RunStore(args.output_dir, args.resume, manifest)
     display.log(f"Experiment directory: {store.directory}; selected {len(records)} samples")
     completed, failures = [], []
     runner = None

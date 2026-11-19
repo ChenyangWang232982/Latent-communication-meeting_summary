@@ -141,3 +141,12 @@ python -m unittest discover -s experiment_1/tests
 ```
 
 See [retired experiment notes](HISTORY.md) for the removed direct-summary method.
+
+## Four-domain capped run / 每个数据集最多100条
+
+Prepare all eligible records up to100 per domain using the commands in
+[data preparation](../data_preprocess/README.md). Exports below100 are valid and
+are not duplicated to reach a target. Run each export separately with
+`--num-samples 100`; its actual size appears in `manifest.json` (`sampling`) and
+the planned/completed counts. Use separate output folders for each benchmark.
+The four-domain Bash loop is included in that guide. Token bounds remain4000–8000.

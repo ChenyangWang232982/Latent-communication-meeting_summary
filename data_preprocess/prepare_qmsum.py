@@ -92,8 +92,8 @@ def general_queries(row: dict[str, Any]) -> Iterable[dict[str, Any]]:
 
 def normalize(rows: Iterable[dict[str, Any]], *, max_records: int, seed: int = 7,
               token_filter=None) -> list[dict[str, Any]]:
-    if max_records < 1:
-        raise ValueError("--max-records must be positive for a controlled benchmark export.")
+    if max_records < 0:
+        raise ValueError("--max-records must be 0 or positive.")
     records = []
     seen_meetings = set()
     for index, row in enumerate(rows):
@@ -120,10 +120,7 @@ def normalize(rows: Iterable[dict[str, Any]], *, max_records: int, seed: int = 7
             records.append(record)
     if not records:
         raise ValueError("No eligible speaker-labelled QMSum records remain after transcript-length filtering.")
-    if len(records) < max_records:
-        raise ValueError(f"Requested {max_records} meetings but found only {len(records)} eligible QMSum meetings "
-                         "after filtering. Reduce --max-records or explicitly adjust the token bounds.")
-    return random.Random(seed).sample(records, max_records)
+    return random.Random(seed).sample(records, max_records) if max_records and len(records) > max_records else records
 
 
 def write(records: list[dict[str, str]], output: Path, *, overwrite: bool) -> None:
@@ -142,7 +139,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, required=True,
                         help="Official QMSum domain JSON/JSONL file or its all/ directory.")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--max-records", type=int, default=25)
+    parser.add_argument("--max-records", type=int, default=100,
+                        help="Export at most this many eligible meetings; fewer means export all; 0 removes the cap.")
     parser.add_argument("--seed", type=int, default=7, help="Deterministic meeting-level sample seed.")
     parser.add_argument("--overwrite", action="store_true")
     add_token_arguments(parser)
@@ -158,6 +156,7 @@ def main() -> None:
     write(records, args.output, overwrite=args.overwrite)
     report_path = write_report(args.output, {
         "input": str(args.input), "output": str(args.output), "seed": args.seed,
+        "record_limit": args.max_records or None, "records_written": len(records),
         "token_filter": token_filter.report(records),
     })
     print(f"Wrote {len(records)} speaker-labelled QMSum records: {args.output}")

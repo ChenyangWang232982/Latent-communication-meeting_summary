@@ -33,6 +33,7 @@ class PreparationReport:
     created_at_utc: str
     token_filter: dict
     seed: int
+    record_limit: int | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,7 +44,8 @@ def parse_args() -> argparse.Namespace:
                         help="Optional local JSON/JSONL export or official MeetingBank root directory.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--cache-dir", type=Path, help="Optional Hugging Face datasets cache directory.")
-    parser.add_argument("--max-records", type=int, default=0, help="0 exports the entire split; a positive value exports that many records.")
+    parser.add_argument("--max-records", type=int, default=100,
+                        help="Export at most this many eligible records; fewer means export all; 0 removes the cap.")
     parser.add_argument("--seed", type=int, default=7,
                         help="Deterministic sampling seed when --max-records is positive.")
     parser.add_argument("--require-speakers", action="store_true",
@@ -113,9 +115,6 @@ def export_rows(rows: Iterable[dict[str, Any]], output: Path, *, max_records: in
             records.append(record)
     if not records:
         raise ValueError("No eligible MeetingBank records remain after schema and transcript-length filtering.")
-    if max_records and len(records) < max_records:
-        raise ValueError(f"Requested {max_records} records but only {len(records)} are eligible after filtering. "
-                         "Reduce --max-records or explicitly adjust the token bounds.")
     records = _sample(records, max_records, seed)
     temporary: Path | None = None
     try:
@@ -232,7 +231,7 @@ def main() -> None:
         dataset=dataset_name, split=args.split, output=str(args.output), records_written=written,
         records_skipped=skipped, source_columns=columns,
         created_at_utc=datetime.now(timezone.utc).isoformat(),
-        token_filter=token_filter.report(selected), seed=args.seed,
+        token_filter=token_filter.report(selected), seed=args.seed, record_limit=args.max_records or None,
     )
     report_path = write_report(args.output, asdict(report))
     print(f"Wrote {written} normalized records: {args.output}")
