@@ -197,11 +197,11 @@ def _sample(rows: list[dict[str, Any]], max_records: int, seed: int) -> list[dic
     return random.Random(seed).sample(rows, max_records)
 
 
-def main() -> None:
-    args = parse_args()
+def prepare(args, token_filter=None) -> dict:
     if args.output.exists() and not args.overwrite:
         raise FileExistsError(f"Output already exists: {args.output}. Use --overwrite to replace it deliberately.")
-    token_filter = load_token_filter(args)
+    if token_filter is None:
+        token_filter = load_token_filter(args)
     if args.input:
         if args.input.is_dir():
             rows = _official_meetingbank_rows(args.input, args.split)
@@ -236,6 +236,11 @@ def main() -> None:
     report_path = write_report(args.output, asdict(report))
     print(f"Wrote {written} normalized records: {args.output}")
     print(f"Preparation report: {report_path}")
+    return {'records_written': written, 'output': str(args.output), 'report': str(report_path)}
+
+
+def main() -> None:
+    prepare(parse_args())
 
 
 if __name__ == "__main__":

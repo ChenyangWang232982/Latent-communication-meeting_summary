@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from data_preprocess.prepare_qmsum_all import DOMAINS, run
+from data_preprocess.prepare_all import DOMAINS, run
 
 
 class QMSumBatchTest(unittest.TestCase):
@@ -23,7 +23,7 @@ class QMSumBatchTest(unittest.TestCase):
                 max_records=100, seed=7, overwrite=False, tokenizer_model='fake',
                 min_transcript_tokens=0, max_transcript_tokens=None)
             tokenizer = SimpleNamespace(encode=lambda text, **kw: text.split())
-            target = 'data_preprocess.prepare_qmsum_all.load_token_filter'
+            target = 'data_preprocess.prepare_all.load_token_filter'
             with patch(target, return_value=SimpleNamespace(tokenizer=tokenizer)) as loader:
                 results = run(args)
                 self.assertEqual(loader.call_count, 1)
@@ -42,3 +42,16 @@ class QMSumBatchTest(unittest.TestCase):
             self.assertEqual(retry['icsi']['status'], 'completed')
             self.assertEqual(retry['qmsum_committee']['status'], 'completed')
             self.assertEqual((args.output_dir/'ami.jsonl').read_bytes(), original)
+            # MeetingBank participates in the same batch using the same tokenizer.
+            meetingbank = root/'meetingbank.jsonl'
+            meetingbank.write_text(json.dumps({'uid': 'mb1', 'turns': [{'speaker': 'Bob', 'content': 'Hello'}],
+                                               'summary': 'A greeting'})+'\n', encoding='utf-8')
+            args.domains = [*DOMAINS, 'meetingbank']
+            args.meetingbank_root, args.split, args.overwrite = meetingbank, 'test', True
+            with patch(target, return_value=SimpleNamespace(tokenizer=tokenizer)) as loader:
+                all_results = run(args)
+            self.assertEqual(loader.call_count, 1)
+            self.assertEqual(len(all_results), 4)
+            self.assertTrue(all(row['status'] == 'completed' for row in all_results.values()))
+            mb_report = json.loads((args.output_dir/'meetingbank.jsonl.report.json').read_text(encoding='utf-8'))
+            self.assertEqual(mb_report['token_filter']['valid_records_scanned'], 1)
