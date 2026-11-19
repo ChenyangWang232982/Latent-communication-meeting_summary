@@ -147,11 +147,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
+def prepare(args, token_filter=None) -> dict:
     if args.output.exists() and not args.overwrite:
         raise FileExistsError(f"Output already exists: {args.output}. Use --overwrite to replace it deliberately.")
-    token_filter = load_token_filter(args)
+    if token_filter is None:
+        token_filter = load_token_filter(args)
     records = normalize(_read(args.input), max_records=args.max_records, seed=args.seed, token_filter=token_filter)
     write(records, args.output, overwrite=args.overwrite)
     report_path = write_report(args.output, {
@@ -161,6 +161,11 @@ def main() -> None:
     })
     print(f"Wrote {len(records)} speaker-labelled QMSum records: {args.output}")
     print(f"Preparation report: {report_path}")
+    return {'records_written': len(records), 'output': str(args.output), 'report': str(report_path)}
+
+
+def main() -> None:
+    prepare(parse_args())
 
 
 if __name__ == "__main__":

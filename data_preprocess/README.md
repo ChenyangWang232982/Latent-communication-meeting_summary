@@ -30,16 +30,12 @@ speaker-labelled `itemInfo.transcripts`; the usual flattened HF text is insuffic
 ```bash
 conda activate latent-agents
 
-for pair in ami:Product icsi:Academic qmsum_committee:Committee; do
-  benchmark=${pair%%:*}
-  domain=${pair#*:}
-  python -m data_preprocess.prepare_qmsum \
-    --input "external/QMSum/data/$domain/all" \
-    --output "input/experiment_1_unfiltered_cap100/$benchmark.jsonl" \
-    --max-records 100 \
-    --seed 7 \
-    --tokenizer-model Qwen/Qwen3-8B
-done
+python -m data_preprocess.prepare_qmsum_all \
+  --input-root external/QMSum \
+  --output-dir input/experiment_1_unfiltered_cap100 \
+  --max-records 100 \
+  --seed 7 \
+  --tokenizer-model Qwen/Qwen3-8B
 
 python -m data_preprocess.prepare_meetingbank \
   --input external/MeetingBank \
@@ -50,6 +46,13 @@ python -m data_preprocess.prepare_meetingbank \
   --require-speakers \
   --tokenizer-model Qwen/Qwen3-8B
 ```
+
+`prepare_qmsum_all` replaces the Bash loop for AMI, ICSI and Committee. It loads
+one tokenizer and keeps separate per-domain statistics. Errors are reported per
+domain, successful exports are preserved and the final exit status is nonzero if
+any domain failed. Existing files are never silently overwritten. Use
+`--overwrite` to rebuild deliberately, or `--domains icsi qmsum_committee` to run
+only selected domains. MeetingBank remains the separate command above.
 
 Defaults are max100, tokenizerQwen3-8B, minimum0 and no maximum transcript length.
 Only the tokenizer is loaded to count tokens, not generation weights. Speaker labels and
