@@ -22,7 +22,8 @@ settings. The text path renders each local window and final selected evidence
 as verbatim text rather than transferring KV. Reports remain natural language.
 
 Defaults: source budget per role 0.25, speaker neighbors +/-1, part size targeting
-1/8 of selected context with 0.25 overlap, local sampling 0.3/0.9 and penalty1.1,
+automatic window count `max(1, floor(full_transcript_tokens/1024 + 0.5))`,
+speaker-boundary preservation with 0.25 overlap, local sampling 0.3/0.9 and penalty1.1,
 final sampling 0.3/0.9 with thinking on. `--summary-*` controls final synthesis;
 `--no-summary-thinking` disables its reasoning. Use `--help` for all settings.
 

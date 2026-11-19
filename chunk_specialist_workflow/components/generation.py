@@ -4,7 +4,7 @@ import time
 
 from receiver_kv_workflow.prompts import SYSTEM, SUMMARY_REQUEST, selected_evidence_excerpts
 from receiver_kv_workflow.cache import generate, select_cache, size_bytes
-from .windows import selected_windows
+from .windows import selected_windows, target_parts
 from .thinking import split_thinking
 
 
@@ -21,10 +21,13 @@ def suffix(tokenizer, transcript, prefix, request, *, enable_thinking=False):
 
 
 def run_specialists(runner, transcript, prefix, protected, selected, source, blocks, *, on_generation=None,
-                    on_progress=None, communication='kv'):
+                    on_progress=None, communication='kv', transcript_tokens=None):
     started = time.perf_counter()
+    if transcript_tokens is None:
+        transcript_tokens = len(runner.tokenizer.encode(transcript, add_special_tokens=False))
+    parts = target_parts(transcript_tokens)
     windows = list(selected_windows(blocks, selected, protected,
-                   runner.config.specialist_parts, runner.config.specialist_overlap))
+                   parts, runner.config.specialist_overlap))
     stages, reports, thinking_outputs = {}, [], {}
 
     def decode(stage, request, positions, seed, temperature, top_p, penalty):
@@ -100,6 +103,7 @@ def run_specialists(runner, transcript, prefix, protected, selected, source, blo
     answer = decode('chunk_summary' if communication == 'kv' else 'text_chunk_summary', request, selected, runner.config.summary_seed,
                     runner.config.summary_temperature, runner.config.summary_top_p, runner.config.repetition_penalty)
     return answer, dict(communication=communication, input_layout='selected_context_windows', synthesis_selected_positions=list(selected),
+        transcript_tokens=transcript_tokens, target_specialist_parts=parts, actual_specialist_windows=len(windows),
         reports=reports, windows=windows, stages=stages, thinking_outputs=thinking_outputs,
         pipeline_seconds=time.perf_counter()-started,
         text_payload_bytes=len(json.dumps(reports, ensure_ascii=False).encode('utf-8')))

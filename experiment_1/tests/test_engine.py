@@ -13,7 +13,7 @@ class EngineTest(unittest.TestCase):
         runner.device = torch.device('cpu')
         runner.torch = torch
         runner.context_limit = 100
-        runner.tokenizer = SimpleNamespace(encode=lambda *a, **k: [5])
+        runner.tokenizer = SimpleNamespace(encode=lambda text, **k: [5]*1536 if text == 'Alice: source' else [5])
         runner.model = object()
         runner.semantic_router = None
         runner.progress = lambda _: None
@@ -21,6 +21,7 @@ class EngineTest(unittest.TestCase):
         calls, events = [], []
 
         def specialists(runner, transcript, prefix, protected, selected, incoming, blocks, **kwargs):
+            self.assertEqual(kwargs['transcript_tokens'], 1536)
             calls.append((kwargs['communication'], list(selected), incoming))
             stage = dict(source_kv_positions=len(selected) if kwargs['communication'] == 'kv' else 0,
                 source_kv_bytes=128 if kwargs['communication'] == 'kv' else 0, source_text_bytes=9,
@@ -38,6 +39,7 @@ class EngineTest(unittest.TestCase):
             result = runner.run('one', 'Alice: source', variants=('chunk_kv', 'chunk_text'),
                                 on_variant=lambda *event: events.append(event))
         self.assertEqual(prefill.call_count, 1)
+        self.assertEqual(result['transcript_tokens'], 1536)
         self.assertEqual(calls, [('kv', [0,1,2,3], source), ('text', [0,1,2,3], source)])
         self.assertEqual(list(result['answers']), ['chunk_kv', 'chunk_text'])
         self.assertEqual(events, [('chunk_kv','start'), ('chunk_kv','end'), ('chunk_text','start'), ('chunk_text','end')])

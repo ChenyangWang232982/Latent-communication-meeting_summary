@@ -1,24 +1,36 @@
-import math
+from bisect import bisect_left
+from itertools import accumulate
 
 
-def selected_windows(blocks, selected, protected, parts=8, overlap=0.25):
+def target_parts(transcript_tokens):
+    """Positive round-half-up; Python round() uses ties-to-even instead."""
+    return max(1, (transcript_tokens + 512) // 1024)
+
+
+def selected_windows(blocks, selected, protected, parts, overlap=0.25):
     """Window already-selected complete speaker turns; never restore dropped source rows."""
     selected, protected = set(selected), set(protected)
     units = [(i, sorted(set(block) & (selected-protected))) for i, block in enumerate(blocks)]
     units = [(i, unit) for i, unit in units if unit]
-    target = max(1, math.ceil(sum(len(unit) for _, unit in units)/parts))
-    start = 0
-    while start < len(units):
-        end, size = start, 0
-        while end < len(units) and (end == start or size+len(units[end][1]) <= target):
-            size += len(units[end][1])
-            end += 1
+    if not units:
+        return
+    count = min(parts, len(units))
+    weights = [0, *accumulate(len(unit) for _, unit in units)]
+    cuts = [0]
+    for index in range(1, count):
+        low, high = cuts[-1]+1, len(units)-(count-index)
+        target = weights[-1]*index/count
+        position = bisect_left(weights, target, low, high+1)
+        candidates = {max(low, min(high, position)), max(low, min(high, position-1))}
+        cuts.append(min(candidates, key=lambda cut: (abs(weights[cut]-target), cut)))
+    cuts.append(len(units))
+    for index, (start, end) in enumerate(zip(cuts, cuts[1:])):
+        # Expand backward into the preceding base part, without adding specialists.
+        if index:
+            shared = 0
+            target = (weights[start]-weights[cuts[index-1]])*overlap
+            while start > cuts[index-1] and shared < target:
+                start -= 1
+                shared += len(units[start][1])
         yield dict(block_ids=[i for i, _ in units[start:end]],
                    positions=sorted(protected | {p for _, unit in units[start:end] for p in unit}))
-        if end == len(units):
-            break
-        next_start, shared = end, 0
-        while next_start > start+1 and shared < size*overlap:
-            next_start -= 1
-            shared += len(units[next_start][1])
-        start = next_start

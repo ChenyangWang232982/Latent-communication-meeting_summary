@@ -11,6 +11,7 @@ from .scoring import score_sample
 from .storage import RunStore, atomic_json
 from .progress import ExperimentProgress
 from .generation_trace import GenerationTrace
+from .length_groups import length_group
 
 
 def run(args, runner_factory=ReceiverKVRunner):
@@ -63,16 +64,20 @@ def _run(args, runner_factory, display):
             atomic_json(runtime_path, runtime)
         resources = ResourceRecorder(runner)
         trace = GenerationTrace(store.directory, index, record.id, display.log)
+        transcript_tokens = None
         try:
+            transcript_tokens = len(runner.tokenizer.encode(record.context, add_special_tokens=False))
             resources.begin()
             result = runner.run(record.id, record.context, variants=VARIANTS,
                                 on_variant=resources, on_state=display.state, on_generation=trace)
             result["shared_prefill_selection_peak_allocated_bytes"] = resources.shared_peak_allocated_bytes
             result["gold_answer"] = record.answer
             sample = score_sample(result, record, resources.values)
+            sample.update(transcript_tokens=transcript_tokens, length_group=length_group(transcript_tokens))
             completed.append(sample)
         except Exception as exc:
             sample = {"id": record.id, "status": "failed", "source": record.context, "reference": record.answer,
+                      "transcript_tokens": transcript_tokens, "length_group": length_group(transcript_tokens),
                       "error_type": type(exc).__name__, "error": str(exc)}
             failures.append(sample)
             gc.collect()
@@ -94,5 +99,6 @@ def _run(args, runner_factory, display):
 def main():
     directory, failures = run(arguments())
     print(f"Reports: {directory}")
+    print(f"Length groups and overall: {directory / 'overview.txt'}")
     if failures:
         raise SystemExit(f"{failures} sample(s) failed; inspect checkpoints and resume to retry. Paired means use completed samples only.")

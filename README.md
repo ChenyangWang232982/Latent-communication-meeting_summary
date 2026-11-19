@@ -52,7 +52,8 @@ Bob: 我会在周五之前发送测试报告。
 ```
 
 `context` 可替代 `transcript`，`answer` 可替代 `summary`。正式实验需要唯一 ID 和非空
-人工参考摘要。`question` 不改变固定的全会议摘要任务。数据准备和4k–8k token筛选
+人工参考摘要。`question` 不改变固定的全会议摘要任务。数据预处理默认不按长度筛选，
+每个数据集最多100条，保留原文token数量用于分组。准备指令
 见 [data_preprocess/README.md](data_preprocess/README.md)。ROUGE 使用英文向分词。
 
 ### 单会议运行
@@ -85,7 +86,7 @@ python -m receiver_kv_workflow.run \
 
 ```bash
 python -m experiment_1 \
-  --input input/meetingbank_speaker_4k_8k_test.jsonl \
+  --input input/experiment_1_unfiltered_cap100/meetingbank.jsonl \
   --benchmark meetingbank \
   --output-dir test_result/experiment_1_chunk_3_seed12 \
   --num-samples 3 \
@@ -100,6 +101,9 @@ python -m experiment_1 \
 
 取当前文件前3个样本，每条分别运行 `chunk_kv` 与 `chunk_text`，不是每个数据集各3条。
 输出包含 ROUGE、逻辑 token、耗时、显存、重复诊断、逐样本摘要和中间报告。
+窗口目标数为 `max(1, floor(全文token数/1024 + 0.5))`，保留完整发言块；25%重叠
+不增加窗口数量。少于目标数的可用发言块按实际数量处理。`overview.*` 提供总览和
+`[0,4000)`、`[4000,8000)`、`[8000,12000)`、`[12000,16000)`、`[16000,+∞)`分组。
 BERTScore 使用保存后的结果离线补评，不重新生成摘要；不使用 AI judge。
 详细指令、指标定义和断点续跑见 [experiment_1/README.md](experiment_1/README.md)。
 
@@ -110,7 +114,7 @@ BERTScore 使用保存后的结果离线补评，不重新生成摘要；不使�
 | `receiver_kv_workflow/` | 模型、路由、cache、共享参数与单会议入口 |
 | `chunk_specialist_workflow/` | 全文分块、局部分析和最终汇总 |
 | `vector/` | embedding 下载与语义辅助路由 |
-| `data_preprocess/` | 数据预处理和长度筛选 |
+| `data_preprocess/` | 数据规范化、token计数和每数据集上限100抽样 |
 | `experiment_1/` | 配对质量与成本实验、离线 BERTScore |
 | `meeting_evaluation/` | 通用批量指标工具 |
 | `meeting_stream/` | 向 AG-UI 提供 WebSocket 状态和最终摘要 |
@@ -140,8 +144,10 @@ review paths are retired.
 Use UTF-8 speaker-labelled TXT for one meeting, or JSONL with `id`,
 `transcript`/`context` and human `summary`/`answer` for evaluation. Adjacent turns
 from the same speaker stay together. No ASR or diarization is provided. Inputs are
-not silently truncated. Approximate 1/8 selected-context windows with 1/4 overlap
-preserve speaker boundaries; actual part counts can exceed eight.
+not silently truncated. Window count targets `max(1, floor(raw_transcript_tokens/1024 + 0.5))`,
+preserving whole speaker blocks (fewer blocks means fewer windows). Quarter overlap
+does not add specialists. Preprocessing has no default length filter. Reports include
+five half-open token-length groups and an overall view in `overview.*`.
 
 The Bash commands above are the current entry points. Defaults: Qwen3-8B, source
 budget per role0.25, speaker neighbors +/-1, local sampling0.3/0.9 with repetition

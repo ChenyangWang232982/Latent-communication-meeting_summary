@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from chunk_specialist_workflow.components.windows import selected_windows
+from chunk_specialist_workflow.components.windows import selected_windows, target_parts
 
 
 class ChunkSpecialistTest(unittest.TestCase):
@@ -11,7 +11,7 @@ class ChunkSpecialistTest(unittest.TestCase):
         from receiver_kv_workflow.engine import ReceiverKVConfig
         from chunk_specialist_workflow.components.generation import run_specialists
         runner = SimpleNamespace(model=object(), tokenizer=object(), torch=torch,
-            config=ReceiverKVConfig(device='cpu', summary_thinking=False, specialist_parts=2, specialist_overlap=0),
+            config=ReceiverKVConfig(device='cpu', summary_thinking=False, specialist_overlap=0),
             context_limit=100, progress=lambda _: None, _sync=lambda: None,
             _tensor=lambda ids: torch.tensor([ids]))
         target = 'chunk_specialist_workflow.components.generation.'
@@ -31,9 +31,11 @@ class ChunkSpecialistTest(unittest.TestCase):
              patch(target+'size_bytes', return_value=100), \
              patch(target+'selected_evidence_excerpts', side_effect=excerpts):
             args = (runner, 'source', [0]*7, [0], [0,1,2,5,6], object(), [[1,2], [3,4], [5,6]])
-            _, kv = run_specialists(*args)
-            _, text = run_specialists(*args, communication='text', on_progress=events.append)
+            _, kv = run_specialists(*args, transcript_tokens=2048)
+            _, text = run_specialists(*args, transcript_tokens=2048, communication='text', on_progress=events.append)
         self.assertEqual(kv['windows'], text['windows'])
+        self.assertEqual(kv['target_specialist_parts'], 2)
+        self.assertEqual(kv['actual_specialist_windows'], 2)
         self.assertEqual(requests[:3], requests[3:])
         self.assertEqual(evidence, [[0,1,2], [0,5,6], [0,1,2,5,6]])
         self.assertEqual(kv['synthesis_selected_positions'], [0,1,2,5,6])
@@ -51,14 +53,27 @@ class ChunkSpecialistTest(unittest.TestCase):
         blocks = [list(range(1+i*10, 11+i*10)) for i in range(64)]
         selected = [0]+[p for i, unit in enumerate(blocks) if i != 10 for p in unit]
         windows = list(selected_windows(blocks, selected, [0], parts=8, overlap=.25))
+        self.assertEqual(len(windows), 8)
         self.assertEqual({p for window in windows for p in window['positions']}, set(selected))
         for window in windows:
             self.assertEqual(window['positions'], sorted(set(window['positions'])))
             self.assertNotIn(10, window['block_ids'])
         self.assertTrue(set(windows[0]['block_ids']) & set(windows[1]['block_ids']))
-        long = list(selected_windows([list(range(1,1001)), [1001]], list(range(1002)), [0]))
+        long = list(selected_windows([list(range(1,1001)), [1001]], list(range(1002)), [0], parts=8))
         self.assertEqual(len(long), 2)
         self.assertEqual(len(long[0]['positions']), 1001)
+
+    def test_half_up_count_and_speaker_boundaries_with_unbalanced_lengths(self):
+        for tokens, parts in ((0,1), (511,1), (512,1), (1535,1), (1536,2), (2048,2), (2560,3), (16384,16)):
+            self.assertEqual(target_parts(tokens), parts)
+        blocks = [list(range(1,1001)), [1001], [1002], [1003], [1004], [1005]]
+        for overlap in (0, .25):
+            windows = list(selected_windows(blocks, list(range(1006)), [0], parts=4, overlap=overlap))
+            self.assertEqual(len(windows), 4)
+            self.assertEqual({p for window in windows for p in window['positions']}, set(range(1006)))
+            for window in windows:
+                for index in window['block_ids']:
+                    self.assertTrue(set(blocks[index]) <= set(window['positions']))
 
     def test_independent_writable_caches_and_ordered_synthesis(self):
         import torch
@@ -70,7 +85,7 @@ class ChunkSpecialistTest(unittest.TestCase):
         tensor = torch.arange(7, dtype=torch.float32).reshape(1, 1, 7, 1)
         source.update(tensor.clone(), tensor.clone(), 0)
         runner = SimpleNamespace(model=object(), tokenizer=object(), torch=torch,
-            config=ReceiverKVConfig(device='cpu', summary_thinking=False, specialist_parts=2, specialist_overlap=0),
+            config=ReceiverKVConfig(device='cpu', summary_thinking=False, specialist_overlap=0),
             context_limit=100, progress=lambda _: None, _sync=lambda: None,
             _tensor=lambda ids: torch.tensor([ids]))
         requests, caches = [], []
@@ -84,7 +99,7 @@ class ChunkSpecialistTest(unittest.TestCase):
         target = 'chunk_specialist_workflow.components.generation.'
         with patch(target+'suffix', side_effect=prompt), patch(target+'generate', side_effect=generate):
             answer, result = run_specialists(runner, 'source', [0]*7, [0], [0,1,2,5,6], source,
-                                            [[1,2], [3,4], [5,6]])
+                                            [[1,2], [3,4], [5,6]], transcript_tokens=2048)
         self.assertEqual(caches, [[0,1,2], [0,5,6], [0,1,2,5,6]])
         self.assertTrue(torch.equal(pairs(source)[0][0], tensor))
         self.assertEqual(answer, 'local report 3')

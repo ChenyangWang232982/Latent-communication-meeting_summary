@@ -16,7 +16,6 @@ def add_workflow_arguments(parser):
     parser.add_argument('--fp32-lm-head', action='store_true', help='Optional numerical control; default model precision otherwise')
     parser.add_argument('--top-k', type=int, default=0)
     parser.add_argument('--repetition-penalty', type=float, default=1.0, help='Final synthesis repetition penalty')
-    parser.add_argument('--specialist-parts', type=int, default=8)
     parser.add_argument('--specialist-overlap', type=float, default=0.25)
     parser.add_argument('--specialist-temperature', type=float, default=0.3)
     parser.add_argument('--specialist-top-p', type=float, default=0.9)

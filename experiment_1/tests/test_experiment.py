@@ -18,6 +18,7 @@ class FakeRunner:
     def __init__(self, config, progress):
         type(self).loads += 1
         self.device = SimpleNamespace(type="cpu")
+        self.tokenizer = SimpleNamespace(encode=lambda text, **kwargs: text.split())
 
     def run(self, sample_id, transcript, *, variants, on_variant, on_state=None, on_generation=None, on_token=None):
         assert variants == ("chunk_kv", "chunk_text")
@@ -100,6 +101,29 @@ class ExperimentTest(unittest.TestCase):
         report = json.loads((path / 'summary.json').read_text(encoding='utf-8'))
         self.assertEqual(report['planned_samples'], 2)
         self.assertEqual(report['completed_samples'], 2)
+
+    def test_length_groups_include_failures_boundaries_and_overview(self):
+        class LengthRunner(FakeRunner):
+            fail = {'failed'}
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.tokenizer = SimpleNamespace(encode=lambda text, **kw: range(int(text.split()[-1])))
+        rows = [{'id': name, 'transcript': f'Alice: {n}', 'summary': 'report on Friday'}
+                for name, n in (('a',3999), ('b',4000), ('c',8000), ('d',12000), ('failed',16000), ('e',16001))]
+        self.input.write_text('\n'.join(json.dumps(row) for row in rows), encoding='utf-8')
+        self.args.num_samples = 0
+        path, failed = run(self.args, LengthRunner)
+        self.assertEqual(failed, 1)
+        overview = json.loads((path / 'overview.json').read_text(encoding='utf-8'))
+        self.assertEqual(overview['overall']['completed_samples'], 5)
+        groups = overview['length_groups']
+        self.assertEqual(len(groups), 5)
+        self.assertEqual(sum(g['planned_samples'] for g in groups.values()), 6)
+        self.assertEqual(groups['4000-8000']['completed_samples'], 1)
+        self.assertEqual(groups['16000+']['planned_samples'], 2)
+        self.assertEqual(groups['16000+']['failed_samples'], 1)
+        self.assertTrue((path / 'length_groups/8000-12000/summary.txt').exists())
+        self.assertTrue((path / 'overview.csv').exists())
 
     def test_failed_pair_retried_and_annotations_preserved(self):
         FakeRunner.fail = {"two"}

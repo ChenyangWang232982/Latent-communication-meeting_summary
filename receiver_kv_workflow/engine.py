@@ -29,7 +29,6 @@ class ReceiverKVConfig:
     fp32_lm_head: bool = False
     top_k: int = 0
     repetition_penalty: float = 1.0
-    specialist_parts: int = 8
     specialist_overlap: float = 0.25
     specialist_temperature: float = 0.3
     specialist_top_p: float = 0.9
@@ -57,8 +56,8 @@ class ReceiverKVRunner:
             raise ValueError('top_k must be non-negative')
         if not math.isfinite(config.repetition_penalty) or config.repetition_penalty < 1:
             raise ValueError("repetition_penalty must be finite and >= 1")
-        if config.specialist_parts < 1 or not 0 <= config.specialist_overlap < 1:
-            raise ValueError('specialist_parts must be positive; specialist_overlap must be in [0, 1)')
+        if not 0 <= config.specialist_overlap < 1:
+            raise ValueError('specialist_overlap must be in [0, 1)')
         if not math.isfinite(config.specialist_temperature) or config.specialist_temperature < 0:
             raise ValueError('specialist_temperature must be finite and non-negative')
         if not math.isfinite(config.specialist_top_p) or not 0 < config.specialist_top_p <= 1:
@@ -117,6 +116,7 @@ class ReceiverKVRunner:
 
         if not transcript.strip():
             raise ValueError(f"Transcript is empty: {record_id}")
+        transcript_tokens = len(self.tokenizer.encode(transcript, add_special_tokens=False))
         requested = tuple(dict.fromkeys(variants))
         chunk_result = None
         chunk_results = {}
@@ -232,7 +232,7 @@ class ReceiverKVRunner:
                     on_variant(name, 'start')
                 answer, detail = run_specialists(self, transcript, prefix, protected, selected, source, speaker_blocks,
                     on_generation=on_generation, on_progress=on_state,
-                    communication='kv' if name == 'chunk_kv' else 'text')
+                    communication='kv' if name == 'chunk_kv' else 'text', transcript_tokens=transcript_tokens)
                 chunk_results[name] = detail
                 if name == 'chunk_kv':
                     chunk_result = detail
@@ -273,6 +273,7 @@ class ReceiverKVRunner:
             "vector_routing": vector_metrics,
             "routing_audit": audit,
             "id": record_id, "answers": answers, "variants": measurements, "handoffs": handoffs,
+            "transcript_tokens": transcript_tokens,
             "source_positions": len(prefix), "context_limit": self.context_limit,
             "source_cache_bytes": source_bytes, "prefill_seconds": prefill_seconds,
             "selection_seconds": selection_seconds, "roles": role_metrics,

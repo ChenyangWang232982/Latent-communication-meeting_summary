@@ -10,13 +10,14 @@ from pathlib import Path
 def add_token_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tokenizer-model", default="Qwen/Qwen3-8B",
                         help="Generation model tokenizer ID or local model directory.")
-    parser.add_argument("--min-transcript-tokens", type=int, default=4000)
-    parser.add_argument("--max-transcript-tokens", type=int, default=8000)
+    parser.add_argument("--min-transcript-tokens", type=int, default=0)
+    parser.add_argument("--max-transcript-tokens", type=int, default=None,
+                        help="Optional length ceiling; default keeps all lengths.")
 
 
 class TranscriptTokenFilter:
-    def __init__(self, tokenizer, *, model: str, minimum: int, maximum: int):
-        if minimum < 0 or maximum < minimum:
+    def __init__(self, tokenizer, *, model: str, minimum: int, maximum: int | None):
+        if minimum < 0 or (maximum is not None and maximum < minimum):
             raise ValueError("Transcript token bounds must satisfy 0 <= min <= max.")
         self.tokenizer = tokenizer
         self.model = model
@@ -33,7 +34,7 @@ class TranscriptTokenFilter:
         if count < self.minimum:
             self.too_short += 1
             return False
-        if count > self.maximum:
+        if self.maximum is not None and count > self.maximum:
             self.too_long += 1
             return False
         record["transcript_tokens"] = count
@@ -47,6 +48,7 @@ class TranscriptTokenFilter:
             "tokenizer_commit": getattr(self.tokenizer, "init_kwargs", {}).get("_commit_hash"),
             "min_transcript_tokens": self.minimum,
             "max_transcript_tokens": self.maximum,
+            "length_filter_enabled": self.minimum > 0 or self.maximum is not None,
             "bounds_inclusive": True,
             "counting": "full normalized transcript; add_special_tokens=False; no truncation",
             "valid_records_scanned": self.scanned,
@@ -61,7 +63,7 @@ class TranscriptTokenFilter:
 
 
 def load_token_filter(args) -> TranscriptTokenFilter:
-    if args.min_transcript_tokens < 0 or args.max_transcript_tokens < args.min_transcript_tokens:
+    if args.min_transcript_tokens < 0 or (args.max_transcript_tokens is not None and args.max_transcript_tokens < args.min_transcript_tokens):
         raise ValueError("Transcript token bounds must satisfy 0 <= min <= max.")
     from transformers import AutoTokenizer
     print(f"Loading tokenizer only: {args.tokenizer_model}", flush=True)

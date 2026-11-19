@@ -6,9 +6,21 @@ import unittest
 
 from data_preprocess.prepare_qmsum import normalize
 from data_preprocess.prepare_meetingbank import export_rows
+from data_preprocess.token_filter import TranscriptTokenFilter
 
 
 class SamplingTest(unittest.TestCase):
+    def test_default_unbounded_counter_keeps_short_and_long_transcripts(self):
+        from types import SimpleNamespace
+        tokenizer = SimpleNamespace(encode=lambda text, **kwargs: range(int(text)))
+        counter = TranscriptTokenFilter(tokenizer, model='fake', minimum=0, maximum=None)
+        rows = [{'transcript': str(n)} for n in (100, 7822, 50000)]
+        self.assertTrue(all(counter.retain(row) for row in rows))
+        report = counter.report(rows)
+        self.assertFalse(report['length_filter_enabled'])
+        self.assertIsNone(report['max_transcript_tokens'])
+        self.assertEqual(report['eligible_records'], 3)
+
     def test_qmsum_cap_all_and_deterministic_sampling_after_filtering(self):
         rows = [{'meeting_id': str(i), 'meeting_transcripts': [{'speaker': 'Alice', 'content': str(i)}],
                  'general_query_list': [{'query': 'Summarize', 'answer': 'Reference'}]} for i in range(130)]

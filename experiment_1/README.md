@@ -20,7 +20,7 @@ pure representation-only causal intervention.
 ```bash
 conda activate latent-agents
 python -m experiment_1 \
-  --input input/meetingbank_speaker_4k_8k_test.jsonl \
+  --input input/experiment_1_unfiltered_cap100/meetingbank.jsonl \
   --benchmark meetingbank \
   --output-dir test_result/experiment_1_chunk_3_seed12 \
   --num-samples 3 \
@@ -29,7 +29,6 @@ python -m experiment_1 \
   --role-budget-ratio 0.25 \
   --speaker-neighbor-blocks 1 \
   --vector-routing \
-  --specialist-parts 8 \
   --specialist-overlap 0.25 \
   --summary-thinking \
   --seed 12 \
@@ -40,7 +39,8 @@ python -m experiment_1 \
 `--benchmark` 只标识当前输入数据集，不会自动读取其他数据集。
 `--num-samples 25` runs the first 25 records; `0` runs all. Input is speaker-labelled
 JSONL with unique `id`, `transcript`/`context`, and nonempty human `summary`/`answer`.
-The prepared 4k–8k filter uses model-token length, not word count.
+Preprocessing now retains all transcript lengths; reports stratify by raw model-token
+count, not word count. Rebuild old length-filtered exports in a new directory.
 
 Defaults: local temperature 0.3, top_p 0.9, generated-only repetition penalty 1.1;
 final temperature 0.3, top_p 0.9, repetition penalty 1.0; top_k disabled. Local seed
@@ -49,8 +49,10 @@ loaded precision unless the explicit optional `--fp32-lm-head` control is suppli
 No output-token or item cap is imposed; context exhaustion is an error.
 
 Windows cover only selected source evidence; discarded turns are not restored.
-Approximate 1/8 selected-context windows and 1/4 overlap preserve whole speaker
-blocks, so window counts can exceed eight. Each specialist is told its window
+The target count is `max(1, floor(n/1024 + 0.5))` from raw full-transcript tokens,
+with round-half-up. Complete selected speaker blocks are balanced into that many
+windows (capped by available blocks). Quarter overlap adds context without extra
+specialists; oversized turns stay intact. Each specialist is told its window
 number and total in meeting order. No additional current-part original text or
 global context is sent to local specialists. Weights are shared; execution is sequential.
 
@@ -71,6 +73,8 @@ summaries/00000/*.thinking.md          final reasoning, separate from scored ans
 live/00000/*.partial.txt               live generation text
 live/00000/*.status.json               per-stage progress and completion
 summary.txt / summary.json            aggregated scores, tokens, time, memory and paired intervals
+overview.txt / .json / .csv           overall and all five transcript-length groups
+length_groups/<group>/summary.*       full metrics for one length group (including empty/failed groups)
 tokens.json / per_sample.csv          sample-level accounting and scores
 repetition.json                       exact duplicate bullet diagnostics
 human_review.csv                      optional blank manual annotation sheet
@@ -149,4 +153,24 @@ Prepare all eligible records up to100 per domain using the commands in
 are not duplicated to reach a target. Run each export separately with
 `--num-samples 100`; its actual size appears in `manifest.json` (`sampling`) and
 the planned/completed counts. Use separate output folders for each benchmark.
-The four-domain Bash loop is included in that guide. Token bounds remain4000–8000.
+The four-domain Bash loop is included in that guide. No length bounds are applied
+by default. Each dataset still has a cap of100; no length-stratified resampling occurs.
+
+## Length groups and overview / 长度分组与总览
+
+The five disjoint groups are `[0,4000)`, `[4000,8000)`, `[8000,12000)`,
+`[12000,16000)` and `[16000,+inf)`, based on the generation model's raw transcript
+tokenizer, including speaker labels and timestamps, excluding chat templates.
+`overview.*` compares every group and the overall sample. Each group also gets
+the full quality/token/time/memory/paired reports in `length_groups/<group>/`.
+Planned/completed/failed counts include context-limit and inference failures;
+means use completed pairs only, and empty groups remain N/A. Unknown lengths in
+legacy saved results are explicitly labelled `unknown`, never estimated from words.
+Offline BERTScore/rescore regenerates the same grouped reports from saved lengths.
+
+Per-sample CSV adds `transcript_tokens`, `length_group`, `target_specialist_parts`
+and `actual_specialist_windows`. The old `--specialist-parts` argument is removed.
+No preprocessing length ceiling does not remove the model's context limit: full
+prefill and final synthesis must still fit, and overlength runs are recorded as
+failures without silent truncation. Start a new run; do not resume the earlier
+fixed-eight-window or 4k–8k filtered experiment.

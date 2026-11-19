@@ -10,6 +10,7 @@ from .storage import atomic_json
 from .repetition import repetition_metrics
 from .token_accounting import token_totals, FIELDS
 from meeting_evaluation.metrics import reference_metrics, source_overlap_support
+from .length_groups import length_group, sample_tokens, write_length_reports
 
 
 def paired_interval(samples, repetitions=2000, metric="rouge_l_f1"):
@@ -35,7 +36,7 @@ def _format(value, digits=4):
     return "N/A" if value is None else f"{value:.{digits}f}"
 
 
-def write_reports(store, completed, failures, planned):
+def write_reports(store, completed, failures, planned, *, group_by_length=True):
     result = {"planned_samples": planned, "completed_samples": len(completed), "failed_samples": len(failures),
               "failure_ids": [s["id"] for s in failures], "review": False,
               "memory_note": "CUDA peaks are PyTorch allocated bytes during each variant, including model, embedding model and full resident source KV. They exclude shared prefill/selection peaks, reserved allocator memory and non-PyTorch allocations.",
@@ -135,7 +136,8 @@ def write_reports(store, completed, failures, planned):
     fields = [*FIELDS, "total_input_tokens", "total_output_tokens", "total_tokens",
               "rouge_1_f1", "rouge_2_f1", "rouge_l_precision", "rouge_l_recall", "prediction_words", "reference_words", "word_length_ratio",
               "bertscore_precision", "bertscore_recall", "bertscore_f1",
-              "id", "variant", "rouge_l_f1", "supported_claim_rate", "source_positions", "selected_positions",
+              "id", "variant", "transcript_tokens", "length_group", "target_specialist_parts", "actual_specialist_windows",
+              "rouge_l_f1", "supported_claim_rate", "source_positions", "selected_positions",
               "actual_retained_fraction", "pipeline_seconds", "generated_tokens", "handoff_tokens",
               "handoff_cap_hit", "receiver_cap_hit", "cuda_peak_allocated_bytes", "logical_payload_bytes"]
     with (store.directory / "per_sample.csv").open("w", encoding="utf-8-sig", newline="") as handle:
@@ -145,7 +147,11 @@ def write_reports(store, completed, failures, planned):
             r = sample["result"]
             for name in VARIANTS:
                 m = r["variants"][name]
+                detail = r.get('chunk_specialists_by_variant', {}).get(name, {})
                 writer.writerow({**token_totals(m),
+                    'transcript_tokens': sample_tokens(sample), 'length_group': length_group(sample_tokens(sample)),
+                    'target_specialist_parts': detail.get('target_specialist_parts'),
+                    'actual_specialist_windows': detail.get('actual_specialist_windows'),
                     **{key: sample["quality"][name][key] for key in sample["quality"][name] if key in fields},
                     "id": sample["id"], "variant": name, **{k: sample["quality"][name][k] for k in ("rouge_l_f1", "supported_claim_rate")},
                     "source_positions": r["source_positions"], "selected_positions": len(r["selected_source_positions"]),
@@ -171,4 +177,6 @@ def write_reports(store, completed, failures, planned):
             for name in VARIANTS:
                 if (sample["id"], name) not in existing:
                     writer.writerow({"id": sample["id"], "variant": name})
+    if group_by_length:
+        write_length_reports(store, completed, failures, planned, result, write_reports)
     return result
