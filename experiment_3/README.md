@@ -2,6 +2,94 @@
 
 指标定义、80% 项目目标及三条开发案例结果见 [METRICS.md](METRICS.md)。
 
+## 与单模型直接摘要对比：原始 AMI 三样本
+
+复用 `experiment_2` 单模型生成、统一 ROUGE/BERTScore 函数，以及配对 bootstrap。
+`experiment_3.evaluate` 只读已有结果，不调用生成模型，也不调用 AI judge。
+使用原始会议和原参考摘要；当前人工插入决策的挑战文件没有对应参考摘要，不能用于此评分。
+
+以下从现有 AMI 输入中跳过前三条开发来源，固定接下来的三条。它们曾否用于其他研究需自行记录，
+按顺序跳过不等于官方数据集 held-out split。只在新文件不存在时执行准备；已有文件可直接复用。
+
+```bash
+conda activate latent-agents
+cd /root/autodl-tmp/Latent-communication-meeting_summary
+
+python -m experiment_3.prepare_comparison \
+  --input input/experiment_1_unfiltered_cap100/ami.jsonl \
+  --output input/experiment_3_direct_pilot/ami_3.jsonl \
+  --skip 3 \
+  --num-samples 3
+
+INPUT_FILE=input/experiment_3_direct_pilot/ami_3.jsonl
+
+# 只生成 V3，不额外跑原窗口 baseline。
+python -m experiment_3 \
+  --input "$INPUT_FILE" \
+  --benchmark ami \
+  --output-dir test_result/experiment_3_ami_v3_direct_pilot \
+  --num-samples 3 \
+  --conditions semantic \
+  --model Qwen/Qwen3-8B \
+  --device cuda \
+  --role-budget-ratio 0.25 \
+  --speaker-neighbor-blocks 1 \
+  --vector-routing \
+  --embedding-model models/Qwen3-Embedding-0.6B \
+  --supplement-blocks 2 \
+  --exclude-neighbor-blocks 1 \
+  --seed 12 --summary-seed 42 \
+  --summary-temperature 0.3 --summary-top-p 0.9 \
+  --summary-thinking
+
+WORKFLOW_RUN=$(find test_result/experiment_3_ami_v3_direct_pilot \
+  -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+
+# 单模型读取同一完整会议，一次生成；不加载 embedding 或执行选择。
+python -m experiment_2 \
+  --input "$INPUT_FILE" \
+  --benchmark ami \
+  --output-dir test_result/experiment_3_ami_direct_pilot \
+  --num-samples 3 \
+  --model Qwen/Qwen3-8B \
+  --device cuda \
+  --seed 12 --summary-seed 42 \
+  --summary-temperature 0.3 --summary-top-p 0.9 \
+  --summary-thinking
+
+DIRECT_RUN=$(find test_result/experiment_3_ami_direct_pilot \
+  -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+
+# 统一计算指标：不重跑摘要，BERTScore 只加载一次。
+python -m experiment_3.evaluate \
+  --run-dir "$WORKFLOW_RUN" \
+  --direct-run "$DIRECT_RUN" \
+  --bertscore-model allenai/longformer-base-4096 \
+  --bertscore-layers 12 \
+  --device cuda
+
+EVAL_DIR=$(find "$WORKFLOW_RUN/evaluation" \
+  -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+cat "$EVAL_DIR/summary.txt"
+```
+
+可选质量依赖沿用 `pip install -r experiment_1/requirements-quality.txt`。
+不加 `--bertscore-model` 可只计算 ROUGE、词面支持代理、重复和资源指标。
+BERTScore 使用同一个 Longformer、12 层、无 IDF、无 baseline rescale；不静默截断。
+
+评估输出：`summary.txt`、`summary.json`、`per_sample.csv` 和 `evaluation_manifest.json`。
+报告包含 baseline（若生成）、semantic、direct_text，以及各工作流相对 direct 的配对差值与区间。
+配对要求 ID、原文、参考摘要以及模型/最终解码参数一致；旧结果可以读取，但缺失 runtime
+元数据时不会声称运行环境相同。资源仅对匹配成功样本取均值，另外列出失败和缺失 ID。
+
+该对比是**整体工作流**对比，最终提示词并不完全相同：V3 有局部报告与额外汇总规则，
+直接模型使用完整原文及共享摘要要求。它不能把差异单独归因于 KV、语义补充或提示词。
+V3 的耗时由共享前置步骤与单组生成阶段重建；单模型耗时独立测量。实验 3 未保存独立
+显存峰值，评估器不会编造工作流显存或输出配对显存结论。
+
+新生成 manifest 记录代码文件 hash、Git commit 和环境版本，`runtime.json` 记录实际模型 revision
+与 GPU 元数据，以便区分旧提示词和新版结果。无需重跑旧结果来补算参考相似度。
+
 当前检索版本为 **`relative_diverse_v3`**。V1/V2 说明保留作历史记录；新运行默认采用
 下面的逐锚点候选与多样性策略。主工作流的全局 selector 不变。
 

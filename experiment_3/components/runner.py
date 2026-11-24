@@ -8,11 +8,13 @@ from .retrieval import METHOD, primary_windows, supplement_windows
 
 
 class SupplementRunner(ReceiverKVRunner):
-    def __init__(self, config, *, supplement_blocks=2, neighbor_radius=1, progress=None):
+    def __init__(self, config, *, supplement_blocks=2, neighbor_radius=1,
+                 conditions=('baseline', 'semantic'), progress=None):
         super().__init__(config, progress)
         self.supplement_blocks = supplement_blocks
         self.neighbor_radius = neighbor_radius
         self.pair_index = 0
+        self.conditions = tuple(conditions)
         if self.semantic_router is None:
             from vector.routing import SemanticRouter
             self.progress('loading embedding model for post-selection retrieval')
@@ -51,6 +53,7 @@ class SupplementRunner(ReceiverKVRunner):
         self.progress(f'post-selection matching complete; {sum(w["added_positions"] for w in augmented)} '
                       'additional local KV position events')
         order = ['baseline', 'semantic'] if self.pair_index % 2 == 0 else ['semantic', 'baseline']
+        order = [name for name in order if name in getattr(self, 'conditions', ('baseline', 'semantic'))]
         self.pair_index += 1
         conditions = {}
         # Both conditions receive identical instructions, seeds and global final evidence.
@@ -67,4 +70,5 @@ class SupplementRunner(ReceiverKVRunner):
         self.paired = dict(conditions=conditions, execution_order=order,
             retrieval=dict(**encoder, seconds=retrieval_seconds, method=METHOD),
             supplement_blocks=self.supplement_blocks, excluded_neighbor_radius=self.neighbor_radius)
-        return conditions['semantic']['answer'], conditions['semantic']['detail']
+        primary = conditions['semantic'] if 'semantic' in conditions else conditions['baseline']
+        return primary['answer'], primary['detail']

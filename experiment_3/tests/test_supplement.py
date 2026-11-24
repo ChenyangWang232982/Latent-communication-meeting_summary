@@ -87,6 +87,15 @@ class SupplementTest(unittest.TestCase):
         self.assertEqual(seen[0][0]['supplement_block_ids'], [])
         self.assertEqual(seen[1][0]['supplement_block_ids'], [1])
         self.assertEqual(runner.paired['retrieval']['embedding_input_tokens'], 0)
+        runner.conditions = ('semantic',)
+        seen.clear()
+        with patch('experiment_3.components.runner.selected_windows', return_value=windows), \
+             patch('experiment_3.components.runner.run_specialists', side_effect=fake):
+            runner._run_specialists('text', [0, 1, 2, 3], [0], selected, object(), [[1], [2], [3]],
+                                    transcript_tokens=2048, communication='kv')
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(runner.paired['execution_order'], ['semantic'])
+        self.assertEqual(set(runner.paired['conditions']), {'semantic'})
 
     def test_costs_count_shared_prefill_once_per_standalone_condition(self):
         stage = dict(prompt_tokens=10, output_tokens=5, source_kv_positions=20, source_kv_bytes=100)
