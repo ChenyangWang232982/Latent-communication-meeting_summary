@@ -181,4 +181,6 @@ paired comparisons against existing Experiment 1 checkpoints.
 
 实验2用于比较完整工作流与“全文原文直接交给同一模型”的质量和资源消耗。
 复用现有 AMI JSONL，默认先测三条；输出、断点续跑、离线评分和配对比较命令见
-[experiment_2/README.md](experiment_2/README.md)。尚未实现常规分块汇总基线或 challenge 集。
+[experiment_2/README.md](experiment_2/README.md)。常规分块汇总基线尚未实现；另有
+[三条 AMI 首尾关联案例](experiment_2/challenge_samples/README.md)，用于小规模诊断，
+不混入真实数据集的自动评分，也不代表完整 challenge benchmark。

@@ -10,10 +10,12 @@ trade-off of the workflow, not a pure communication-representation intervention.
 embedding、分块 specialist 或独立 review，不加载 embedding 模型。
 标准自回归生成仍会使用模型内部 KV cache，这不属于跨 agent 的 latent communication。
 
-Current scope is the direct baseline only. A conventional map–reduce/hierarchical
-baseline and the controlled challenge set are **not** implemented here.
+The main experiment is the direct baseline. A conventional map–reduce/hierarchical
+baseline is not implemented. A separate three-record AMI-derived endpoint pilot
+is documented in [challenge_samples/README.md](challenge_samples/README.md).
 
-本目录目前只实现直接概括基线。常规分块汇总和 challenge 集尚未实现。
+主实验为直接概括基线；常规分块汇总尚未实现。另有独立的三条 AMI 首尾关联案例，
+它不是完整 challenge benchmark，也不混入真实会议自动指标。
 
 ## Shared controls / 保持一致的设置
 
