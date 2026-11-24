@@ -6,7 +6,8 @@ from tqdm.auto import tqdm
 
 
 class ExperimentProgress:
-    def __init__(self):
+    def __init__(self, label="experiment_1"):
+        self.label = label
         self.terminal = sys.stderr.isatty()
         self.overall = tqdm(total=0, desc="Samples", unit="sample", position=0,
                             dynamic_ncols=True, disable=not self.terminal)
@@ -51,7 +52,7 @@ class ExperimentProgress:
         self.activity.set_postfix_str(detail, refresh=False)
         now = time.monotonic()
         if not self.terminal and (new or event.get("finished") or now - self.last_log >= 10):
-            self.log(f"[experiment_1] {stage} {phase}: {count} "
+            self.log(f"[{self.label}] {stage} {phase}: {count} "
                      f"{'tokens' if phase == 'decode' else 'steps'}; {detail}")
             self.last_log = now
 

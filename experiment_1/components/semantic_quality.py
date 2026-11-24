@@ -3,7 +3,7 @@ import importlib.metadata
 from .config import VARIANTS
 
 
-def add_bertscore(samples, model_name, layers, device):
+def add_bertscore(samples, model_name, layers, device, *, variants=VARIANTS):
     try:
         from bert_score import BERTScorer
     except ImportError as exc:
@@ -22,7 +22,7 @@ def add_bertscore(samples, model_name, layers, device):
     # BERTScore 0.3.13 strips input and adds a prefix space for these tokenizers.
     # Check that same representation so its later truncation cannot drop content.
     encoding_options = {"add_prefix_space": True} if getattr(config, "model_type", "") in ("roberta", "longformer", "gpt2") else {}
-    pairs = [(sample, name) for sample in samples for name in VARIANTS]
+    pairs = [(sample, name) for sample in samples for name in variants]
     for sample, name in pairs:
         for label, text in (("prediction", sample["result"]["answers"][name]), ("reference", sample["reference"])):
             count = len(tokenizer(text.strip(), add_special_tokens=True, truncation=False,

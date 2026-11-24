@@ -170,3 +170,15 @@ KV tensor bytes, positions, text UTF-8 bytes and model-token events have separat
 definitions; they are not measured network traffic or billed-token/FLOP savings.
 The full source cache stays resident. Embedding tokens are accounted separately.
 Automatic reference overlap and lexical support do not establish factual accuracy.
+
+## Experiment 2 / 实验2：全文直接概括基线
+
+`experiment_2` runs one full-transcript summary agent using the shared Qwen3
+loader, summary requirements, and final decoding settings. It does not run
+selectors, embeddings, local specialists, or review. One model is loaded per
+batch; defaults select three records. Saved results support offline BERTScore and
+paired comparisons against existing Experiment 1 checkpoints.
+
+实验2用于比较完整工作流与“全文原文直接交给同一模型”的质量和资源消耗。
+复用现有 AMI JSONL，默认先测三条；输出、断点续跑、离线评分和配对比较命令见
+[experiment_2/README.md](experiment_2/README.md)。尚未实现常规分块汇总基线或 challenge 集。
