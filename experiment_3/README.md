@@ -66,6 +66,43 @@ python -m experiment_3.retrieve \
 在边界可能略有差异。不要把本入口耗时当成在线复用向量的耗时。
 先检查相关发言是否真正连上，再用下面原有成对命令重新生成，output-dir 改成新目录。
 
+### 目标关联的离线排名诊断
+
+V2 已修复短发言占位，但三个挑战目标仍未入选。因此先诊断，不继续调整检索规则。
+加 `--answer-key` 后，在普通检索结束后，才将注释字符范围映射到 speaker blocks：
+
+```bash
+python -m experiment_3.retrieve \
+  --run-dir test_result/experiment_3_endpoint_3/20261125_052753_701837 \
+  --output-dir test_result/experiment_3_retrieval_diagnostic \
+  --embedding-model models/Qwen3-Embedding-0.6B \
+  --device cuda \
+  --supplement-blocks 2 \
+  --exclude-neighbor-blocks 1 \
+  --answer-key input/ami_endpoint_challenge_3/answer_key.json
+```
+
+`--run-dir` 仍指向原始成对生成结果，不能指向仅检索的 V2 目录。
+每个样本新增 `target_diagnostics.txt` / `.json`，检查双向关联而不假设目标一定是首尾块：
+
+| 字段 | 含义 |
+|---|---|
+| `raw_anchor_rank` | 以该目标发言为锚点，正确关联按原始余弦的排名 |
+| `weighted_anchor_rank` | 同一候选池按信息加权分数的排名 |
+| `raw_top_candidates` / `weighted_top_candidates` | 两种排名前五的分数和原文 |
+| `window_candidate_rank` | 在实际窗口所有锚点竞争后的排名，应用生产排除规则 |
+| `window_distinct_rank` | 再去除相同候选内容后的排名，实际取前 K 项 |
+| `exclusion_reasons` | 已在窗口内、邻居排除、相同内容、空内容或无正分等 |
+| `actually_supplemented` | 普通检索是否实际补入该目标块 |
+
+排名从 1 开始；null 表示不在该候选池，不赋零排名。独立锚点排名的候选池是所有
+已选远距离块，未先过滤短句，便于观察原始语义与信息加权的区别；实际窗口排名则复用
+生产检索的同一个函数。目标未被全局选中时明确报告，不把缺失证据当成 embedding 错误。
+
+只用答案文件里的样本标识、原文 hash 和字符范围，不用答案内容或期望结论加权。
+原文不匹配时跳过该样本的诊断并记录原因。目标注释可用于开发诊断，不能据此反复调参
+后仍将这些案例称为未见测试。此步骤不改变匹配结果、KV 选择或生成工作流。
+
 **边界：**语义组局部上下文更多，本实验不是等量证据对照。相似不等于赞成、真值或重要性。
 它不能找回未选中的发言，也不能证明模型内部注意力被改善。
 来源块 ID 只是提示元数据，不是在 KV 内插入的文字锚点；不要把生成的块引用当可靠标签。
@@ -146,5 +183,5 @@ KV payload 是逐阶段逻辑张量字节，不是网络流量；重复访问 KV
 ## CPU tests (no models downloaded)
 
 ```bash
-python -B -m unittest experiment_3.tests.test_supplement
+python -B -m unittest experiment_3.tests.test_supplement experiment_3.tests.test_diagnostics
 ```

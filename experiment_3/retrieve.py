@@ -1,5 +1,6 @@
 """Replay retrieval from saved experiment-3 evidence; no summary model or prefill."""
 import argparse
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,8 @@ def run(args):
     manifest = json.loads((args.run_dir / 'manifest.json').read_text(encoding='utf-8'))
     router = SemanticRouter(args.embedding_model, args.device)
     completed = 0
+    diagnosed = 0
+    answer_keys = None
     for case in sorted(args.run_dir.glob('[0-9][0-9][0-9][0-9][0-9]')):
         if not (case / 'selection.json').exists():
             continue
@@ -57,11 +60,33 @@ def run(args):
             f"Window {m['window']}: {m['anchor_block_id']} -> {m['block_id']} "
             f"score={m['score']:.4f}, cosine={m['cosine']:.4f}\n"
             f"ANCHOR: {m['anchor_text']}\nCANDIDATE: {m['candidate_text']}" for m in matches), encoding='utf-8')
+        # No answer annotations are loaded until ordinary retrieval has finished.
+        key_path = getattr(args, 'answer_key', None)
+        if key_path is not None:
+            if answer_keys is None:
+                answer_keys = json.loads(key_path.read_text(encoding='utf-8'))
+            source = json.loads((case / 'source.json').read_text(encoding='utf-8'))
+            key = answer_keys.get(source['id'])
+            if key is None:
+                diagnostic = dict(status='no_annotation_for_sample', sample_id=source['id'])
+            elif key.get('modified_source_sha256') != hashlib.sha256(source['transcript'].encode()).hexdigest():
+                diagnostic = dict(status='annotation_source_mismatch', sample_id=source['id'])
+            else:
+                from .components.diagnostics import diagnose, render_diagnostics
+                diagnostic = diagnose(selection['routing_audit']['sentence_coverage'], key,
+                    blocks, texts, windows, vectors, selected, augmented,
+                    neighbor_radius=args.exclude_neighbor_blocks)
+                (target / 'target_diagnostics.txt').write_text(render_diagnostics(diagnostic), encoding='utf-8')
+                diagnosed += 1
+            atomic_json(target / 'target_diagnostics.json', diagnostic)
+            if 'status' in diagnostic:
+                print(f'{case.name}: target diagnostics skipped: {diagnostic["status"]}', flush=True)
         completed += 1
         print(f'{case.name}: {len(matches)} supplements; {target / "matches.txt"}', flush=True)
     atomic_json(folder / 'manifest.json', dict(source_run=str(args.run_dir.resolve()),
         original_manifest=manifest, method='information_weighted_cosine_v2', completed=completed,
         embedding_model=args.embedding_model, device=args.device,
+        answer_key=str(getattr(args, 'answer_key', None)), diagnosed_cases=diagnosed,
         supplement_blocks=args.supplement_blocks, exclude_neighbor_blocks=args.exclude_neighbor_blocks,
         note='Retrieval only, using audit source excerpts; no summary model, source prefill or generation. '
              'No target answers enter retrieval. Review matches before running paired inference.'))
@@ -77,6 +102,8 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--supplement-blocks', type=int, default=2)
     parser.add_argument('--exclude-neighbor-blocks', type=int, default=1)
+    parser.add_argument('--answer-key', type=Path,
+                        help='Optional challenge annotations, used only for post-retrieval rank diagnostics')
     args = parser.parse_args()
     if args.supplement_blocks < 0 or args.exclude_neighbor_blocks < 0:
         parser.error('Counts and neighbor radius must be non-negative')

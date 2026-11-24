@@ -1,5 +1,6 @@
 import unittest
 import json
+import hashlib
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -158,8 +159,8 @@ class SupplementTest(unittest.TestCase):
             case.mkdir(parents=True)
             (source / 'manifest.json').write_text('{}', encoding='utf-8')
             audit = dict(sentence_coverage=[
-                dict(unit=0, source=[dict(token_range=[1, 2], text='Alice: proposal batteries')]),
-                dict(unit=1, source=[dict(token_range=[2, 3], text='Bob: revision charging dock')])])
+                dict(unit=0, source=[dict(token_range=[1, 2], character_range=[0, 25], text='Alice: proposal batteries')]),
+                dict(unit=1, source=[dict(token_range=[2, 3], character_range=[25, 52], text='Bob: revision charging dock')])])
             (case / 'selection.json').write_text(json.dumps(dict(routing_audit=audit,
                 selected_positions=[0, 1, 2], selected_sha256='fixed')), encoding='utf-8')
             (case / 'baseline.specialists.json').write_text(json.dumps(dict(windows=[
@@ -174,6 +175,20 @@ class SupplementTest(unittest.TestCase):
             self.assertEqual(result['matches'][0]['block_id'], 1)
             self.assertEqual(result['selected_sha256'], 'fixed')
             self.assertFalse(list(out.rglob('*.summary.txt')))
+            transcript = 'Alice: proposal batteries\nBob: revision charging dock'
+            (case / 'source.json').write_text(json.dumps(dict(id='sample', transcript=transcript)), encoding='utf-8')
+            keys = root / 'answer_key.json'
+            keys.write_text(json.dumps(dict(sample=dict(
+                modified_source_sha256=hashlib.sha256(transcript.encode()).hexdigest(),
+                opening=dict(character_range=[0, 24]), closing=dict(character_range=[26, 52])))), encoding='utf-8')
+            with patch('vector.routing.SemanticRouter', return_value=router):
+                annotated = run(SimpleNamespace(run_dir=source, output_dir=root / 'annotated',
+                    embedding_model='unused', device='cpu', supplement_blocks=1,
+                    exclude_neighbor_blocks=0, answer_key=keys))
+            annotated_result = json.loads((annotated / '00000' / 'retrieval.json').read_text(encoding='utf-8'))
+            self.assertEqual(result, annotated_result)
+            diagnostics = json.loads((annotated / '00000' / 'target_diagnostics.json').read_text(encoding='utf-8'))
+            self.assertEqual(diagnostics['directions'][0]['raw_anchor_rank'], 1)
 
 
 if __name__ == '__main__':
