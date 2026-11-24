@@ -1,5 +1,7 @@
 # Experiment 3: semantic supplementation of selected KV windows
 
+指标定义、80% 项目目标及三条开发案例结果见 [METRICS.md](METRICS.md)。
+
 当前检索版本为 **`relative_diverse_v3`**。V1/V2 说明保留作历史记录；新运行默认采用
 下面的逐锚点候选与多样性策略。主工作流的全局 selector 不变。
 
