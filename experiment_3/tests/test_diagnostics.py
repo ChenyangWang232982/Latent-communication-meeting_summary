@@ -25,9 +25,11 @@ class DiagnosticsTest(unittest.TestCase):
         opening = data['directions'][0]
         self.assertEqual(opening['candidate_block_id'], 2)
         self.assertEqual(opening['raw_anchor_rank'], 1)
-        # The target is best for its anchor, but another topic wins the whole window.
-        self.assertEqual(opening['windows'][0]['window_distinct_rank'], 2)
-        self.assertFalse(opening['windows'][0]['actually_supplemented'])
+        # V2 loses this association to a larger absolute score from another anchor.
+        # V3 retains the association with the stronger within-anchor advantage.
+        self.assertEqual(opening['windows'][0]['absolute_v2_rank'], 2)
+        self.assertEqual(opening['windows'][0]['window_distinct_rank'], 1)
+        self.assertTrue(opening['windows'][0]['actually_supplemented'])
         after = supplement_windows(blocks, selected, windows, vectors, texts=texts, top_k=1, neighbor_radius=0)
         self.assertEqual(before, after)
         self.assertIn('raw rank=1/', render_diagnostics(data))

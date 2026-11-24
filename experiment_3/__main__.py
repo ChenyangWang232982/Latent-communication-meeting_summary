@@ -14,6 +14,7 @@ from meeting_evaluation.records import load_records
 from experiment_1.components.storage import atomic_json
 from .components.runner import SupplementRunner
 from .components.reporting import measurement
+from .components.retrieval import METHOD
 
 
 def run(args):
@@ -29,7 +30,7 @@ def run(args):
         input_sha256=hashlib.sha256(args.input.read_bytes()).hexdigest(),
         sample_ids=[r.id for r in records], supplement_blocks=args.supplement_blocks,
         exclude_neighbor_blocks=args.exclude_neighbor_blocks,
-        retrieval_method='information_weighted_cosine_v2',
+        retrieval_method=METHOD,
         note='Same selected positions and final source KV. Baseline also receives provenance instructions. '
              'Semantic condition has more local evidence. Not an equal-evidence-volume intervention.'))
     print('Experiment directory:', folder, flush=True)

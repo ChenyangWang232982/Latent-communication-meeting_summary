@@ -1,6 +1,6 @@
 """Offline annotation-based rank inspection; never used to select evidence."""
-from .retrieval import (distinct_candidates, exclusion_reasons, information_weights,
-                        pair_scores, rank_candidates)
+from .retrieval import (METHOD, anchor_proposals, distinct_candidates, exclusion_reasons, information_weights,
+                        pair_scores, rank_candidates, rank_candidates_absolute)
 
 
 def rank_of(rows, block_id):
@@ -30,6 +30,10 @@ def diagnose(units, key, blocks, texts, windows, vectors, selected, augmented, *
     # Reuse the exact production ranking, independent of any annotation.
     window_ranks = [rank_candidates(w['block_ids'], available, vectors, signatures, weights, neighbor_radius)
                     for w in windows]
+    old_ranks = [rank_candidates_absolute(w['block_ids'], available, vectors, signatures, weights, neighbor_radius)
+                 for w in windows]
+    nominations = [anchor_proposals(w['block_ids'], available, vectors, signatures, weights, neighbor_radius)
+                   for w in windows]
     for anchor_label, anchors in targets.items():
         for candidate_label, candidates in targets.items():
             if candidate_label == anchor_label:
@@ -69,23 +73,30 @@ def diagnose(units, key, blocks, texts, windows, vectors, selected, augmented, *
                         distinct = distinct_candidates(ranked, signatures)
                         match = next((r for r in ranked if r['block_id'] == candidate), None)
                         reasons = exclusion_reasons(candidate, window['block_ids'], signatures, neighbor_radius)
+                        nominated = any(r['block_id'] == candidate for r in nominations[index])
                         if not reasons and match is None:
-                            reasons.append('nonpositive_window_score')
+                            reasons.append('diversity_redundant' if nominated else 'no_distinctive_anchor_nomination')
                         winner = next((r for r in distinct if r['block_id'] == candidate), None)
                         if match is not None and winner is None:
                             reasons.append('duplicate_candidate_content')
                         row['windows'].append(dict(window=index, exclusion_reasons=reasons,
+                            absolute_v2_rank=rank_of(old_ranks[index], candidate),
+                            nominated=nominated,
                             window_candidate_rank=rank_of(ranked, candidate),
                             window_distinct_rank=rank_of(distinct, candidate),
                             window_score=match['score'] if match else None,
+                            window_selection_score=match['selection_score'] if match else None,
+                            relative_advantage=match['relative_advantage'] if match else None,
+                            redundancy=match['redundancy'] if match else None,
                             best_window_anchor=match['anchor_block_id'] if match else None,
                             actually_supplemented=candidate in augmented[index]['supplement_block_ids'],
                             window_top_candidates=excerpts(distinct)))
                     pairs.append(row)
-    return dict(target_blocks=targets, directions=pairs, rank_base=1,
+    return dict(method=METHOD, target_blocks=targets, directions=pairs, rank_base=1,
         note='Annotations are inspected after retrieval. Raw/weighted anchor ranks use all selected '
              'non-neighbor blocks, before content exclusions. Window ranks apply actual production '
-             'exclusions and best-anchor competition. Null rank means not in that candidate pool. '
+             'exclusions, per-anchor nomination and diversity selection. absolute_v2_rank is the prior '
+             'absolute-score reference. Null rank means not in that candidate pool. '
              'Character-span overlap identifies speaker blocks, not exact annotated-token coverage.')
 
 
@@ -109,8 +120,11 @@ def render_diagnostics(data):
                              f"score={row['score']:.4f}; {row['text'].strip()}")
         for w in pair['windows']:
             lines.append(f"window={w['window']}; rank={w['window_candidate_rank']}; "
+                f"V2 rank={w['absolute_v2_rank']}; nominated={w['nominated']}; "
                 f"distinct rank={w['window_distinct_rank']}; selected={w['actually_supplemented']}; "
                 f"exclusions={w['exclusion_reasons']}; best anchor={w['best_window_anchor']}")
+            lines.append(f"  selection score={w['window_selection_score']}; "
+                         f"relative advantage={w['relative_advantage']}; redundancy={w['redundancy']}")
             for row in w['window_top_candidates']:
                 lines.append(f"  WINDOW CANDIDATE B{row['block_id']}: "
                              f"score={row['score']:.4f}; {row['text'].strip()}")

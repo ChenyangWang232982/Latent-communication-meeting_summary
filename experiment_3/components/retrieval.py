@@ -3,6 +3,8 @@ import math
 import re
 from collections import Counter
 
+METHOD = 'relative_diverse_v3'
+
 
 def content_terms(text):
     """Ignore speaker headers and generic transcript annotations, not word blacklists."""
@@ -42,7 +44,8 @@ def exclusion_reasons(block_id, primary, signatures, neighbor_radius):
     return reasons
 
 
-def rank_candidates(primary, available, vectors, signatures, weights, neighbor_radius):
+def rank_candidates_absolute(primary, available, vectors, signatures, weights, neighbor_radius):
+    """V2 reference ranking, retained for offline comparisons only."""
     candidates = []
     for block_id in available:
         if exclusion_reasons(block_id, primary, signatures, neighbor_radius):
@@ -64,6 +67,65 @@ def distinct_candidates(candidates, signatures):
             result.append(row)
             used.add(signature)
     return result
+
+
+def anchor_proposals(primary, available, vectors, signatures, weights, neighbor_radius):
+    """Each anchor nominates its best distinct candidate by within-anchor evidence score."""
+    eligible = [i for i in available if not exclusion_reasons(i, primary, signatures, neighbor_radius)]
+    proposals = {}
+    for anchor in primary:
+        if weights[anchor] <= 0:
+            continue
+        rows = []
+        for candidate in eligible:
+            score, cosine = pair_scores(vectors, weights, candidate, anchor)
+            if score > 0:
+                rows.append(dict(block_id=candidate, anchor_block_id=anchor, score=score, cosine=cosine,
+                    candidate_information=weights[candidate], anchor_information=weights[anchor]))
+        rows = distinct_candidates(sorted(rows, key=lambda r: (-r['score'], r['block_id'])), signatures)
+        if not rows:
+            continue
+        best = dict(rows[0])
+        second = rows[1]['score'] if len(rows) > 1 else 0.0
+        advantage = (best['score'] - second) / best['score']
+        priority = advantage * math.sqrt(weights[anchor] * weights[best['block_id']])
+        if priority <= 0:
+            continue  # A tied match provides no evidence for a distinctive association.
+        best.update(runner_up_score=second, relative_advantage=advantage, base_priority=priority)
+        old = proposals.get(best['block_id'])
+        if old is None or (priority, best['score'], -anchor) > (
+                old['base_priority'], old['score'], -old['anchor_block_id']):
+            proposals[best['block_id']] = best
+    return list(proposals.values())
+
+
+def rank_candidates(primary, available, vectors, signatures, weights, neighbor_radius):
+    """V3: compare within-anchor advantages, then greedily discourage topic redundancy.
+
+    Similarity between both candidate blocks and their anchors acts as a continuous
+    redundancy penalty. No topic count, clustering threshold, or answer label is used.
+    """
+    remaining = anchor_proposals(primary, available, vectors, signatures, weights, neighbor_radius)
+    ranked = []
+    used = set()
+    while remaining:
+        rescored = []
+        for proposal in remaining:
+            if signatures[proposal['block_id']] in used:
+                continue
+            redundancy = max((max(0.0, min(1.0, float(vectors[proposal['block_id']] @ vectors[r['block_id']])),
+                                  min(1.0, float(vectors[proposal['anchor_block_id']] @ vectors[r['anchor_block_id']])))
+                              for r in ranked), default=0.0)
+            priority = proposal['base_priority'] * (1.0 - redundancy)
+            if priority > 0:
+                rescored.append(dict(proposal, redundancy=redundancy, selection_score=priority))
+        if not rescored:
+            break
+        best = min(rescored, key=lambda r: (-r['selection_score'], -r['score'], r['block_id']))
+        ranked.append(best)
+        used.add(signatures[best['block_id']])
+        remaining = [r for r in remaining if r['block_id'] != best['block_id']]
+    return ranked
 
 
 def supplement_windows(blocks, selected, windows, vectors, *, texts=None, top_k=2, neighbor_radius=1):

@@ -1,5 +1,49 @@
 # Experiment 3: semantic supplementation of selected KV windows
 
+当前检索版本为 **`relative_diverse_v3`**。V1/V2 说明保留作历史记录；新运行默认采用
+下面的逐锚点候选与多样性策略。主工作流的全局 selector 不变。
+
+## V3：逐锚点候选、相对优势与多样性
+
+V2 诊断发现三个开发案例的前后证据，双向独立检索都排第 1，但窗口统一排名分别降到
+3/7、7/5、31/32，未进入前两名。V3 因此改变名额分配，而不是更换 embedding 或扩充名额。
+
+1. 在原有邻居、空内容、同内容排除之后，每个非零信息权重的窗口块独立检索。
+2. 每个锚点只提出一个最佳候选；比较的是不同候选内容，避免重复文本人为压低优势。
+3. 计算：`relative_advantage = (best_score - runner_up_score) / best_score`。
+   分数仍是 V2 的信息加权余弦。只有一个可用候选时 runner-up 为 0；并列最佳优势为 0，
+   不产生明确提名。不再让绝对余弦较高的话题直接占满名额。
+4. `base_priority = relative_advantage * sqrt(anchor_information * candidate_information)`。
+   同一候选被多个锚点提出时，只保留优先级最高的提名。
+5. 贪心选择：`selection_score = base_priority * (1 - redundancy)`。
+   redundancy 是与已选匹配的候选相似度、锚点相似度的正值最大值；首个匹配为 0。
+   完全冗余的匹配不再加入。它是连续多样性惩罚，不是固定话题数量或聚类阈值。
+6. 最多补两个不同内容块，仍去重并保持原始 KV 位置。可能少于两个。
+
+这是无需训练的启发式；相对优势不是置信概率，也不能保证稀疏话题都获得名额。
+没有针对首尾位置、负责人、授权等词语或挑战目标的特殊规则。三条案例已用于开发，
+后续质量验证需要保留其他未用于调参的数据。
+
+### Linux：先只测 V3 检索和排名
+
+```bash
+python -m experiment_3.retrieve \
+  --run-dir test_result/experiment_3_endpoint_3/20261125_052753_701837 \
+  --output-dir test_result/experiment_3_retrieval_v3 \
+  --embedding-model models/Qwen3-Embedding-0.6B \
+  --device cuda \
+  --supplement-blocks 2 \
+  --exclude-neighbor-blocks 1 \
+  --answer-key input/ami_endpoint_challenge_3/answer_key.json
+```
+
+`matches.txt` 新增相对优势、多样性惩罚和最终 selection score。
+诊断保留 `absolute_v2_rank` 对照旧排序，新增 `nominated`、`window_selection_score`、
+`relative_advantage`、`redundancy`。`score` / `window_score` 仍是原信息加权证据分数，
+不能和新的 selection score 混用。候选未被锚点提出时记录
+`no_distinctive_anchor_nomination`，被多样性完全抑制时记录 `diversity_redundant`。
+确认候选有用后，原 `python -m experiment_3` 生成入口也会使用同一 V3 排序。
+
 ## 目的 / Purpose
 
 检验将远距离相关证据补充到局部 specialist，是否帮助保留条件、指代和决策变化。

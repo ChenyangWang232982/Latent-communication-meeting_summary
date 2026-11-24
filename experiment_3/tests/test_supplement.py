@@ -25,7 +25,8 @@ class SupplementTest(unittest.TestCase):
         blocks = [[i*2+1, i*2+2] for i in range(8)]
         selected = [0, *[p for i, block in enumerate(blocks) if i != 7 for p in block]]
         base = [dict(block_ids=[2, 3], positions=[0, *blocks[2], *blocks[3]])]
-        vectors = {i: Vec(1, 0) for i in range(8)}
+        vectors = {i: Vec(.5, .5) for i in range(8)}
+        vectors.update({0: Vec(.9, .1), 2: Vec(1, 0), 3: Vec(0, 1), 5: Vec(.1, .9)})
         out = supplement_windows(blocks, selected, base, vectors,
             texts={i: f'item{i}' for i in range(8)}, top_k=2, neighbor_radius=1)[0]
         self.assertEqual(out['supplement_block_ids'], [0, 5])
@@ -63,7 +64,7 @@ class SupplementTest(unittest.TestCase):
     def test_paired_generation_keeps_selection_seeds_and_final_input(self):
         runner = SupplementRunner.__new__(SupplementRunner)
         runner.config = ReceiverKVConfig(vector_routing=True)
-        runner.post_router = SimpleNamespace(last_vectors={0: Vec(1), 1: Vec(1), 2: Vec(1)})
+        runner.post_router = SimpleNamespace(last_vectors={0: Vec(1, 0), 1: Vec(.8, .6), 2: Vec(0, 1)})
         runner.supplement_blocks = 1
         runner.neighbor_radius = 0
         runner.pair_index = 0
@@ -149,6 +150,33 @@ class SupplementTest(unittest.TestCase):
             [dict(block_ids=[0], positions=[0, 1])], {0: Vec(1), 1: Vec(1)},
             texts={0: 'Alice: Same wording.', 1: 'Bob: Same wording.'}, neighbor_radius=0)
         self.assertEqual(rows[0]['matches'], [])
+
+    def test_diversity_prefers_another_topic_over_near_duplicate_associations(self):
+        class Similarity:
+            def __init__(self, index):
+                self.index = index
+
+            def __matmul__(self, other):
+                if self.index == other.index:
+                    return 1.0
+                return scores.get(tuple(sorted((self.index, other.index))), 0.0)
+
+        scores = {(0, 3): .9, (0, 4): .4, (0, 5): .2,
+                  (1, 4): .85, (1, 3): .35, (1, 5): .2,
+                  (2, 5): .65, (2, 3): .3, (2, 4): .2,
+                  (0, 1): .95, (3, 4): .95}
+        vectors = {i: Similarity(i) for i in range(6)}
+        row = supplement_windows([[i+1] for i in range(6)], range(7),
+            [dict(block_ids=[0, 1, 2], positions=[0, 1, 2, 3])], vectors,
+            texts={i: f'item{i}' for i in range(6)}, top_k=2, neighbor_radius=0)[0]
+        self.assertEqual(row['supplement_block_ids'], [4, 5])
+        self.assertEqual([m['anchor_block_id'] for m in row['matches']], [1, 2])
+
+    def test_tied_candidates_do_not_create_false_distinctive_association(self):
+        row = supplement_windows([[1], [2], [3]], range(4),
+            [dict(block_ids=[0], positions=[0, 1])], {i: Vec(1) for i in range(3)},
+            texts={i: f'item{i}' for i in range(3)}, neighbor_radius=0)[0]
+        self.assertEqual(row['supplement_block_ids'], [])
 
     def test_retrieval_only_replays_saved_evidence_without_summary_model(self):
         from experiment_3.retrieve import run, saved_evidence

@@ -4,7 +4,7 @@ import time
 from receiver_kv_workflow.engine import ReceiverKVRunner
 from chunk_specialist_workflow.components.generation import run_specialists
 from chunk_specialist_workflow.components.windows import selected_windows, target_parts
-from .retrieval import primary_windows, supplement_windows
+from .retrieval import METHOD, primary_windows, supplement_windows
 
 
 class SupplementRunner(ReceiverKVRunner):
@@ -65,6 +65,6 @@ class SupplementRunner(ReceiverKVRunner):
                 windows=base if condition == 'baseline' else augmented, semantic_context=True)
             conditions[condition] = dict(answer=answer, detail=detail)
         self.paired = dict(conditions=conditions, execution_order=order,
-            retrieval=dict(**encoder, seconds=retrieval_seconds, method='information_weighted_cosine_v2'),
+            retrieval=dict(**encoder, seconds=retrieval_seconds, method=METHOD),
             supplement_blocks=self.supplement_blocks, excluded_neighbor_radius=self.neighbor_radius)
         return conditions['semantic']['answer'], conditions['semantic']['detail']
