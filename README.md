@@ -1,5 +1,11 @@
 # 语义辅助 KV 通信会议摘要 / Semantic-Assisted KV Meeting Summarization
 
+新增独立实验：[experiment_3](experiment_3/README.md) 在同一次全局 selected KV 上比较
+原时间窗口与远距离语义补充窗口；不修改默认运行模式。示例、输出和限制见该目录 README。
+
+New optional experiment: [Experiment 3](experiment_3/README.md) compares baseline windows
+with semantic supplementation using the same selected KV. Default workflow behavior is unchanged.
+
 ## 中文
 
 本项目采用无需额外训练的混合通信工作流：全文 prefill 一次，通过注意力与可选

@@ -101,6 +101,8 @@ class SemanticRouter:
     def rank(self, texts, attention, anchor_ids, weight):
         started = time.perf_counter()
         vectors, stats = self.encode(texts)
+        # Reusable CPU embeddings for downstream evidence organization experiments.
+        self.last_vectors = vectors
         semantic, matches = [], []
         # Compare each block to attention-selected seeds; exclude self-matches.
         # Matrix is N x seeds, not N x N when only a subset was selected.

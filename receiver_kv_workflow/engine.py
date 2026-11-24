@@ -104,6 +104,10 @@ class ReceiverKVRunner:
     def _tensor(self, ids):
         return self.torch.tensor([ids], device=self.device, dtype=self.torch.long)
 
+    def _run_specialists(self, *args, **kwargs):
+        from chunk_specialist_workflow.components.generation import run_specialists
+        return run_specialists(self, *args, **kwargs)
+
     def run(self, record_id: str, transcript: str, *, variants: tuple[str, ...],
             routing_audit: bool = False,
             on_state: Callable[[dict], None] | None = None,
@@ -225,12 +229,11 @@ class ReceiverKVRunner:
                 self.progress(f"{record_id}: speaker KV selection {len(selected)}/{baseline_positions} positions{detail}")
                 emit("selected", f"Selected {len(selected)} KV positions; {len(prefix)} source positions")
             answers, measurements, handoffs = {}, {}, {}
-            from chunk_specialist_workflow.components.generation import run_specialists
             emit('chunk_specialists', 'Specialists reading independent windows of selected source context')
             for name in requested:
                 if on_variant is not None:
                     on_variant(name, 'start')
-                answer, detail = run_specialists(self, transcript, prefix, protected, selected, source, speaker_blocks,
+                answer, detail = self._run_specialists(transcript, prefix, protected, selected, source, speaker_blocks,
                     on_generation=on_generation, on_progress=on_state,
                     communication='kv' if name == 'chunk_kv' else 'text', transcript_tokens=transcript_tokens)
                 chunk_results[name] = detail
