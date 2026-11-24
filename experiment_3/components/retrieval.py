@@ -1,21 +1,62 @@
 """Retrieve only already-selected evidence; never restore dropped source positions."""
+import math
+import re
+from collections import Counter
 
 
-def supplement_windows(blocks, selected, windows, vectors, *, top_k=2, neighbor_radius=1):
+def content_terms(text):
+    """Ignore speaker headers and generic transcript annotations, not word blacklists."""
+    text = re.sub(r'(?m)^[^:\n]{1,100}:\s*', '', text)
+    text = re.sub(r'\{[^{}]*\}|<[^<>]*>|\[[^\[\]]*\]', ' ', text)
+    return tuple(re.findall(r'[^\W_]+', text.casefold()))
+
+
+def information_weights(texts):
+    """Within-meeting IDF mass: repeated short turns have little distinct content."""
+    signatures = {i: content_terms(text) for i, text in texts.items()}
+    frequencies = Counter(term for terms in signatures.values() for term in set(terms))
+    count = len(signatures)
+    masses = {i: sum(math.log((count + 1) / (frequencies[t] + 1)) for t in set(terms))
+              for i, terms in signatures.items()}
+    scale = sum(masses.values()) / max(1, count)
+    weights = {i: mass / (mass + scale) if mass > 0 else 0.0 for i, mass in masses.items()}
+    return signatures, weights
+
+
+def supplement_windows(blocks, selected, windows, vectors, *, texts=None, top_k=2, neighbor_radius=1):
     selected = set(selected)
     available = {i: set(block) & selected for i, block in enumerate(blocks)}
     available = {i: positions for i, positions in available.items() if positions}
+    if texts is None:
+        raise ValueError('Source block texts are required for information-aware retrieval')
+    signatures, weights = information_weights({i: texts[i] for i in available})
     result = []
     for window in windows:
         primary = list(window['block_ids'])
+        primary_signatures = {signatures[a] for a in primary}
         candidates = []
         for block_id in available:
             if any(abs(block_id - anchor) <= neighbor_radius for anchor in primary):
                 continue
-            score, anchor = max(
-                (float(vectors[block_id] @ vectors[a]), a) for a in primary)
-            candidates.append(dict(block_id=block_id, anchor_block_id=anchor, cosine=score))
-        matches = sorted(candidates, key=lambda row: (-row['cosine'], row['block_id']))[:top_k]
+            if not signatures[block_id] or signatures[block_id] in primary_signatures:
+                continue
+            scored = []
+            for anchor in primary:
+                cosine = max(-1.0, min(1.0, float(vectors[block_id] @ vectors[anchor])))
+                score = max(0.0, cosine) * math.sqrt(weights[block_id] * weights[anchor])
+                scored.append((score, cosine, anchor))
+            score, cosine, anchor = max(scored)
+            if score > 0:
+                candidates.append(dict(block_id=block_id, anchor_block_id=anchor, cosine=cosine,
+                    score=score, candidate_information=weights[block_id], anchor_information=weights[anchor]))
+        matches, used = [], set()
+        for row in sorted(candidates, key=lambda row: (-row['score'], row['block_id'])):
+            if len(matches) >= top_k:
+                break
+            signature = signatures[row['block_id']]
+            if signature not in used:
+                matches.append(row)
+                used.add(signature)
         extras = sorted(row['block_id'] for row in matches)
         positions = set(window['positions'])
         for block_id in extras:

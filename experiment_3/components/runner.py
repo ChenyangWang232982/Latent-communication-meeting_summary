@@ -33,20 +33,20 @@ class SupplementRunner(ReceiverKVRunner):
             target_parts(tokens), self.config.specialist_overlap)))
         self.progress('post-selection semantic matching started')
         start = time.perf_counter()
+        retained = set(selected)
+        ids = [i for i, block in enumerate(blocks) if retained.intersection(block)]
+        texts = {i: self.tokenizer.decode([prefix[p] for p in blocks[i] if p in retained],
+                                        skip_special_tokens=True) for i in ids}
         if self.config.vector_routing and hasattr(self.post_router, 'last_vectors'):
             vectors = self.post_router.last_vectors
             encoder = dict(embedding_input_tokens=0, reused_selection_embeddings=True)
         else:
             # Encode only selected blocks. Zero rows for unused blocks are never candidates.
-            ids = sorted({i for w in base for i in w['block_ids']})
-            retained = set(selected)
-            texts = [self.tokenizer.decode([prefix[p] for p in blocks[i] if p in retained], skip_special_tokens=True)
-                     for i in ids]
-            encoded, encoder = self.post_router.encode(texts)
+            encoded, encoder = self.post_router.encode([texts[i] for i in ids])
             vectors = {i: encoded[j] for j, i in enumerate(ids)}
             encoder['reused_selection_embeddings'] = False
         augmented = supplement_windows(blocks, selected, base, vectors,
-            top_k=self.supplement_blocks, neighbor_radius=self.neighbor_radius)
+            texts=texts, top_k=self.supplement_blocks, neighbor_radius=self.neighbor_radius)
         retrieval_seconds = time.perf_counter() - start
         self.progress(f'post-selection matching complete; {sum(w["added_positions"] for w in augmented)} '
                       'additional local KV position events')
@@ -65,6 +65,6 @@ class SupplementRunner(ReceiverKVRunner):
                 windows=base if condition == 'baseline' else augmented, semantic_context=True)
             conditions[condition] = dict(answer=answer, detail=detail)
         self.paired = dict(conditions=conditions, execution_order=order,
-            retrieval=dict(**encoder, seconds=retrieval_seconds),
+            retrieval=dict(**encoder, seconds=retrieval_seconds, method='information_weighted_cosine_v2'),
             supplement_blocks=self.supplement_blocks, excluded_neighbor_radius=self.neighbor_radius)
         return conditions['semantic']['answer'], conditions['semantic']['detail']

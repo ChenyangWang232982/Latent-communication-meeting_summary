@@ -12,9 +12,9 @@ Both conditions share one immutable source cache and the exact same selected pos
 
 1. 原流程 prefill、五类查询、speaker 完整块选择、邻居扩张，仅执行一次。
 2. 原有时间窗口和 overlap 不变。`baseline` 只读取窗口 KV。
-3. `semantic` 在全局已选块中检索：每个候选与窗口内各块比较，取最高余弦相似度。
+3. `semantic` 在全局已选块中检索：每个候选与窗口内各块比较，按信息加权分数排序。
    排除窗口内块，以及距离任一窗口块 ID 不超过 `--exclude-neighbor-blocks` 的块。
-   默认取排名最高的 2 个不同块；没有相似度阈值，并不保证候选确实相关。
+   默认取排名最高的最多 2 个不同内容块；没有调优的相似度阈值，并不保证候选确实相关。
 4. 只合并选中位置，去重并按原位置排序。保留原 RoPE 位置，不把补充块改成连续位置。
 5. 两组都使用相同的补充证据解释规则、相同种子和解码设置；baseline 的补充列表为空。
    因此 baseline 多了来源元数据提示，与旧实验的原始输出不保证逐字相同。
@@ -26,6 +26,45 @@ Post-selection semantic supplementation always runs. When selection already comp
 the block embeddings, they are reused on CPU; otherwise only selected blocks are encoded once.
 The embedding model stays resident in both conditions. Both generation paths use sampling
 with the shared existing seeds/configuration; no new output-token cap or reviewer is added.
+
+### V2：重复短发言修复
+
+V1 单纯取最大余弦相似度，实测被重复的短发言与转录注释占满。
+V2 不设词语黑名单，而在每场会议的已选块上计算内容区分度：
+
+```text
+idf(t) = log((N + 1) / (含该词的块数 + 1))
+mass(block) = sum(idf(t) for 每个不同词)
+information(block) = mass / (mass + 全部块的平均 mass)
+score(candidate, anchor) = max(0, cosine) * sqrt(information(candidate) * information(anchor))
+```
+
+候选取其与窗口内各 anchor 的最高加权分数。speaker header 与通用括号式转录注释
+不参与内容统计，空内容不补充；与窗口内容完全相同的词序不补充；一次窗口内相同
+候选内容只补一次。词序不同或含不同否定词的发言不会因为词集合相同而被合并。
+余弦值裁剪到 [-1,1]，防止浮点舍入使其略大于 1。
+
+这是无需训练的排序启发式，可能偏向内容较多的块，不等价于真值、显著性或最终状态。
+它修复了已观察到的短句占位问题，但新检索和摘要质量仍需实测。全局 selector 不变。
+
+### 先用旧结果只检查检索（不跑 Qwen3-8B）
+
+```bash
+python -m experiment_3.retrieve \
+  --run-dir test_result/experiment_3_endpoint_3/20261125_052753_701837 \
+  --output-dir test_result/experiment_3_retrieval_v2 \
+  --embedding-model models/Qwen3-Embedding-0.6B \
+  --device cuda \
+  --supplement-blocks 2 \
+  --exclude-neighbor-blocks 1
+```
+
+读取旧审计保存的块原文、精确选择位置、原窗口，仅执行 embedding 和新排序。
+不会重跑全文 prefill、selector 或生成，不读取挑战答案作为检索输入。
+每条样本输出 `matches.txt`（匹配双方原文、分数）与 `retrieval.json`（位置、元数据）。
+旧版未保存向量，故此入口需要重新编码块文本；审计字符片段与在线 tokenizer.decode
+在边界可能略有差异。不要把本入口耗时当成在线复用向量的耗时。
+先检查相关发言是否真正连上，再用下面原有成对命令重新生成，output-dir 改成新目录。
 
 **边界：**语义组局部上下文更多，本实验不是等量证据对照。相似不等于赞成、真值或重要性。
 它不能找回未选中的发言，也不能证明模型内部注意力被改善。
