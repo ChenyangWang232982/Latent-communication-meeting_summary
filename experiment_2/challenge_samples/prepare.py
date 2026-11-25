@@ -29,27 +29,31 @@ ADDITIONS = [
 ]
 
 
-def create(output_dir, *, input_path=None, source_run=None):
+def create(output_dir, *, input_path=None, source_run=None, additions=None, skip=0,
+           version='ami_endpoint_pilot_v1'):
+    additions = ADDITIONS if additions is None else additions
+    count = len(additions)
     if input_path is not None:
-        records=load_records('jsonl',Path(input_path))[:3]
+        records=load_records('jsonl',Path(input_path))[skip:skip+count]
         originals=[dict(id=r.id,source=r.context,reference=r.answer) for r in records]
         provenance=dict(input_file=str(input_path),input_sha256=sha256(Path(input_path).read_bytes()))
     else:
         source_run=Path(source_run)
         manifest=json.loads((source_run/'manifest.json').read_text(encoding='utf-8'))
         originals=[]
-        for i,sid in enumerate(manifest['sample_ids'][:3]):
+        for i in range(skip, min(skip+count, len(manifest['sample_ids']))):
+            sid=manifest['sample_ids'][i]
             sample=json.loads((source_run/'samples'/f'{i:05d}.json').read_text(encoding='utf-8'))
             if sample['id']!=sid:
                 raise ValueError('Source checkpoint ID does not match its manifest')
             originals.append(dict(id=sid,source=sample['source'],reference=sample['reference']))
         provenance=dict(source_run=str(source_run),manifest_sha256=sha256((source_run/'manifest.json').read_bytes()))
-    if len(originals)!=3:
-        raise ValueError('Three source meetings are required')
+    if len(originals)!=count:
+        raise ValueError(f'{count} source meetings are required after skipping {skip}')
     folder=Path(output_dir)
     folder.mkdir(parents=True,exist_ok=False)
     rows=[];keys={}
-    for index,(original,addition) in enumerate(zip(originals,ADDITIONS)):
+    for index,(original,addition) in enumerate(zip(originals,additions)):
         if any(anchor.lower() in original['source'].lower() for anchor in addition['anchors']):
             raise ValueError('Inserted topic collides with original text; choose another source before freezing the test')
         transcript=addition['opening']+'\n'+original['source']+'\n'+addition['closing']
@@ -65,10 +69,10 @@ def create(output_dir, *, input_path=None, source_run=None):
     source=''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in rows)
     (folder/'meetings.jsonl').write_text(source,encoding='utf-8')
     atomic_json(folder/'answer_key.json',keys)
-    atomic_json(folder/'manifest.json',dict(version='ami_endpoint_pilot_v1',records=3,provenance=provenance,
+    atomic_json(folder/'manifest.json',dict(version=version,records=count,skip=skip,provenance=provenance,
         meetings_sha256=sha256((folder/'meetings.jsonl').read_bytes()),answer_key_sha256=sha256((folder/'answer_key.json').read_bytes()),
         note='Authored endpoint-only additions to real AMI meetings; not authentic new meeting facts. No reference summary or answer key is supplied to inference.'))
-    lines=['# AMI endpoint pilot: manual answer key','',
+    lines=['# AMI endpoint challenge: manual answer key','',
         'Synthetic additions only. Original meeting text is unchanged. Do not pass this file to the model.','']
     for sid,key in keys.items():
         lines.extend([f'## {sid}',f'Category: {key["category"]}',f'Original AMI ID: {key["source_id"]}',

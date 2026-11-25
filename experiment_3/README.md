@@ -244,6 +244,9 @@ python -m experiment_3.retrieve \
 
 ## Linux：已有三条挑战样本
 
+扩展的 **20 条新挑战、三组运行和目标核对导出**见 [CHALLENGES.md](CHALLENGES.md)。
+一键入口：`bash experiment_3/run_challenges.sh`。旧三条仍保留用于开发溯源。
+
 ```bash
 conda activate latent-agents
 cd /root/autodl-tmp/Latent-communication-meeting_summary
