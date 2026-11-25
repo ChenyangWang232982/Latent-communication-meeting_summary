@@ -26,6 +26,30 @@
 新增事项可能与原会议整体摘要的重要性竞争；遗漏应单独记录，不等同于虚构。
 这套数据不能证明普遍解决长文本注意力问题。看完结果后再改规则，后续结果就属于开发结果。
 
+## 可选：用原摘要粗看参考相似度，不重跑工作流
+
+默认挑战核对仍使用上述预设目标。若仅希望粗看原会议主题的摘要相似度，可另外对已生成的
+60 份完整摘要计算 ROUGE 和 BERTScore P/R/F1。此模式**只用原始 AMI 摘要**，不追加挑战答案，
+不改写候选摘要。脚本会核对去掉首尾插入行后的原会议全文与参考记录是否完全一致。
+
+```bash
+python -m experiment_3.rescore_challenges \
+  --run-dir test_result/experiment_3_challenge20/20261126_001225_109957 \
+  --references input/experiment_1_unfiltered_cap100/ami.jsonl \
+  --bertscore-model allenai/longformer-base-4096 \
+  --bertscore-layers 12 \
+  --device cuda
+```
+
+只加载评分 encoder，不加载 Qwen、不重新生成摘要、不调用 AI judge。缺少依赖时先运行
+`pip install -r experiment_1/requirements-quality.txt`。输出位于本批目录的
+`original_reference_evaluation/<时间戳>/`，包括 `summary.md`、`summary.txt`、`summary.json`、
+`per_sample.csv`、`references.json` 及评分溯源信息。
+
+此模式是**探索性原主题参考相似度**：原摘要没有插入事项，正确写出新增内容也可能降低 precision
+或 F1，所以不把分数当作挑战事实精度、正确率或新增事项覆盖率。BERTScore P 是语义匹配精度，
+不是“事实正确的句子比例”。不静默截断；不使用过短的目标答案来评整篇纪要。
+
 ## 运行（Linux，项目根目录）
 
 先同步当前代码，再激活服务器环境：

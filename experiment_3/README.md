@@ -246,6 +246,10 @@ python -m experiment_3.retrieve \
 
 扩展的 **20 条新挑战、三组运行和目标核对导出**见 [CHALLENGES.md](CHALLENGES.md)。
 一键入口：`bash experiment_3/run_challenges.sh`。旧三条仍保留用于开发溯源。
+已完成运行的统计、逐例观察及计时干扰说明见
+[20 条挑战分析报告](../EXPERIMENT_3_CHALLENGE20_ANALYSIS_ZH.md)。
+若要只用原 AMI 摘要粗看 ROUGE/BERTScore，使用独立的 `experiment_3.rescore_challenges`，
+命令与参考边界见 [CHALLENGES.md](CHALLENGES.md#可选用原摘要粗看参考相似度不重跑工作流)。
 
 ```bash
 conda activate latent-agents

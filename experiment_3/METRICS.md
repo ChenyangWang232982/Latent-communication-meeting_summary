@@ -3,7 +3,8 @@
 记录日期：2026-11-25。
 
 本文固定挑战集的证据组织指标、计数规则和项目验收目标。该指标为本项目定义的诊断指标，
-不声称是会议摘要领域通用标准。本文记录指标方案与已核对的开发结果，未新增自动汇总评分程序。
+不声称是会议摘要领域通用标准。本文记录指标方案与已核对的开发结果；扩展 20 条结果现有
+自动聚合脚本，但不自动评判最终摘要事实正确性，详见第 9 节。
 
 ## 1. 指标目的
 
@@ -141,3 +142,32 @@ V3 的 `retrieval.json` 保存各窗口实际合并的位置，`target_diagnosti
 > On three controlled development cases, V3 increased coverage from 0/3 to 3/3.
 > Since these cases informed method development and the sample is small, this result
 > does not establish generalization to unseen cases.
+
+## 9. 扩展 20 条挑战的已保存结果
+
+运行标识为服务器目录 `20261126_001225_109957`；三组各完成 20/20，无失败记录。
+原始数据位于 `D:/Download/experiment_3_challenge20/20261126_001225_109957`。
+
+| 类别 | baseline 同窗命中 | V3 同窗命中 |
+|---|---:|---:|
+| revision | 0/4 | 4/4 |
+| owner_change | 0/4 | 4/4 |
+| condition | 0/4 | 4/4 |
+| scope | 0/4 | 4/4 |
+| no_change | 0/4 | 3/4 |
+| 总计 | 0/20（0%） | **19/20（95%）** |
+
+V3 的 95% Wilson 区间约为 76.4%–99.1%。这组固定合成事项达到项目 80% 点估计目标，
+但不构成对真实会议总体覆盖率超过 80% 的确认性证明。direct_text 不使用局部 specialist，
+其同窗覆盖指标不适用，不能记为 0%。
+
+未命中的 `ami_80_endpoint` 开头 23 个必要 token 全部被全局 selector 丢弃，结尾 33 个
+必要 token 均保留。候选只来自 selected KV 的 V3 无法找回被删除的开头；该项仍计入分母。
+
+95% 是证据共同可见率，不是最终正确率。扩展结果中已看到证据同窗后仍有负责人、条件状态、
+别名拆分和跨章节矛盾错误；当前原始人工表中 60 个 verdict 均未填写。
+同时，首条执行期间有异常 GPU 算力竞争，因此原始耗时不用于正式效率结论。
+
+详细表格、逐例定性观察和复算入口见
+[EXPERIMENT_3_CHALLENGE20_ANALYSIS_ZH.md](../EXPERIMENT_3_CHALLENGE20_ANALYSIS_ZH.md)。
+统计脚本为 [analyze_challenges.py](analyze_challenges.py)，只读取既有结果，不运行生成模型或 AI judge。
