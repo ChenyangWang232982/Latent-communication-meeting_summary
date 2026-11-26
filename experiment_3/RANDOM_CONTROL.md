@@ -50,6 +50,10 @@ python -m experiment_3.random_control \
 ```
 
 模型、summary thinking、温度、生成 seed 等继承 source-run 的 manifest，无需重复传入。
+若旧 runtime 记录了 Hugging Face commit，脚本在加载前解析并固定到该 commit 的本地 snapshot，
+权重和 tokenizer 都从同一快照读取。不会先加载当前 main 再因 revision 不同报错。
+内容相同的文件通常可复用 Hub 缓存；旧快照缺少的文件仍需下载。runtime 同时记录固定 commit、
+snapshot 路径及配置对象报告的 revision，避免把本地快照加载时的空 `_commit_hash` 当作模型变化。
 脚本检查源位置映射和关键生成代码是否与旧对照一致；如提示不一致，应先查明版本差异，
 不能跳过检查后仍称只有证据选择改变。
 

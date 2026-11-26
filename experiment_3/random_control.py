@@ -19,6 +19,24 @@ def read(path):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
+def replay_model_snapshot(model, revision):
+    """Resolve the recorded Hub commit before loading weights or the tokenizer."""
+    if not revision:
+        return model, dict(requested_model=model, pinned_revision=None, snapshot=None)
+    if Path(model).is_dir():
+        raise ValueError('Saved controls name a local model with a Hub revision; use its original Hub repo ID to pin the snapshot.')
+    from huggingface_hub import snapshot_download
+    print(f'Reusing control model revision: {model}@{revision}', flush=True)
+    snapshot = snapshot_download(repo_id=model, revision=revision, allow_patterns=[
+        'config.json', 'generation_config.json', 'tokenizer*', 'chat_template*',
+        'vocab.json', 'merges.txt', 'special_tokens_map.json', 'added_tokens.json',
+        '*.safetensors', '*.safetensors.index.json'])
+    # A full saved commit hash must resolve to that exact cached commit directory.
+    if len(revision) == 40 and Path(snapshot).name != revision:
+        raise ValueError(f'Hub resolved a different snapshot: expected {revision}, got {snapshot}')
+    return snapshot, dict(requested_model=model, pinned_revision=revision, snapshot=str(snapshot))
+
+
 def run(args):
     source_run = args.source_run.resolve()
     manifest = read(source_run/'manifest.json')
@@ -89,12 +107,17 @@ def run(args):
     from chunk_specialist_workflow.components.generation import run_specialists
     # Model weights and generation settings are inherited. Embedding is unnecessary in replay.
     config = replace(ReceiverKVConfig(**manifest['config']), device=args.device, vector_routing=False)
-    runner = ReceiverKVRunner(config, progress=lambda s: print(s, flush=True))
-    revision = getattr(runner.model.config, '_commit_hash', None)
     old_runtime = read(source_run/'runtime.json') if (source_run/'runtime.json').exists() else {}
-    if old_runtime.get('model_revision') and revision != old_runtime['model_revision']:
-        raise ValueError('Model revision differs from the saved controls')
-    atomic_json(output/'runtime.json', dict(device=str(runner.device), model_revision=revision,
+    expected_revision = old_runtime.get('model_revision')
+    model_path, model_identity = replay_model_snapshot(config.model, expected_revision)
+    config = replace(config, model=model_path)
+    runner = ReceiverKVRunner(config, progress=lambda s: print(s, flush=True))
+    reported_revision = getattr(runner.model.config, '_commit_hash', None)
+    # Local snapshot loading may report _commit_hash=None. The explicitly resolved
+    # immutable Hub snapshot above, rather than incidental config metadata, pins identity.
+    atomic_json(output/'runtime.json', dict(device=str(runner.device),
+        model_revision=expected_revision or reported_revision,
+        config_reported_revision=reported_revision, model_identity=model_identity,
         effective_config=asdict(config), embedding_loaded=False))
     completed, coverage_rows = 0, []
     for index, (case, target, src, blocks, selection, old_detail, windows) in enumerate(plans):

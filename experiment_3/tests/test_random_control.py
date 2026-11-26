@@ -74,6 +74,8 @@ class RandomEvidenceTest(unittest.TestCase):
                      'receiver_kv_workflow/prompts.py','receiver_kv_workflow/speaker_blocks.py','receiver_kv_workflow/source_mapping.py')
             save(old/'manifest.json', dict(sample_ids=['a'], config=asdict(ReceiverKVConfig(device='cpu',vector_routing=True)),
                 exclude_neighbor_blocks=0, code_sha256={n:sha256((project/n).read_bytes()) for n in names}))
+            pinned_revision='a'*40
+            save(old/'runtime.json', dict(model_revision=pinned_revision))
             save(case/'source.json', dict(id='a',transcript='Alpha: First.\nBeta: Last.'))
             base = dict(block_ids=[0],primary_block_ids=[0],supplement_block_ids=[],positions=[0,1,3],matches=[],added_positions=0)
             sem = dict(base,block_ids=[0,1],supplement_block_ids=[1],positions=[0,1,2,3])
@@ -86,8 +88,9 @@ class RandomEvidenceTest(unittest.TestCase):
             class FakeRunner:
                 def __init__(self,config,progress):
                     assert not config.vector_routing
+                    assert Path(config.model).name==pinned_revision
                     self.config=config;self.progress=progress;self.device=SimpleNamespace(type='cpu')
-                    self.model=SimpleNamespace(config=SimpleNamespace(_commit_hash='rev'))
+                    self.model=SimpleNamespace(config=SimpleNamespace(_commit_hash=None))
                     self.tokenizer=None;self.torch=SimpleNamespace(inference_mode=nullcontext)
                 def _sync(self): pass
                 def _tensor(self,ids): return ids
@@ -96,6 +99,7 @@ class RandomEvidenceTest(unittest.TestCase):
             detail=dict(stages=dict(local=stage,final=stage),pipeline_seconds=.1)
             with patch('experiment_3.random_control.saved_evidence',return_value=(
                     [[1],[2]],{0:'Alpha: Original first.',1:'Beta: Different last.'},[base],selection)), \
+                 patch('huggingface_hub.snapshot_download', return_value=str(root/'snapshots'/pinned_revision)), \
                  patch('receiver_kv_workflow.engine.ReceiverKVRunner',FakeRunner), \
                  patch('receiver_kv_workflow.prompts.prompt_parts',return_value=([10,11,12,13],[],[0,3])), \
                  patch('receiver_kv_workflow.speaker_blocks.speaker_units',return_value=[[1],[2]]), \
@@ -107,7 +111,26 @@ class RandomEvidenceTest(unittest.TestCase):
             self.assertTrue(generated.call_args.kwargs['semantic_context'])
             self.assertEqual((out/'00000/random.summary.txt').read_text().strip(),'Random only')
             self.assertEqual(json.loads((out/'status.json').read_text())['completed'],1)
+            runtime=json.loads((out/'runtime.json').read_text())
+            self.assertEqual(runtime['model_revision'],pinned_revision)
+            self.assertIsNone(runtime['config_reported_revision'])
             self.assertFalse((out/'00000/baseline.summary.txt').exists())
+
+    def test_recorded_model_revision_is_resolved_before_loading(self):
+        from experiment_3.random_control import replay_model_snapshot
+        revision = 'a'*40
+        snapshot = f'/cache/models--example--model/snapshots/{revision}'
+        with patch('huggingface_hub.snapshot_download', return_value=snapshot) as download:
+            path, metadata = replay_model_snapshot('example/model', revision)
+        self.assertEqual(path, snapshot)
+        self.assertEqual(download.call_args.kwargs['revision'], revision)
+        self.assertEqual(metadata['pinned_revision'], revision)
+
+    def test_resolved_snapshot_must_match_recorded_commit(self):
+        from experiment_3.random_control import replay_model_snapshot
+        with patch('huggingface_hub.snapshot_download', return_value='/cache/snapshots/'+'b'*40):
+            with self.assertRaisesRegex(ValueError, 'different snapshot'):
+                replay_model_snapshot('example/model', 'a'*40)
 
 
 if __name__=='__main__': unittest.main()
