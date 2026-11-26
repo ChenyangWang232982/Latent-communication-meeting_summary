@@ -55,12 +55,17 @@ def run(args):
         raise ValueError(f'Generation code differs from saved controls: {mismatches}. Use matching code for a valid replay.')
     output = args.output_dir/datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     output.mkdir(parents=True)
-    plans, rows = [], []
+    plans, rows, skipped = [], [], []
     for index, sid in enumerate(ids):
         case = source_run/f'{index:05d}'
+        required = ('source.json', 'selection.json', 'baseline.specialists.json', 'baseline.metrics.json', 'semantic.specialists.json')
+        if (case/'failure.json').exists() or any(not (case/name).exists() for name in required):
+            skipped.append(sid)
+            print(f'{sid}: skipped incomplete source workflow', flush=True)
+            continue
         source = read(case/'source.json')
-        if source['id'] != sid or (case/'failure.json').exists():
-            raise ValueError(f'Incomplete source control: {sid}')
+        if source['id'] != sid:
+            raise ValueError(f'Source ID mismatch: {sid}')
         blocks, texts, primary, selection = saved_evidence(case)
         semantic = read(case/'semantic.specialists.json')
         windows = random_windows(blocks, texts, selection['selected_positions'], primary,
@@ -74,6 +79,8 @@ def run(args):
         plans.append((case, target, source, blocks, selection, semantic, windows))
         for wi, window in enumerate(windows):
             rows.append(dict(index=index, id=sid, window=wi, **window['matching']))
+    if not plans:
+        raise ValueError('No completed source workflows to replay')
     with (output/'window_matching.csv').open('w', encoding='utf-8-sig', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader(); writer.writerows(rows)
@@ -83,6 +90,7 @@ def run(args):
         source_manifest_sha256=sha256((source_run/'manifest.json').read_bytes()),
         config=manifest['config'], random_seed=args.random_seed, match_trials=args.match_trials,
         conditions=['random'], plan_only=args.plan_only,
+        eligible_source_records=len(plans), skipped_source_ids=skipped,
         saved_generation_code_matches=not mismatches,
         replay_code_sha256={name:sha256((project/name).read_bytes()) for name in
             (*files, 'experiment_3/random_control.py', 'experiment_3/components/random_control.py')},
@@ -95,7 +103,7 @@ def run(args):
              'and sample uniformly among ties with a fixed seed. Larger sets use seeded random draws. '
              'Whole-block constraints may leave mismatches, reported per window. '
              'Historical controls are reused; new runtime and memory are not a controlled full-workflow comparison.'))
-    print(f'Plans: {len(ids)} meetings, {len(rows)} windows; supplementary positions '
+    print(f'Plans: {len(plans)}/{len(ids)} eligible meetings, {len(rows)} windows; supplementary positions '
           f'random={total_actual}, semantic={total_target}', flush=True)
     print('Output:', output, flush=True)
     if args.plan_only:
@@ -180,14 +188,14 @@ def run(args):
         finally:
             gc.collect()
             if runner.device.type=='cuda': runner.torch.cuda.empty_cache()
-        atomic_json(output/'status.json', dict(planned=len(ids), completed=completed, failed=index+1-completed,
-                                              processed=index+1))
-        print(f'{index+1}/{len(ids)} random control processed', flush=True)
+        atomic_json(output/'status.json', dict(planned=len(ids), eligible=len(plans), skipped_source_ids=skipped,
+            completed=completed, failed=index+1-completed, processed=index+1))
+        print(f'{index+1}/{len(plans)} random control processed', flush=True)
     with (output/'coverage_comparison.csv').open('w', encoding='utf-8-sig', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=['id', 'baseline', 'semantic', 'random'])
         writer.writeheader(); writer.writerows(coverage_rows)
     lines = ['Random evidence control: historical baseline/semantic versus new random',
-        f'Completed random generations: {completed}/{len(ids)}',
+        f'Completed random generations: {completed}/{len(plans)} eligible; source planned={len(ids)}; skipped={len(skipped)}',
         f'Coverage-evaluable paired cases: {len(coverage_rows)}',
         f'Exact token-count-matched windows: {sum(r["absolute_position_difference"]==0 for r in rows)}/{len(rows)}',
         f'Total supplementary positions: semantic={total_target}; random={total_actual}',

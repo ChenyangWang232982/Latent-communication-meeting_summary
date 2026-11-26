@@ -115,6 +115,68 @@ class EvaluationTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'settings differ'):
                 evaluate(workflow, direct)
 
+    def random_fixture(self, root, workflow):
+        from experiment_1.components.config import sha256
+        replay = root/'random'
+        manifest = json.loads((workflow/'manifest.json').read_text())
+        save(replay/'manifest.json', dict(sample_ids=manifest['sample_ids'], conditions=['random'],
+            random_seed=7, config=manifest['config'],
+            source_manifest_sha256=sha256((workflow/'manifest.json').read_bytes())))
+        for i in range(2):
+            source = json.loads((workflow/f'{i:05d}/source.json').read_text())
+            save(replay/f'{i:05d}/source.json', source)
+            (replay/f'{i:05d}/random.summary.txt').write_text(source['reference'])
+            save(replay/f'{i:05d}/random.specialists.json', dict(transcript_tokens=100,
+                stages=dict(final=dict(output_cap_hit=False))))
+            save(replay/f'{i:05d}/random.metrics.json', dict(logical_total_tokens=24,
+                logical_input_tokens=17, logical_output_tokens=7, local_kv_position_events=80,
+                final_kv_positions=70, replay_prefill_seconds=1, replay_generation_seconds=2))
+        return replay
+
+    def test_random_quality_and_token_comparison_without_fabricated_pipeline_time(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            workflow,direct=self.fixture(root)
+            replay=self.random_fixture(root,workflow)
+            def fake(samples,*args,**kwargs):
+                self.assertEqual(len(samples),8)
+                for s in samples:
+                    s['quality']['summary'].update(bertscore_precision=.8,bertscore_recall=.9,bertscore_f1=.85)
+                return dict(model='mock')
+            with patch('experiment_3.evaluate.add_bertscore',side_effect=fake) as scorer:
+                out=evaluate(workflow,direct,random_runs=[replay],bertscore_model='mock')
+                self.assertEqual(scorer.call_count,1)
+            report=json.loads((out/'summary.json').read_text())
+            self.assertEqual(report['paired_samples'],2)
+            self.assertIsNone(report['means']['random_seed_7']['pipeline_seconds'])
+            self.assertEqual(report['means']['random_seed_7']['total_tokens'],24)
+            self.assertEqual(report['means']['random_seed_7']['bertscore_f1'],.85)
+            comp=report['ablations']['semantic_minus_random_seed_7']['overall']['metrics']
+            self.assertEqual(comp['total_tokens']['difference_workflow_minus_direct'],1)
+            self.assertNotIn('pipeline_seconds',comp)
+            self.assertTrue((out/'length_groups.csv').exists())
+
+    def test_random_missing_cases_are_excluded_from_every_reported_condition(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            workflow,direct=self.fixture(root)
+            replay=self.random_fixture(root,workflow)
+            (replay/'00001/random.summary.txt').unlink()
+            out=evaluate(workflow,direct,random_runs=[replay])
+            report=json.loads((out/'summary.json').read_text())
+            self.assertEqual(report['paired_ids'],['a'])
+            self.assertIn('b', report['random_controls']['random_seed_7']['missing_ids'])
+
+    def test_random_replay_must_belong_to_the_compared_workflow(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            workflow,direct=self.fixture(root)
+            replay=self.random_fixture(root,workflow)
+            path=replay/'manifest.json'; manifest=json.loads(path.read_text())
+            save(path,dict(manifest,source_manifest_sha256='wrong'))
+            with self.assertRaisesRegex(ValueError,'does not replay'):
+                evaluate(workflow,direct,random_runs=[replay])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -43,10 +43,10 @@ def workflow_samples(run_dir):
             item['transcript_tokens'] = detail['transcript_tokens']
             item['conditions'][condition] = dict(answer=answer,
                 costs=dict(total_tokens=costs['logical_total_tokens'],
-                           pipeline_seconds=costs['standalone_pipeline_seconds'], cuda_peak_mib=None),
+                           pipeline_seconds=costs.get('standalone_pipeline_seconds'), cuda_peak_mib=None),
                 details=dict(logical_input_tokens=costs['logical_input_tokens'],
                     logical_output_tokens=costs['logical_output_tokens'],
-                    embedding_input_tokens=costs['total_embedding_input_tokens'],
+                    embedding_input_tokens=costs.get('total_embedding_input_tokens'),
                     local_kv_position_events=costs['local_kv_position_events'],
                     final_kv_positions=costs['final_kv_positions']))
         for name in names:

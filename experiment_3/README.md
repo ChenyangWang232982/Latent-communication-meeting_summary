@@ -249,6 +249,8 @@ python -m experiment_3.retrieve \
 已完成运行的统计、逐例观察及计时干扰说明见
 [20 条挑战分析报告](../EXPERIMENT_3_CHALLENGE20_ANALYSIS_ZH.md)。
 新增长度匹配随机对照（复用旧选择，只生成 random 组）：见 [RANDOM_CONTROL.md](RANDOM_CONTROL.md)。
+后续统一使用原始 **AMI100** 的分步生成、单模型对照、随机补充及统一评分命令见 [AMI100.md](AMI100.md)。
+自动依次执行这些任务、保存日志与整步续跑见 [TASK_QUEUE.md](TASK_QUEUE.md)。
 若要只用原 AMI 摘要粗看 ROUGE/BERTScore，使用独立的 `experiment_3.rescore_challenges`，
 命令与参考边界见 [CHALLENGES.md](CHALLENGES.md#可选用原摘要粗看参考相似度不重跑工作流)。
 

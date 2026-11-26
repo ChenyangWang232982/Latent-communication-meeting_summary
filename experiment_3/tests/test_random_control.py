@@ -72,7 +72,7 @@ class RandomEvidenceTest(unittest.TestCase):
             project = Path(__file__).resolve().parents[2]
             names = ('chunk_specialist_workflow/components/generation.py','receiver_kv_workflow/cache.py',
                      'receiver_kv_workflow/prompts.py','receiver_kv_workflow/speaker_blocks.py','receiver_kv_workflow/source_mapping.py')
-            save(old/'manifest.json', dict(sample_ids=['a'], config=asdict(ReceiverKVConfig(device='cpu',vector_routing=True)),
+            save(old/'manifest.json', dict(sample_ids=['a','missing'], config=asdict(ReceiverKVConfig(device='cpu',vector_routing=True)),
                 exclude_neighbor_blocks=0, code_sha256={n:sha256((project/n).read_bytes()) for n in names}))
             pinned_revision='a'*40
             save(old/'runtime.json', dict(model_revision=pinned_revision))
@@ -111,6 +111,7 @@ class RandomEvidenceTest(unittest.TestCase):
             self.assertTrue(generated.call_args.kwargs['semantic_context'])
             self.assertEqual((out/'00000/random.summary.txt').read_text().strip(),'Random only')
             self.assertEqual(json.loads((out/'status.json').read_text())['completed'],1)
+            self.assertEqual(json.loads((out/'status.json').read_text())['skipped_source_ids'],['missing'])
             runtime=json.loads((out/'runtime.json').read_text())
             self.assertEqual(runtime['model_revision'],pinned_revision)
             self.assertIsNone(runtime['config_reported_revision'])
