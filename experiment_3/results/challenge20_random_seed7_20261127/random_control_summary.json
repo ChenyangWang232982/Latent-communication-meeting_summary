@@ -1,0 +1,32 @@
+{
+  "recorded_date": "2026-11-27",
+  "source": "User-provided server comparison.txt console output; per-case random artifacts not yet inspected",
+  "random_run_timestamp_path": null,
+  "historical_workflow_run": "test_result/experiment_3_challenge20/20261126_001225_109957/workflow/20261126_001350_993226",
+  "random_seed": 7,
+  "source_planned": 20,
+  "eligible": 20,
+  "completed_random_generations": 20,
+  "skipped": 0,
+  "coverage_evaluable_paired_cases": 20,
+  "windows": 197,
+  "exact_position_count_matched_windows": 197,
+  "semantic_supplementary_position_events": 24275,
+  "random_supplementary_position_events": 24275,
+  "mean_absolute_per_window_position_mismatch": 0.0,
+  "same_supplement_set_windows_including_empty": 23,
+  "coverage": {
+    "baseline": {"hits": 0, "n": 20, "rate": 0.0},
+    "semantic": {"hits": 19, "n": 20, "rate": 0.95},
+    "random": {"hits": 2, "n": 20, "rate": 0.1}
+  },
+  "semantic_minus_random_percentage_points": 85,
+  "target_summary_factual_accuracy": null,
+  "limitations": [
+    "Evidence co-location coverage is not final factual accuracy or measured internal attention.",
+    "Authored endpoint challenge set; only one random seed.",
+    "Random selection is conditioned on block count and length matching.",
+    "Replay latency excludes selectors and embedding and is not comparable standalone workflow latency.",
+    "No per-case paired contingency table or category-specific random hit counts were supplied."
+  ]
+}

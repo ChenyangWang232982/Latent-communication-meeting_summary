@@ -1,5 +1,58 @@
 # 实验 3：20 条首尾关联挑战集结果
 
+## 更新：2026-11-27 完整等量随机补充对照
+
+以下新增结果来自用户提供的服务器 `comparison.txt` 终端输出。随机组复用历史
+baseline/semantic 的选中位置和窗口，新生成20条随机补充摘要；不是重新运行三组。
+本次尚未取得随机组的完整时间戳目录和逐例产物，因此不填造运行路径、分类命中或配对检验。
+
+| 条件 | 同窗覆盖命中 | 可评估配对数 | 覆盖率 |
+|---|---:|---:|---:|
+| baseline，无后置补充 | 0 | 20 | 0% |
+| semantic，V3语义补充 | 19 | 20 | **95%** |
+| random，seed 7随机补充 | 2 | 20 | 10% |
+
+| 等量对照检查 | 实际结果 |
+|---|---:|
+| 随机组成功生成 | 20/20 |
+| 原计划 / 符合条件 / 跳过 | 20 / 20 / 0 |
+| 补充token位置数完全匹配窗口 | **197/197** |
+| semantic补充位置事件总数 | 24,275 |
+| random补充位置事件总数 | 24,275 |
+| 平均逐窗口位置数绝对偏差 | 0.000 |
+| 两组补充集合相同的窗口（含空集合） | 23/197 |
+
+semantic相对random的同窗覆盖率差为 **85个百分点**，相对baseline为95个百分点。
+这支持：在该固定首尾关联挑战集及随机seed下，V3的证据组织改善不能仅用
+“局部增加了更多token”解释。这里等量指每个窗口补充的源token位置数匹配，
+不代表最终输出token、运行时间或注意力计算量完全相等。
+
+随机抽样以相同补充块数及最接近长度为条件，允许抽到与semantic相同的集合；
+23/197包含空集合，不能把它当作非空集合重合率。答案仅用于生成后的覆盖统计，
+不进入检索或生成提示词。该批只有一个随机seed，不声称对所有随机抽样稳定成立。
+
+### 论文可用表述
+
+> 在20条人工构造的远距离关联挑战样本上，V3语义补充的关键证据共同窗口覆盖率
+> 为95%，而逐窗口补充token位置数完全匹配的随机补充对照为10%，未补充窗口为0%。
+> 该结果表明，在本挑战集上，关联证据的组织改善与补充内容的选择有关，
+> 而不能仅用局部输入量增加解释。
+
+> On 20 authored long-distance dependency challenge cases, V3 semantic supplementation
+> achieved 95% key-evidence co-location coverage, compared with 10% for a random
+> control matched exactly on supplementary source-token position counts in every
+> window, and 0% without supplementation. This supports a contribution from evidence
+> selection beyond merely increasing local input volume on this challenge set.
+
+覆盖率不是最终决策正确率，也不是对模型内部注意力的测量。最终摘要的目标状态、
+负责人、数量、条件及范围仍待按答案表核对；此处不报告事实准确率。
+随机replay省略selectors与embedding，不与历史全流程作耗时优势比较。
+
+结构化归档：[random_control_summary.json](experiment_3/results/challenge20_random_seed7_20261127/random_control_summary.json)。
+本报告后续章节保留原批次分析。原文“尚不足以单独决定替换默认工作流”描述的是当时证据；
+当前默认配置已结合AMI99与本轮挑战结果选用semantic，详见
+[AMI99四组记录](EXPERIMENT_3_AMI100_FINAL_RESULTS_ZH.md)。
+
 ## 1. 主要结论
 
 V3 将关键证据共同窗口覆盖率从 **0/20 提高到 19/20（95%）**，达到本项目预先约定的

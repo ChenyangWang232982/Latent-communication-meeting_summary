@@ -171,3 +171,21 @@ V3 的 95% Wilson 区间约为 76.4%–99.1%。这组固定合成事项达到项
 详细表格、逐例定性观察和复算入口见
 [EXPERIMENT_3_CHALLENGE20_ANALYSIS_ZH.md](../EXPERIMENT_3_CHALLENGE20_ANALYSIS_ZH.md)。
 统计脚本为 [analyze_challenges.py](analyze_challenges.py)，只读取既有结果，不运行生成模型或 AI judge。
+
+## 10. 完整20条等量随机对照（2026-11-27记录）
+
+| 条件 | 关键证据共同窗口覆盖 | 覆盖率 |
+|---|---:|---:|
+| baseline | 0/20 | 0% |
+| semantic | 19/20 | 95% |
+| random，seed 7 | 2/20 | 10% |
+
+随机组完成20/20，跳过0；197/197个窗口的补充源token位置数完全匹配，
+两组各24,275个补充位置事件，平均逐窗口绝对偏差0。
+23/197个窗口的补充集合相同（含空集合）。semantic比random高85个百分点。
+
+这些结果来自用户提供的服务器汇总文本，尚未新增随机组逐例事实正确性标注。
+该指标衡量真实输入位置上的证据组织，不是摘要准确率；结果仅适用于此人工挑战集
+和预定的随机seed。随机replay时间不含selectors/embedding，不用于全流程效率对比。
+完整表格和论文表述见根目录
+[挑战集分析](../EXPERIMENT_3_CHALLENGE20_ANALYSIS_ZH.md)。
