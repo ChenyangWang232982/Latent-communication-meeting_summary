@@ -1,11 +1,11 @@
-"""Summarize a transcript using independent selected-context window specialists."""
+"""Summarize a transcript using V3 semantic-supplemented window specialists."""
 import argparse
 from datetime import datetime
 import json
 from pathlib import Path
 
 from .cli import add_workflow_arguments, model_config
-from .engine import ReceiverKVRunner
+from .semantic import SemanticSummaryRunner
 
 
 def arguments():
@@ -44,7 +44,7 @@ def main():
 
     transcript = args.transcript.read_text(encoding='utf-8-sig').strip()
     config = model_config(args)
-    runner = ReceiverKVRunner(config, progress=log)
+    runner = SemanticSummaryRunner(config, progress=log)
     result = runner.run(args.transcript.stem, transcript, variants=tuple(args.variants),
                         routing_audit=args.routing_audit, on_generation=live)
     from meeting_evaluation.metrics import rouge_l_f1
@@ -69,7 +69,7 @@ def main():
     report = {k: v for k, v in result.items() if k not in ('answers', 'handoffs', 'chunk_specialists', 'chunk_specialists_by_variant', 'routing_audit')}
     report.update(model=args.model, source_file=str(args.transcript), settings=asdict(config))
     (metrics_dir / 'metrics.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-    rows = ['Selected-context window specialists',
+    rows = ['Semantic-supplemented selected-context window specialists (V3)',
             'variant | ROUGE-L | pipeline sec | all-stage input/output token events | final output tokens']
     for variant, measurement in result['variants'].items():
         rows.append(f"{variant} | {measurement['rouge_l_f1']} | {measurement['pipeline_seconds_excluding_model_load']:.2f} | "

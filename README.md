@@ -1,21 +1,27 @@
 # 语义辅助 KV 通信会议摘要 / Semantic-Assisted KV Meeting Summarization
 
-新增独立实验：[experiment_3](experiment_3/README.md) 在同一次全局 selected KV 上比较
-原时间窗口与远距离语义补充窗口；不修改默认运行模式。示例、输出和限制见该目录 README。
+正式入口已切换为 **V3 语义补充工作流**：每个已选证据窗口最多补充2个相关远端发言块，
+只生成 semantic 结果，不再额外生成 baseline。CLI 和 meeting_stream 使用相同默认工作流。
+[Experiment 3](experiment_3/README.md) 保留原窗口与随机对照用于消融和复现。
+本次 AMI99 配对结果及论文表述见 [实验记录](EXPERIMENT_3_AMI100_FINAL_RESULTS_ZH.md)。
 
-New optional experiment: [Experiment 3](experiment_3/README.md) compares baseline windows
-with semantic supplementation using the same selected KV. Default workflow behavior is unchanged.
+正式运行模块为 `receiver_kv_workflow`、`chunk_specialist_workflow`、`vector`，
+流式服务位于 `meeting_stream`。`experiment_1/2/3` 与 `meeting_evaluation` 用于
+论文实验及历史对照，不属于额外生产工作流，保留用于复现。V3 检索算法集中在
+`vector/supplement.py`；正式代码不依赖实验包。过时随机规划草稿已清理。
+复现已完成实验时使用其记录的 Git commit；本次代码迁移会改变源文件哈希，
+不要绕过历史随机对照的代码一致性检查。
 
 ## 中文
 
 本项目采用无需额外训练的混合通信工作流：全文 prefill 一次，通过注意力与可选
 向量辅助路由选择证据，再将选中的证据按发言块顺序组成重叠窗口；每个 specialist
-只接收自己的窗口并生成局部报告；最终 agent 结合全部选中证据与有序报告生成摘要。
+接收自己的窗口及语义补充证据并生成局部报告；最终 agent 结合全部选中证据与有序报告生成摘要。
 
 | 方法 | 每个 specialist 的输入 | 最终汇总 |
 |---|---|---|
-| `chunk_kv` | 当前选中窗口的 KV cache | 全部 selected KV＋有序局部报告 |
-| `chunk_text` | 相同窗口坐标对应的原文文本 | 全部选中文本＋有序局部报告 |
+| `chunk_kv` | 当前窗口＋相关补充块的 KV cache | 全部 selected KV＋有序局部报告 |
+| `chunk_text` | 相同补充窗口坐标对应的原文文本 | 全部选中文本＋有序局部报告 |
 
 局部报告采用自然语言。两条路径使用相同路由、分块、指令和生成设置，但 KV 包含
 原始全文的历史影响，选中文本则重新编码，因此属于工作流对照，不声称完全隔离
@@ -79,7 +85,8 @@ python -m receiver_kv_workflow.run \
 ```
 
 两种通信一起运行时，使用 `--variants chunk_kv chunk_text`。
-默认已经启用分块 specialists，不再需要 `--chunk-specialists`。
+默认启用语义补充分块 specialists，不再运行旧 baseline，无需额外开关。
+`--vector-routing` 控制前置路由；后置 V3 补充始终启用。
 最终汇总默认开启 thinking；用 `--no-summary-thinking` 同时关闭两种方法的最终思考。
 局部 specialist 默认不思考。最终参数是 `--summary-*`，不再使用 `--review-*`。
 
@@ -136,8 +143,10 @@ token 节省不等于 FLOPs、API计费或网络流量节省；embedding token �
 
 This training-free workflow prefills the full transcript once and selects global
 evidence using role-conditioned attention and optional embedding assistance.
-Independent specialists receive only their chronological window of selected source
-context. No extra original-part text or full global context is supplied locally.
+The production CLI and streaming service now use V3 semantic supplementation.
+Independent specialists receive their chronological selected-context window plus
+up to two related distant selected blocks, excluding immediate neighbors.
+No extra original-part text or full global context is supplied locally.
 Final synthesis receives all selected context and ordered natural-language local reports.
 
 `chunk_kv` transfers each local window as selected KV; `chunk_text` supplies

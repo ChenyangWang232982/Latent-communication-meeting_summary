@@ -1,10 +1,9 @@
-# Global selected context + transcript-part specialists
+# Semantic-supplemented meeting summarization
 
-The active workflow uses attention and optional semantic routing to select source
-context, then specialists analyze independent chronological windows of only that
-selected context. Final synthesis combines ordered local reports with all selected
-evidence. The old direct-summary and single generated-handoff
-branches and separate review agent have been removed.
+The production CLI and meeting_stream use SemanticSummaryRunner. Each specialist
+receives its primary selected-context window plus up to two related distant
+selected blocks (V3), excluding neighbors within one block. Positions retain
+source order. Final synthesis receives all selected context and ordered reports.
 
 ```bash
 python -m receiver_kv_workflow.run \
@@ -16,27 +15,28 @@ python -m receiver_kv_workflow.run \
   --variants chunk_kv
 ```
 
-Use `--variants chunk_kv chunk_text` to generate both controls, or only `chunk_text`.
-Both use the same selected window coordinates, instructions and stage decoding
-settings. The text path renders each local window and final selected evidence
-as verbatim text rather than transferring KV. Reports remain natural language.
+Post-selection supplementation is always active. --vector-routing controls
+initial selection only; without it, selected blocks are encoded separately.
+KV is the default communication; --variants chunk_kv chunk_text also compares
+verbatim text using the same supplemented windows. Neither runs an additional
+unaugmented baseline. Historical controls remain in experiment_1/2/3.
 
-Defaults: source budget per role 0.25, speaker neighbors +/-1, part size targeting
-automatic window count `max(1, floor(full_transcript_tokens/1024 + 0.5))`,
-speaker-boundary preservation with 0.25 overlap, local sampling 0.3/0.9 and penalty1.1,
-final sampling 0.3/0.9 with thinking on. `--summary-*` controls final synthesis;
-`--no-summary-thinking` disables its reasoning. Use `--help` for all settings.
+Defaults: role budget .25, speaker neighbors 1, local overlap .25, local sampling
+.3/.9 with repetition penalty 1.1. Final synthesis uses sampling .3/.9 and thinking;
+--no-summary-thinking disables final thinking. Local stages remain non-thinking.
 
-`--output` writes the primary final answer; the second variant uses a sibling
-file. Per-variant `.specialists.json`, separate thinking text, live partial/status
-files and `test_result/receiver_kv/<timestamp>/metrics.*` retain provenance/costs.
-`--routing-audit` writes source-coordinate audits, not extra model instructions.
+Outputs: final summary, .specialists.json (windows, supplementation matches,
+reports, stage costs and retrieval metadata), separate thinking and live partial
+files. Metrics are in test_result/receiver_kv/<timestamp>. --routing-audit adds
+source-coordinate evidence audits. Retrieval time is included in pipeline time;
+encoder tokens are recorded separately from decoder token events.
 
-Dense full-attention standard-RoPE Qwen3 is supported. Source prefill happens once
-and full KV remains resident. Selected rows preserve original absolute positions;
-each stage uses an independent writable cache copy. No silent source truncation
-or arbitrary output cap; context exhaustion is an error. This is hybrid source-KV
-and report-text communication, not a reproduction claim for CacheBack.
+The original ReceiverKVRunner engine provides shared loading, selection and cache
+operations to production and experimental controls. It is not a retired directory.
+Production code does not import experiment packages. Experimental compatibility
+imports forward V3 retrieval to vector/supplement.py.
 
-See [specialist architecture](../chunk_specialist_workflow/README.md) and
-[paired experiment](../experiment_1/README.md).
+Dense full-attention standard-RoPE Qwen3 only. Source prefill happens once; full KV
+remains resident. Each generation uses an independent writable cache copy.
+No silent truncation or arbitrary output cap. This is hybrid source-KV/report-text
+communication, not a complete CacheBack reproduction.

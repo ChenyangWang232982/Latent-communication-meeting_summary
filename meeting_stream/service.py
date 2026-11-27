@@ -12,7 +12,8 @@ from ag_ui.core import (RunAgentInput, RunErrorEvent, RunFinishedEvent, RunStart
                         StateSnapshotEvent, TextMessageContentEvent, TextMessageEndEvent,
                         TextMessageStartEvent)
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from receiver_kv_workflow.engine import ReceiverKVConfig, ReceiverKVRunner
+from receiver_kv_workflow.engine import ReceiverKVConfig
+from receiver_kv_workflow.semantic import SemanticSummaryRunner as ReceiverKVRunner
 
 logger = logging.getLogger(__name__)
 MAX_INPUT_BYTES = 5 * 1024 * 1024

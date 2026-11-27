@@ -1,76 +1,39 @@
-# Selected-context window specialists / 窗口 KV specialists
+# Semantic-supplemented window specialists
 
-已恢复窗口方案：**每个 specialist 只接收当前窗口的 selected KV＋分析要求**。
-不额外附加当前块原文，也不向每个 specialist 发送全局 selected KV。
-只有最终汇总读取全部 selected KV＋按顺序排列的局部报告。
+This package contains shared chronological windowing, stage generation and
+thinking extraction. It is used by production and experiment controls.
+
+Production flow:
 
 ```text
-Transcript → one source KV prefill → attention + optional semantic routing
-                                          ↓ selected source positions
-                            chronological overlapping speaker-block windows
-                                          ↓
-                 each specialist: its own selected window KV + instructions
-                                          ↓ ordered natural-language reports
-                 final synthesis: all selected KV + reports (optional thinking)
+transcript -> one full source prefill -> attention/optional vector selection
+ -> chronological selected-context windows -> V3 distant evidence supplementation
+ -> independent specialists -> ordered text reports
+ -> final synthesis with global selected context and reports
 ```
 
-Target window count is `max(1, floor(n/1024 + 0.5))`, where n is the raw full
-transcript token count, including labels/timestamps but excluding chat framing.
-This is round-half-up, not Python's ties-to-even `round`. Selected complete speaker
-blocks are balanced into that many base windows; fewer available blocks means fewer
-windows. Long turns stay intact. `--specialist-overlap 0.25` expands backward at
-speaker boundaries without increasing the number of specialists. Discarded rows
-are not restored. The old `--specialist-parts` argument has been removed.
-Absolute source positions and chronological order are preserved. Specialists
-are told their window number and total, and must not assume a local proposal
-is the final meeting-wide outcome. Final synthesis resolves supported revisions.
+Window count: max(1, floor(raw_transcript_tokens/1024 + .5)). Complete consecutive
+speaker blocks are balanced across windows, with .25 backward overlap by default.
+Whole turns remain intact. Window count cannot exceed available blocks.
 
-Each stage gets a disposable writable cache copied from the immutable source KV.
-Models share weights and execute sequentially. Generated specialist KV is never
-concatenated. Local reports are natural language, so this is hybrid communication.
-The full original source KV remains resident; no peak-memory saving is guaranteed.
+SemanticSummaryRunner prepares augmented windows using vector/supplement.py:
+up to two related already-selected distant blocks per window, excluding adjacent
+blocks within radius 1. Original positions and order are preserved. Instructions
+identify primary and supplementary block IDs. Similarity and recency alone do not
+establish agreement or a revised decision. Dropped global evidence is not restored.
 
-```bash
-python -m receiver_kv_workflow.run \
-  --transcript input/meeting1.txt \
-  --output output/window_kv/meeting1.txt \
-  --model Qwen/Qwen3-8B \
-  --device cuda \
-  --role-budget-ratio 0.25 \
-  --speaker-neighbor-blocks 1 \
-  --vector-routing \
-  --variants chunk_kv \
-  --specialist-overlap 0.25 \
-  --summary-thinking \
-  --seed 12 \
-  --summary-seed 42
-```
+Each local stage receives only its augmented window. Final synthesis receives
+all global selected evidence and ordered local reports. Local stages do not think;
+final thinking is enabled by default. No separate review agent is used.
 
-Local defaults: temperature0.3, top_p0.9, repetition penalty1.1; local seed is
-`seed + window_index`. Final defaults: temperature0.3, top_p0.9, penalty1.0 and
-thinking enabled, controlled by `--summary-*`. Local specialists remain non-thinking.
-Final reasoning is saved separately and excluded from summary quality scoring,
-but its token cost is counted. No separate review or arbitrary output cap is added;
-context exhaustion raises an error.
+KV and text modes use the same evidence coordinates and stage settings. The KV
+path retains full-source contextual and positional history; re-encoded text does
+not. This is a workflow comparison rather than a pure representation intervention.
+The full immutable source cache stays resident; lower peak memory is not promised.
 
-`chunk_text` supplies the exact same local window positions as verbatim selected
-text, and final synthesis receives all selected evidence as text plus its ordered
-local reports. Both paths share window definitions, instructions and decoding
-settings. Full-source KV retains contextual/positional history different from
-re-encoded selected text; this is a workflow comparison, not pure representation
-isolation. `experiment_1` runs paired comparisons of these two methods.
-
-`.specialists.json` includes `input_layout=selected_context_windows`,
-`transcript_tokens`, `target_specialist_parts`, `actual_specialist_windows`,
-`synthesis_selected_positions`, local window `positions`/`block_ids`, reports,
-stage token counts and timings. Local KV sizes may differ; only the final stage
-receives all selected rows. Per-stage partial/status files support inspection.
-
-Logical decoder totals include prefill/probes once per standalone workflow, all
-specialist prompts and outputs, and final prompt/output including thinking. KV
-rows are reused, not counted as newly encoded prompt tokens. Embedding tokens
-are separate. Logical payload sums stage KV tensors or evidence UTF-8 bytes plus
-serialized local-report UTF-8 bytes, not measured network traffic or billing.
+Production entry: python -m receiver_kv_workflow.run. Details and output formats:
+[receiver workflow](../receiver_kv_workflow/README.md).
+Unaugmented windows remain an explicit experimental control only.
 
 ```bash
 python -m unittest discover -s chunk_specialist_workflow/tests
