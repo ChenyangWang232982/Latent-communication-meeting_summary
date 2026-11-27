@@ -1,7 +1,7 @@
 {
   "recorded_date": "2026-11-27",
-  "source": "User-provided server comparison.txt console output; per-case random artifacts not yet inspected",
-  "random_run_timestamp_path": null,
+  "source": "Server comparison.txt; counts and token-position matching subsequently verified against downloaded coverage_comparison.csv and window_matching.csv",
+  "random_run_timestamp_path": "D:/Download/experiment_3_random_control_20_seed7/20261127_212051_195831",
   "historical_workflow_run": "test_result/experiment_3_challenge20/20261126_001225_109957/workflow/20261126_001350_993226",
   "random_seed": 7,
   "source_planned": 20,
@@ -27,6 +27,7 @@
     "Authored endpoint challenge set; only one random seed.",
     "Random selection is conditioned on block count and length matching.",
     "Replay latency excludes selectors and embedding and is not comparable standalone workflow latency.",
-    "No per-case paired contingency table or category-specific random hit counts were supplied."
+    "Final target-summary factual accuracy was not human-evaluated; provisional AI grading is excluded from thesis results.",
+    "Single-model local specialist co-location coverage is not applicable, not zero."
   ]
 }
